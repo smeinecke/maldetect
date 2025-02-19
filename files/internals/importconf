@@ -65,6 +65,21 @@ slack_token="$slack_token"
 # where the scan report will be shared.
 slack_channels="$slack_channels"
 
+# Enable or disable telegram alerts
+# [0 = disabled, 1 = enabled]
+telegram_alert="$telegram_alert"
+
+# Caption for report file will be sent to telegram channel
+telegram_file_caption="maldet alert from $(hostname)"
+
+# Telegram bot token.
+# more information https://core.telegram.org/bots
+telegram_bot_token="$telegram_bot_token"
+
+# Telegram channel id
+# more information https://stackoverflow.com/questions/33858927/how-to-obtain-the-chat-id-of-a-private-telegram-channel?answertab=active#tab-top
+telegram_channel_id="$telegram_channel_id"
+
 # This controls the daily automatic updates of LMD signature files
 # and cleaner rules. The signature update process preserves any
 # custom signature or cleaner files. It is highly recommended that this
@@ -336,6 +351,27 @@ remote_clamd_max_retry="$remote_clamd_max_retry"
 
 # How many seconds to sleep between retrys
 remote_clamd_retry_sleep="$remote_clamd_retry_sleep"
+
+##
+# [ STATISTICAL ELK COLLECT ]
+##
+# Enable statistic to bring it into ELK stack
+enable_statistic="$enable_statistic"
+
+# The host definition for the TCP input
+# Must be define if enable_statistic=1
+# Example : 192.168.1.1
+elk_host="$elk_host"
+
+# The port definition for the TCP input
+# Must be define if enable_statistic=1
+# Example : 12345
+elk_port="$elk_port"
+
+# The index definition for the Elasticsearch
+# Must be define if enable_statistic=1
+# Example : maldet
+elk_index="$elk_index"
 
 ##
 # [ STATISTICAL ANALYSIS ]
