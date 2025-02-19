@@ -1,5 +1,5 @@
 ##
-# Linux Malware Detect v1.6.5
+# Linux Malware Detect v1.6.6
 #             (C) 2002-2023, R-fx Networks <proj@r-fx.org>
 #             (C) 2023, Ryan MacDonald <ryan@r-fx.org>
 # This program may be freely redistributed under the terms of the GNU GPL v2
@@ -120,7 +120,7 @@ prerun() {
 	fi
 	
 	if [ "$scan_hexfifo" == "1" ]; then
-		mkfifo=`which mkfifo 2> /dev/null`
+		mkfifo=`command -v mkfifo 2> /dev/null`
 		if [ ! -f "$mkfifo" ]; then
 			scan_hexfifo=0
 		else
@@ -135,7 +135,7 @@ prerun() {
 	fi
 
 	if [ -z "$EDITOR" ]; then
-		defedit=`which nano 2> /dev/null`
+		defedit=`command -v nano 2> /dev/null`
 		if [ -z "$defedit" ]; then
 			EDITOR=vi
 		else
@@ -233,7 +233,7 @@ detect_control_panel() {
 		iworx_db_ps=$(ps -u iworx | grep iworx-db)
 		iworx_web_ps=$(ps -u iworx-web | grep iworx-web)
 		pex_script=$(readlink -e /usr/local/interworx/bin/listaccounts.pex)
-		siteworx=$(which siteworx)
+		siteworx=$(command -v siteworx)
 
 		# Check that Iworx services are running
 		if [[ -z "$iworx_db_ps" || -z "$iworx_web_ps" ]]; then
@@ -252,7 +252,7 @@ detect_control_panel() {
 		fi
 	elif [[ -d /usr/local/cpanel ]]; then
 		cpanel_ps=$(ps -u root | grep [c]psrvd)
-		cpapi=$(which cpapi2)
+		cpapi=$(command -v cpapi2)
 		apitool=$(readlink -e ${cpapi})
 
 		# Ensure cpanel service is running
@@ -683,7 +683,7 @@ clean_hitlist() {
                                 get_filestat "$file" 1
                                 hitname=`cat $hitlist | grep $file | awk '{print$1}'`
                                 if [ ! "$md5_hash" ]; then
-                                        md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+                                        md5_hash="$($md5sum "$file" | awk '{print$1}')"
                                 fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
                         done
@@ -694,7 +694,7 @@ clean_hitlist() {
                                 quar_get_filestat "${file}.info" 1
                                 hitname=`cat $hitlist | grep $file | awk '{print$1}'`
                                 if [ ! "$md5_hash" ]; then
-                                        md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+                                        md5_hash="$($md5sum "$file" | awk '{print$1}')"
                                 fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
                         done
@@ -838,7 +838,7 @@ get_filestat() {
 		file_group=`$stat -f '%Sg' "$file"`
 		file_mode=`$stat -f '%p' "$file" | sed 's/^.//'`
 		file_size=`$stat -f '%Z' "$file"`
-		md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+		md5_hash="$($md5sum "$file" | awk '{print$1}')"
 		if [ "$times" ]; then
 			# atime mtime ctime (since epoch)
 			file_times=`$stat -f '%a:%m:%c' "$file"`
@@ -848,7 +848,7 @@ get_filestat() {
 		file_group=`$stat -c '%G' "$file"`
 		file_mode=`$stat -c '%a' "$file"`
 		file_size=`$stat -c '%s' "$file"`
-		md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+		md5_hash="$($md5sum "$file" | awk '{print$1}')"
 		if [ "$times" ]; then
 			# atime mtime ctime (since epoch)
 			file_times=`$stat -c '%X:%Y:%Z' "$file"`
@@ -863,7 +863,7 @@ record_hit() {
 		get_filestat "$file" 1
 		file_name=`basename "$file" 2> /dev/null`
 		if [ ! "$md5_hash" ]; then
-			md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+			md5_hash="$($md5sum "$file" | awk '{print$1}')"
 		fi
 		eout "{hit} malware hit $hitname found for $file"
 		echo "${utime}:${hostid}:${hitname}:${md5_hash}:${file_size}:${file_owner}.${file_group}:${file_mode}:${file_times}:${file}" >> $hits_history
@@ -921,7 +921,7 @@ quar_hitlist() {
 				file_namewc=`echo "$file_name" | $wc -m`
 				file_hitname=`egrep -m1 "$file" $hitlist | awk '{print$1}'`
 				if [ ! "$md5_hash" ]; then
-					md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+					md5_hash="$($md5sum "$file" | awk '{print$1}')"
 				fi
 				if [ "$pub" == "1" ]; then
 					chattr -ia "$file" >> /dev/null 2>&1
@@ -999,8 +999,8 @@ clamselector() {
 
                 if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
                         clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
-                elif [ -f "$(which $clambin 2> /dev/null)" ]; then
-                        clamscan=`which $clambin 2> /dev/null`
+                elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
+                        clamscan=`command -v $clambin 2> /dev/null`
                 else
                         scan_clamscan="0"
                 fi
@@ -1026,8 +1026,8 @@ clamselector() {
                                 clamopts="$clamscan_extraopts --max-filesize=$clamscan_max_filesize --max-scansize=$[clamscan_max_filesize*2] -d $runtime_hdb -d $runtime_ndb $clamav_db -r"
                                 if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
                                         clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
-                                elif [ -f "$(which $clambin 2> /dev/null)" ]; then
-                                        clamscan=`which $clambin 2> /dev/null`
+                                elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
+                                        clamscan=`command -v $clambin 2> /dev/null`
                                 else
                                         scan_clamscan="0"
                                 fi
@@ -1040,9 +1040,13 @@ clamselector() {
 scan() {
 	scan_start_hr=`date +"%b %e %Y %H:%M:%S %z"`
 	scan_start=`date +"%s"`
-	lbreakifs set
-	spath=$(for i in `echo "$1" | tr '?' '*' | tr ',' '\n'`; do echo "\"$(printf %q $i)\""; done | tr '\n' ' ' | sed 's/.$//')
-	lbreakifs unset
+	spaths_str=$(echo "$1" | tr '?' '*' | tr ',' '\n')
+	spaths=()
+	while IFS= read -r pattern; do
+	  [ -z "$pattern" ] && continue
+	  expanded=( $pattern )
+	  spaths+=( "${expanded[@]}" )
+	done <<< "$spaths_str"
 	days="$2"
 	scanid="$datestamp.$$"
 	if [ "$file_list" ]; then
@@ -1085,10 +1089,12 @@ scan() {
 		fi
 	fi
 	
-	if [ ! "${spath:1:1}" = "/" ]; then
-		eout "{scan} must use absolute path, provided relative path $spath" 1
-		exit
-	fi
+	for p in "${spaths[@]}"; do
+	  if [ "${p:0:1}" != "/" ]; then
+	    eout "{scan} must use absolute path, provided relative path '$p'" 1
+	    exit 1
+	  fi
+	done
 
 	scan_session="$tmpdir/.sess.$$"
 	find_results="$tmpdir/.find.$$"
@@ -1180,8 +1186,9 @@ scan() {
 		file_list_start=`date +"%s"`
 		tmpscandir="$tmpdir/scan.$RANDOM"
 		mkdir -p "$tmpscandir" ; chmod 700 $tmpscandir ; cd $tmpscandir
-		eout "{scan} executed eval $nice_command $find $spath $spath_tmpdirs -maxdepth $scan_max_depth $find_opts -type f $find_recentopts -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group"
-		eval $nice_command $find /lmd_find/ $(echo $spath) $spath_tmpdirs -maxdepth $scan_max_depth $find_opts -type f $find_recentopts -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group 2> /dev/null | grep -E -vf $ignore_paths > $find_results
+		eout "{scan} executed $nice_command $find $spath $spath_tmpdirs -maxdepth $scan_max_depth $find_opts -type f $find_recentopts -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group"
+		#$nice_command $find /lmd_find/ $(echo $spath) $spath_tmpdirs -maxdepth $scan_max_depth $find_opts -type f $find_recentopts -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group 2> /dev/null | grep -E -vf $ignore_paths > $find_results
+		$nice_command $find "${spaths[@]}" $spath_tmpdirs -maxdepth "$scan_max_depth" $find_opts -type f $find_recentopts -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
 		cd $tmpdir
 		rm -rf $tmpscandir
 		if [ "$rscan" = "1" ] && [ "$scan_export_filelist" == "1" ]; then
@@ -1406,7 +1413,7 @@ scan_strlen() {
 scan_stage1() {
 	file="$1"
 	clean_check="$2"
-	hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+	hash="$($md5sum "$file" | awk '{print$1}')"
 	if [ -z "$runtime_hexstrings" ]; then
 		sigignore
 		gensigs
@@ -2182,7 +2189,7 @@ lmdup() {
 			doupdate=1
 		elif [ "$autoupdate_version_hashed" == "1" ]; then
 			eout "{update} hashing install files and checking against server..." 1
-			eval $md5sum $inspath/maldet $intfunc | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > $lmd_hash_file
+			$md5sum $inspath/maldet $intfunc | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > $lmd_hash_file
 			upstreamhash="$tmpwd/.lmdup_hashcheck$$"
 		        get_remote_file "$lmd_hash_url" "update" "1"
 			upstreamhash="$return_file"
@@ -2218,7 +2225,7 @@ lmdup() {
 
 		if [ -s "$tmpwd/${lmd_current_tgzfile}.md5" ] && [ -s "$tmpwd/${lmd_current_tgzfile}" ]; then
 			upstream_md5=`cat $tmpwd/${lmd_current_tgzfile}.md5 | awk '{print$1}'`
-			local_md5=`eval $md5sum $tmpwd/${lmd_current_tgzfile} | awk '{print$1}'`
+			local_md5=`$md5sum "$tmpwd/${lmd_current_tgzfile}" | awk '{print$1}'`
 			if [ ! "$upstream_md5" == "$local_md5" ]; then
 				eout "{update} unable to verify md5sum of ${lmd_current_tgzfile}, update failed!" 1
 				cd $inspath ; rm -rf $tmpwd
@@ -2304,7 +2311,7 @@ sigup() {
 	
 	if [ "$nver" != "$sig_version" ]; then
 		cd $tmpwd/
-		tar=`which tar 2> /dev/null`
+		tar=`command -v tar 2> /dev/null`
 		eout "{sigup} new signature set $nver available" 1
 		
 		eout "{sigup} downloading $sig_sigpack_url" 1
@@ -2317,7 +2324,7 @@ sigup() {
 		get_remote_file "${sig_clpack_url}.md5" "sigup" "1" "$tmpwd/maldet-clean.tgz.md5"
 		
 		if [ -f "$tmpwd/maldet-sigpack.tgz.md5" ]; then
-			sigpack_md5=`eval $md5sum maldet-sigpack.tgz | awk '{print$1}'`
+			sigpack_md5=`$md5sum maldet-sigpack.tgz | awk '{print$1}'`
 			sigpack_goodmd5=`cat maldet-sigpack.tgz.md5 | awk '{print$1}'`
 			if [ ! "$sigpack_md5" == "$sigpack_goodmd5" ]; then
 				eout "{sigup} unable to verify md5sum of maldet-sigpack.tgz, please try again or contact proj@rfxn.com" 1
@@ -2351,7 +2358,7 @@ sigup() {
 		fi
 		
 		if [ -f "$tmpwd/maldet-clean.tgz.md5" ]; then
-			clpack_md5=`eval $md5sum maldet-clean.tgz | awk '{print$1}'`
+			clpack_md5=`$md5sum maldet-clean.tgz | awk '{print$1}'`
 			clpack_goodmd5=`cat maldet-clean.tgz.md5 | awk '{print$1}'`
 			if [ ! "$clpack_md5" == "$clpack_goodmd5" ]; then
 				eout "{sigup} unable to verify md5sum of maldet-clean.tgz, please try again or contact proj@rfxn.com" 1
