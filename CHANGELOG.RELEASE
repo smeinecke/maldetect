@@ -3,26 +3,3 @@ v1.6.6 | Feb 19 2025:
 [Fix] malware notification emails to ignore inactive siteworx users; pr #425
 [New] add reporting support for telegram channel; pr #378
 [New] add statistics collection and sending to ELK; pr #359
-
-v1.6.5 | Mar 27 2023:
-[Fix] monitor mode white space detection; issue #354
-[Change] event_log/clamscan_log now record year in timestamp; issue #352
-[Change] -p|--purge will now trim the inotify_log; issue #350
-[New] -E|--dump-report to dump reports to stdout; pr #362
-[Fix] monitor mode will now fail to start if 'ed' is not installed; issue #350
-      inotify_log requires in-place inode pruning to prevent exponential growth
-[Fix] inotify kernel support on debian11 checking only System.map; pr #398
-[Fix] human-readable path not displaying on -a|--scan-all default path scan (/home); #407
-[Change] default scoped scan adjusted from /var/www/html to /var/www to make sure we scope all www content; #404
-[Fix] compare md5 on ignore_sigs between monitor mode cycles and only regenerate signatures on file changes; #397
-[New] add detect_control_panel function to files/internals/functions to determine installed control panel; pr #409
-[New] add get_panel_contacts to files/internals/functions to discover contact emails; pr #409
-[New] add configuration options for From, Subject, Reply-To headers on alert emails; pr #409
-[New] add flag to enable these alerts (requires email_alert to be enabled as well); pr #409
-[New] add internal configuration to set the user alert template location; pr #409
-[New] add a base template that will be used to create emails to control panel contacts; pr #409
-[Change] ambiguous restore error modified to include file name
-[Fix] adjusted ftp.rfxn.com checkout credentials; #390
-[Fix] systemd unit file not copying properly; #371, #413
-[Fix] monitor mode dependency failures on 'ed' not properly logging to be captured by unit file; #395
-[Fix] newer versions of cpulimit explicitly enforce the usage of '--' to define where cpulimit options end; #395
