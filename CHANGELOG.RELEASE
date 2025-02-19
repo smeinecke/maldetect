@@ -1,5 +1,8 @@
 v1.6.6 | Feb 19 2025:
-[Fix] replaced eval usage in dynamic execution to improve security
+[Fix] replaced eval usage in dynamic execution to improve security; thank you for responsible disclosure from barrebas
+[Fix] malware notification emails to ignore inactive siteworx users; pr #425
+[New] add reporting support for telegram channel; pr #378
+[New] add statistics collection and sending to ELK; pr #359
 
 v1.6.5 | Mar 27 2023:
 [Fix] monitor mode white space detection; issue #354
