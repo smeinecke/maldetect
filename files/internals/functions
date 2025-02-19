@@ -1,10 +1,11 @@
 ##
-# Linux Malware Detect v1.6.4
-#             (C) 2002-2019, R-fx Networks <proj@r-fx.org>
-#             (C) 2019, Ryan MacDonald <ryan@r-fx.org>
+# Linux Malware Detect v1.6.6
+#             (C) 2002-2023, R-fx Networks <proj@r-fx.org>
+#             (C) 2023, Ryan MacDonald <ryan@r-fx.org>
 # This program may be freely redistributed under the terms of the GNU GPL v2
 ##
 #
+
 lbreakifs() {
 	if [ "$1" == "set" ]; then
                 IFS=$(echo -en "\n\b")
@@ -119,7 +120,7 @@ prerun() {
 	fi
 	
 	if [ "$scan_hexfifo" == "1" ]; then
-		mkfifo=`which mkfifo 2> /dev/null`
+		mkfifo=`command -v mkfifo 2> /dev/null`
 		if [ ! -f "$mkfifo" ]; then
 			scan_hexfifo=0
 		else
@@ -134,7 +135,7 @@ prerun() {
 	fi
 
 	if [ -z "$EDITOR" ]; then
-		defedit=`which nano 2> /dev/null`
+		defedit=`command -v nano 2> /dev/null`
 		if [ -z "$defedit" ]; then
 			EDITOR=vi
 		else
@@ -161,7 +162,7 @@ prerun() {
 		if [ "$scan_cpulimit" -gt "$max_cpulimit" ]; then
 			scan_cpulimit="0"
 		else
-			nice_command="$cpulimit -l $scan_cpulimit $nice_command"
+			nice_command="$cpulimit -l $scan_cpulimit -- $nice_command"
 		fi
 	fi
 
@@ -180,13 +181,15 @@ eout() {
 	if [ ! -f "$maldet_log" ]; then
 		touch $maldet_log
 	fi
-	log_size=`$wc -l $maldet_log | awk '{print$1}'`
-	if [ "$log_size" -ge "20000" ]; then
-		trim=1000
-		printf "%s\n" "$trim,${log_size}d" w | ed -s $maldet_log 2> /dev/null
+	if [ "$maldet_log_truncate" == "1" ]; then
+		log_size=`$wc -l $maldet_log | awk '{print$1}'`
+		if [ "$log_size" -ge "20000" ]; then
+			trim=1000
+			printf "%s\n" "$trim,${log_size}d" w | ed -s $maldet_log 2> /dev/null
+		fi
 	fi
 	if [ ! "$msg" == "" ]; then
-		echo "$(date +"%b %d %H:%M:%S") $(hostname -s) $appn($$): $msg" >> $maldet_log
+		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) $appn($$): $msg" >> $maldet_log
 		if [ ! -z "$stdout" ]; then
 			echo "$appn($$): $msg"
 		fi
@@ -223,6 +226,67 @@ trap_exit() {
 clean_exit() {
 	mv -f $scan_session $nsess_hits 2> /dev/null
 	rm -f $clamscan_results $find_results $list $runtime_hdb $runtime_hexstrings $runtime_ndb $scan_session $tmpdir/.find_killed.$scanid $tmpdir/.tmp* $tmpdir/.tmpf* $tmpf 0 2> /dev/null
+}
+
+detect_control_panel() {
+	if [[ -d /usr/local/interworx ]]; then
+		iworx_db_ps=$(ps -u iworx | grep iworx-db)
+		iworx_web_ps=$(ps -u iworx-web | grep iworx-web)
+		pex_script=$(readlink -e /usr/local/interworx/bin/listaccounts.pex)
+		siteworx=$(command -v siteworx)
+
+		# Check that Iworx services are running
+		if [[ -z "$iworx_db_ps" || -z "$iworx_web_ps" ]]; then
+			control_panel="error"
+			eout "{panel} Interworx found, but not running. Panel user alerts will not be sent."
+		# Verify pex script exists and is executable
+		elif ! [[ -x "$pex_script" ]]; then
+			control_panel="error"
+			eout "{panel} Interworx found, but scripts are missing or not executable. Panel user alerts will not be sent."
+		# Ensure /usr/bin/siteworx is executable
+		elif ! [[ -x "$siteworx" ]]; then
+			control_panel="error"
+			eout "{panel} Interworx found, but Siteworx CLI is missing or not executable. Panel user alerts will not be sent."
+		else
+			control_panel="interworx"
+		fi
+	elif [[ -d /usr/local/cpanel ]]; then
+		cpanel_ps=$(ps -u root | grep [c]psrvd)
+		cpapi=$(command -v cpapi2)
+		apitool=$(readlink -e ${cpapi})
+
+		# Ensure cpanel service is running
+		if [[ -z ${cpanel_ps} ]]; then
+			control_panel="error"
+			eout "{panel} cPanel found, but services are not running. Panel user alerts will not be sent."
+		# Verify apitool is executable
+		elif ! [[ -x ${apitool} ]]; then
+			control_panel="error"
+			eout "{panel} cPanel found, but apitool is missing or not found. Panel user alerts will not be sent."
+		else
+			control_panel="cpanel"
+		fi
+	else
+		control_panel="unknown"
+	fi
+}
+
+get_panel_contacts() {
+	panel="$1"
+	user="$2"
+	case "$panel" in
+		"cpanel")
+			if [ -f /var/cpanel/users/${user} ]; then
+				contact_emails=$(awk -F '=' '/^CONTACTEMAIL/{print $2}'  /var/cpanel/users/${user} | sed '/^ *$/d' | tr '\n' ',' | sed 's/,$//')
+			else
+				contact_emails=$(cpapi2 --user=herpaderpadoo --output=xml CustInfo contactemails | grep -o 'value>.*</value' | sed -r 's,(</)?value>?,,g;/^$/d' | tr '\n' ',' | sed 's/,$//')
+			fi
+		;;
+		"interworx")
+			master_domain=$(/usr/local/interworx/bin/listaccounts.pex | grep "${user}" | awk '{print $2}')
+			contact_emails=$(siteworx -un --login_domain ${master_domain} -c Users -a listUsers -o json | python -c 'import json,sys;data=json.load(sys.stdin);emails=[elem["email"] for elem in data if elem["user_status"] == "active"];print(", ".join(emails))')
+		;;
+	esac
 }
 
 get_remote_file() {
@@ -567,16 +631,16 @@ restore() {
                 chmod $file_mode "$quardir/$file" >> /dev/null 2>&1
                 mv -f "$quardir/$file" "$file_path"
 		touch -m --date=@${file_mtime} "$file_path"
-                eout "{restore} quarantined file $file restored to $file_path" 1
+                eout "{restore} quarantined file '$file' restored to '$file_path'" 1
         elif [ -f "$file" ] && [ -f "${file}.info" ]; then
 		quar_get_filestat "${file}.info"
                 chown ${file_owner}.${file_group} "$file" >> /dev/null 2>&1
                 chmod $file_mode "$file" >> /dev/null 2>&1
                 mv -f "$file" "$file_path"
 		touch -m --date=@${file_mtime} "$file_path"
-                eout "{restore} quarantined file $file restored to $file_path" 1
+                eout "{restore} quarantined file '$file' restored to '$file_path'" 1
         else
-                eout "{restore} invalid file or could not be found" 1
+                eout "{restore} '$file' is not eligible for restore or could not be found" 1
         fi
 }
 
@@ -619,7 +683,7 @@ clean_hitlist() {
                                 get_filestat "$file" 1
                                 hitname=`cat $hitlist | grep $file | awk '{print$1}'`
                                 if [ ! "$md5_hash" ]; then
-                                        md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+                                        md5_hash="$($md5sum "$file" | awk '{print$1}')"
                                 fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
                         done
@@ -630,7 +694,7 @@ clean_hitlist() {
                                 quar_get_filestat "${file}.info" 1
                                 hitname=`cat $hitlist | grep $file | awk '{print$1}'`
                                 if [ ! "$md5_hash" ]; then
-                                        md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+                                        md5_hash="$($md5sum "$file" | awk '{print$1}')"
                                 fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
                         done
@@ -696,13 +760,29 @@ view_report() {
 	fi
 	if [ "$rid" == "" ] && [ -f "$sessdir/session.last" ]; then
 		rid=`cat $sessdir/session.last`
+		if [ "$2" == "dump" ]; then
+			cat $sessdir/session.$rid
+			exit
+		fi
 		$EDITOR $sessdir/session.$rid
 	elif [ -f "$sessdir/session.$rid" ]; then
+		if [ "$2" == "dump" ]; then
+			cat $sessdir/session.$rid
+			exit
+		fi
 		$EDITOR $sessdir/session.$rid
 	else
 		echo "{report} no report found, aborting."
 		exit
 	fi
+}
+
+dump_report() {
+	rid="$1"
+	if [ "$rid" == "" ]; then
+		rid=`cat $sessdir/session.last`
+	fi
+	view_report $rid dump
 }
 
 view() {
@@ -712,6 +792,15 @@ view() {
 
 purge() {
 	:> $maldet_log
+        log_size=`$wc -l $inotify_log | awk '{print$1}'`
+        if [ "$inotify_trim" ]; then
+                trim=$(($log_size - 1000))
+                log_chars=`printf "%s\n" "1,${trim}p" | ed -s $inotify_log 2> /dev/null | wc -c`
+                tlog_new=$(( `cat $inspath/tmp/inotify` - $log_chars ))
+                echo $tlog_new > $inspath/tmp/inotify
+                printf "%s\n" "1,${trim}d" w | ed -s $inotify_log 2> /dev/null
+                eout "{mon} inotify log file trimmed"
+	fi
 	rm -f $tmpdir/* $quardir/* $sessdir/* 2> /dev/null
 	eout "{glob} logs and quarantine data cleared by user request (-p)" 1
 }
@@ -749,7 +838,7 @@ get_filestat() {
 		file_group=`$stat -f '%Sg' "$file"`
 		file_mode=`$stat -f '%p' "$file" | sed 's/^.//'`
 		file_size=`$stat -f '%Z' "$file"`
-		md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+		md5_hash="$($md5sum "$file" | awk '{print$1}')"
 		if [ "$times" ]; then
 			# atime mtime ctime (since epoch)
 			file_times=`$stat -f '%a:%m:%c' "$file"`
@@ -759,7 +848,7 @@ get_filestat() {
 		file_group=`$stat -c '%G' "$file"`
 		file_mode=`$stat -c '%a' "$file"`
 		file_size=`$stat -c '%s' "$file"`
-		md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+		md5_hash="$($md5sum "$file" | awk '{print$1}')"
 		if [ "$times" ]; then
 			# atime mtime ctime (since epoch)
 			file_times=`$stat -c '%X:%Y:%Z' "$file"`
@@ -774,7 +863,7 @@ record_hit() {
 		get_filestat "$file" 1
 		file_name=`basename "$file" 2> /dev/null`
 		if [ ! "$md5_hash" ]; then
-			md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+			md5_hash="$($md5sum "$file" | awk '{print$1}')"
 		fi
 		eout "{hit} malware hit $hitname found for $file"
 		echo "${utime}:${hostid}:${hitname}:${md5_hash}:${file_size}:${file_owner}.${file_group}:${file_mode}:${file_times}:${file}" >> $hits_history
@@ -832,7 +921,7 @@ quar_hitlist() {
 				file_namewc=`echo "$file_name" | $wc -m`
 				file_hitname=`egrep -m1 "$file" $hitlist | awk '{print$1}'`
 				if [ ! "$md5_hash" ]; then
-					md5_hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+					md5_hash="$($md5sum "$file" | awk '{print$1}')"
 				fi
 				if [ "$pub" == "1" ]; then
 					chattr -ia "$file" >> /dev/null 2>&1
@@ -886,7 +975,11 @@ clamselector() {
 
                 isclamd=`pgrep -x clamd 2> /dev/null`
                 isclamd_root=`pgrep -x -u root clamd 2> /dev/null`
-                if [ "$isclamd" ] && [ "$isclamd_root" ]; then
+                if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
+			clamd=1
+			clambin="clamdscan"
+			clamopts="--fdpass -c $remote_clamd_config"
+                elif [ "$isclamd" ] && [ "$isclamd_root" ]; then
                         clamd=1
                         clambin="clamdscan"
                         clamopts="$clamdscan_extraopts"
@@ -906,22 +999,35 @@ clamselector() {
 
                 if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
                         clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
-                elif [ -f "$(which $clambin 2> /dev/null)" ]; then
-                        clamscan=`which $clambin 2> /dev/null`
+                elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
+                        clamscan=`command -v $clambin 2> /dev/null`
                 else
                         scan_clamscan="0"
                 fi
                 if [ "$clamd" ] && [ "$scan_clamscan" == "1" ]; then
                         ## test clamdscan for errors as not all 'running' instances of clamd are indicative of working setup
-                        clamd_test=`$clamscan --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?`
+                        if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
+                                try=0
+                                while [ $try -le $remote_clamd_max_retry ]; do
+                                        clamd_test=`$clamscan $clamopts --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?`
+                                        if [ "$clamd_test" = "2" ]; then
+                                                ((try++))
+                                                sleep $remote_clamd_retry_sleep
+                                        else
+                                                break
+                                        fi
+                                done
+                        else
+                                clamd_test=`$clamscan --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?`
+                        fi
                         if [ ! -z "$clamd_test" ]; then
                                 clamd=0
                                 clambin="clamscan"
                                 clamopts="$clamscan_extraopts --max-filesize=$clamscan_max_filesize --max-scansize=$[clamscan_max_filesize*2] -d $runtime_hdb -d $runtime_ndb $clamav_db -r"
                                 if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
                                         clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
-                                elif [ -f "$(which $clambin 2> /dev/null)" ]; then
-                                        clamscan=`which $clambin 2> /dev/null`
+                                elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
+                                        clamscan=`command -v $clambin 2> /dev/null`
                                 else
                                         scan_clamscan="0"
                                 fi
@@ -934,9 +1040,13 @@ clamselector() {
 scan() {
 	scan_start_hr=`date +"%b %e %Y %H:%M:%S %z"`
 	scan_start=`date +"%s"`
-	lbreakifs set
-	spath=$(for i in `echo "$1" | tr '?' '*' | tr ',' '\n'`; do echo "\"$(printf %q $i)\""; done | tr '\n' ' ' | sed 's/.$//')
-	lbreakifs unset
+	spaths_str=$(echo "$1" | tr '?' '*' | tr ',' '\n')
+	spaths=()
+	while IFS= read -r pattern; do
+	  [ -z "$pattern" ] && continue
+	  expanded=( $pattern )
+	  spaths+=( "${expanded[@]}" )
+	done <<< "$spaths_str"
 	days="$2"
 	scanid="$datestamp.$$"
 	if [ "$file_list" ]; then
@@ -979,10 +1089,12 @@ scan() {
 		fi
 	fi
 	
-	if [ ! "${spath:1:1}" = "/" ]; then
-		eout "{scan} must use absolute path, provided relative path $spath" 1
-		exit
-	fi
+	for p in "${spaths[@]}"; do
+	  if [ "${p:0:1}" != "/" ]; then
+	    eout "{scan} must use absolute path, provided relative path '$p'" 1
+	    exit 1
+	  fi
+	done
 
 	scan_session="$tmpdir/.sess.$$"
 	find_results="$tmpdir/.find.$$"
@@ -1074,8 +1186,9 @@ scan() {
 		file_list_start=`date +"%s"`
 		tmpscandir="$tmpdir/scan.$RANDOM"
 		mkdir -p "$tmpscandir" ; chmod 700 $tmpscandir ; cd $tmpscandir
-		eout "{scan} executed eval $nice_command $find $spath $spath_tmpdirs -maxdepth $scan_max_depth $find_opts -type f $find_recentopts -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group"
-		eval $nice_command $find /lmd_find/ $(echo $spath) $spath_tmpdirs -maxdepth $scan_max_depth $find_opts -type f $find_recentopts -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group 2> /dev/null | grep -E -vf $ignore_paths > $find_results
+		eout "{scan} executed $nice_command $find $spath $spath_tmpdirs -maxdepth $scan_max_depth $find_opts -type f $find_recentopts -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group"
+		#$nice_command $find /lmd_find/ $(echo $spath) $spath_tmpdirs -maxdepth $scan_max_depth $find_opts -type f $find_recentopts -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group 2> /dev/null | grep -E -vf $ignore_paths > $find_results
+		$nice_command $find "${spaths[@]}" $spath_tmpdirs -maxdepth "$scan_max_depth" $find_opts -type f $find_recentopts -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
 		cd $tmpdir
 		rm -rf $tmpscandir
 		if [ "$rscan" = "1" ] && [ "$scan_export_filelist" == "1" ]; then
@@ -1141,11 +1254,26 @@ scan() {
 			eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
 		fi
 
-		echo "$(date +"%b %d %H:%M:%S") $(hostname -s) clamscan start"  >> $clamscan_log
+		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan start"  >> $clamscan_log
 		clamscan_results="$tmpdir/.clamscan.$$"
-		echo "$(date +"%b %d %H:%M:%S") $(hostname -s) executed: $nice_command $clamscan $clamopts --infected --no-summary -f $find_results" >> $clamscan_log
-		$nice_command $clamscan $clamopts --infected --no-summary -f $find_results > $clamscan_results 2>> $clamscan_log
-		clamscan_return=$?
+		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) executed: $nice_command $clamscan $clamopts --infected --no-summary -f $find_results" >> $clamscan_log
+		if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
+                        try=0
+                        while [ $try -le $remote_clamd_max_retry ]; do
+                                $nice_command $clamscan $clamopts --infected --no-summary -f $find_results > $clamscan_results 2>> $clamscan_log
+                                clamscan_return=$?
+                                if [ "$clamscan_return" == "2" ]; then
+                                        ((try++))
+                                        echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $retry_sleep seconds ($try)"
+                                        sleep $remote_clamd_retry_sleep
+                                else
+                                        break
+                                fi
+                        done
+                else
+                        $nice_command $clamscan $clamopts --infected --no-summary -f $find_results > $clamscan_results 2>> $clamscan_log
+                        clamscan_return=$?
+                fi
 		if [ "$clamscan_return" == "2" ]; then
 			if [ "$quarantine_on_error" == "0" ] || [ -z "$quarantine_on_error" ]; then
 				quarantine_hits=0
@@ -1159,7 +1287,7 @@ scan() {
 			quarantine_hits=0
                         eout "{scan} clamscan returned a fatal error in scan results, check $clamscan_log for details; quarantine has been disabled!" 1
 		fi
-		echo "$(date +"%b %d %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> $clamscan_log
+		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> $clamscan_log
 
 		lbreakifs set
 		for hit in `grep -E -v 'ERROR$|lstat()|no reply from clamd' $clamscan_results | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//'`; do
@@ -1186,7 +1314,7 @@ scan() {
 			unset ignore_hit
 		done
 		lbreakifs unset
-		echo "$(date +"%b %d %H:%M:%S") $(hostname -s) clamscan end"  >> $clamscan_log
+		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end"  >> $clamscan_log
 	else
 		if [ -z "$hscan" ]; then
 			eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
@@ -1249,6 +1377,9 @@ scan() {
 		elif [ "$email_ignore_clean" == "0" ]; then
 			genalert file $nsess
 		fi
+		if [ "$email_panel_user_alerts" == "1" ]; then
+			genalert panel $nsess
+		fi
 	fi
 	mv $scan_session $nsess_hits
 	rm -f $find_results $scan_session $runtime_ndb $runtime_hdb $runtime_hexstrings $clamscan_results
@@ -1282,7 +1413,7 @@ scan_strlen() {
 scan_stage1() {
 	file="$1"
 	clean_check="$2"
-	hash=`eval $md5sum \"$file\" | awk '{print$1}'`
+	hash="$($md5sum "$file" | awk '{print$1}')"
 	if [ -z "$runtime_hexstrings" ]; then
 		sigignore
 		gensigs
@@ -1397,6 +1528,69 @@ genalert() {
 					eout "{alert} sent scan report to $email_addr" 1
 				fi
 			fi
+        elif [ "$type" == "panel" ] && [ -f "$file" ]; then 
+	    eout "{panel} Detecting control panel and sending alerts..." 1
+            control_panel=""
+            detect_control_panel
+            if [ "$control_panel" == "error" ] || [ "$control_panel" == "unknown" ]; then 
+                eout "{panel} Failed to set control panel. Will not send alerts to control panel account contacts." 1
+            else 
+            	# Sort malware hits from $file and map the detected files to their system user owner
+            	file_hits=$(awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag{print $3}' $file)
+            	for hit in $file_hits; do
+            	    hit_line=$(grep "$hit" $file)
+            	    if [ -f "$hit" ]; then 
+            	        file_owner=$(stat -c "%U" $hit)
+            	    elif ! [ -f "$hit" ] && [ "$quarantine_hits" == "1" ] && [[ "$hit_line" == *"=>"* ]]; then 
+            	        quarantined_file=$(echo $hit_line | awk '{print $NF}')
+            	        file_owner=$(awk -F':' '/^[^#]/{print $1}' ${quarantined_file}.info)
+            	    fi   
+            	    echo "$file_owner : $hit" >> $tmpdir/.panel_alert.hits
+            	done 
+            	# Sort cleaned files too
+            	if [ "$quarantine_clean" == "1" ]; then 
+            	    for clean_file in $(cat $sessdir/clean.$$); do
+            	        if [ -f $clean_file ]; then 
+            	            clean_owner=$(stat -c "%U" $clean_file)
+            	        fi   
+            	        echo "$clean_owner : $clean_file" >> $tmpdir/.panel_alert.clean
+            	    done 
+            	fi   
+            	# Determine control panel, noop if error or none detected
+                eout "{panel} Detected control panel $control_panel. Will send alerts to control panel account contacts." 1
+                user_list=$(awk '{print $1}' $tmpdir/.panel_alert.hits | sort | uniq)
+		if [ -n "$user_list" ]; then
+                	for sys_user in $user_list; do
+                	    contact_emails=""
+                	    get_panel_contacts $control_panel $sys_user
+
+                	    grep "^$sys_user " $tmpdir/.panel_alert.hits | awk '{print $3}' > $tmpdir/.${sys_user}.hits
+                	    user_tot_hits=$($wc -l $tmpdir/.${sys_user}.hits | awk '{print$1}')
+                	    if [ -f $tmpdir/.panel_alert.clean ]; then 
+                	        grep "^$sys_user " $tmpdir/.panel_alert.clean | awk '{print $3}' > $tmpdir/.${sys_user}.clean
+                	        user_tot_cl=$($wc -l $tmpdir/.${sys_user}.clean | awk '{print$1}')
+                	    fi   
+
+                	    tmpf=$tmpdir/.${sys_user}.alert
+
+                	    if [ -f "$sendmail" ]; then 
+							echo "TO: $contact_emails" > $tmpf
+                	        echo "FROM: $email_panel_from" >> $tmpf
+                	        echo "REPLY-TO: $email_panel_replyto" >> $tmpf
+							echo -e "SUBJECT: $email_panel_alert_subj\n" >> $tmpf
+                	        . $email_panel_alert_etpl
+
+                	        cat $tmpf | $sendmail -t
+                	    elif [ -f "$mail" ] && [ "$control_panel" == "cpanel" ]; then 
+                	        . $email_panel_alert_etpl
+                	    	cat $tmpf | $mail -r $email_panel_from -s $email_panel_alert_subj $contact_emails
+                	    else 
+                	        eout "{panel} No compatible \$sendmail or \$mail binaries found, control panel account alerts disabled."
+                	    fi   
+                	done 
+		fi
+		rm -f $tmpdir/.panel_alert.hits $tmpdir/.panel_alert.clean $tmpdir/.${sys_user}.hits $tmpdir/.${sys_user}.clean $tmpf
+            fi   
 		elif [ "$type" == "daily" ] || [ "$type" == "digest" ]; then
 			inotify_start_time=`ps -p $(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1) -o lstart= 2> /dev/null`
 			scan_start_hr=`date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z"`
@@ -1458,12 +1652,25 @@ genalert() {
 	fi
 
 	if [ "$slack_alert" == "1" ]; then
-		if [ "$type" == "file" ] && [ -f "$file" ]; then
-			slack_response=$(curl -s -F "token=$slack_token" -F "file=@$file" -F "filename=$slack_subj" -F "channels=$slack_channels" -X POST https://slack.com/api/files.upload | grep -oP '^{"ok":true')
+		if [ "$type" == "file" ] && [ -f "$file" ] && [ -f "$curl" ]; then
+			slack_response=$($curl -s -F "token=$slack_token" -F "file=@$file" -F "filename=$slack_subj" -F "channels=$slack_channels" -X POST https://slack.com/api/files.upload | grep -oP '^{"ok":true')
 			if [ "$slack_response" ]; then
 				eout "{alert} scan report sent to slack channel(s): $slack_channels" 0
 			else
 				eout "{alert} could not upload scan report to slack channel(s), alert discarded" 1
+			fi
+		else
+			eout "{alert} could not upload scan report to slack channel(s), alert discarded" 1
+		fi
+	fi
+
+	if [ "$telegram_alert" == "1" ]; then
+		if [ "$type" == "file" ] && [ -f "$file" ]; then
+			telegram_response=$(curl -F "document=@$file" -F "caption=$telegram_file_caption" "https://api.telegram.org/$telegram_bot_token/sendDocument?chat_id=$telegram_channel_id" | grep -oP '^{"ok":true')
+			if [ "$telegram_response" ]; then
+				eout "{alert} scan report sent to telegram channel: $telegram_channel_id" 0
+			else
+				eout "{alert} could not upload scan report to telegram channel, alert discarded" 1
 			fi
 		fi
 	fi
@@ -1550,8 +1757,18 @@ monitor_cycle() {
 		fi
 		sleep $inotify_sleep
 		inotify_cycle_runtime=$[inotify_sleep+inotify_cycle_runtime]
-		sigignore 1
-		gensigs
+
+		if [ -f "$ignore_sigs" ]; then
+			ignore_sigs_current_md5=`md5sum $ignore_sigs | awk '{print$1}'`
+			if [ ! "$ignore_sigs_current_md5" == "$ignore_sigs_last_md5" ]; then
+				sigignore 1
+				gensigs
+				ignore_sigs_current_md5=`md5sum $ignore_sigs | awk '{print$1}'`
+	                        eout "{mon} regenerated signature files on ignore_sigs file change detected" 1
+			fi
+			ignore_sigs_last_md5="$ignore_sigs_current_md5"
+		fi
+
 		if [ "$scan_clamscan" == "1" ]; then
 			monitor_mode=1
 			clamselector
@@ -1563,14 +1780,47 @@ monitor_cycle() {
 		exit
 }
 
+cleanup_scanlist() {
+        # Checks for files that are already gone (temporary files, cache
+        # files, ...) and removes them from $monitor_scanlist, so we don't
+        # get errors and too many retries
+        TMP_FILE=$(mktemp -p /var/lib/maldetect/tmp)
+        lbreakifs set
+        for FILE in $(cat $monitor_scanlist); do
+                if [ -f "$FILE" ]; then
+                        echo "$FILE" >> $TMP_FILE
+                fi
+        done
+        lbreakifs unset
+        mv $TMP_FILE $monitor_scanlist
+}
+ 
+
 monitor_check() {
                 monitor_scanlist="$tmpdir/.monitor.scan.${RANDOM}${RANDOM}"
 		touch $monitor_scanlist ; chmod 600 $monitor_scanlist
-		$tlog $inotify_log inotify | grep -E "CREATE|MODIFY|MOVED_FROM|MOVED_TO" | grep -E -v '/.. ' | awk '{print$1}' | sort | uniq > $monitor_scanlist
+                $tlog $inotify_log inotify | grep -E " CREATE| MODIFY| MOVED_TO" | awk -F" CREATE| MODIFY| MOVED_TO" '{print $1}' | sort -u | grep -vf $ignore_paths> $monitor_scanlist
 		if [ "$scan_clamscan" == "1" ]; then
 	                clamscan_results="$tmpdir/.clamscan.result.${RANDOM}${RANDOM}"
 			touch $clamscan_results ; chmod 600 $clamscan_results
 	                $nice_command $clamscan $clamopts --infected --no-summary -f $monitor_scanlist > $clamscan_results 2>> $clamscan_log || clamscan_return=$?
+                        if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
+                                try=0
+                                while [ $try -le $remote_clamd_max_retry ]; do
+                                        cleanup_scanlist $monitor_scanlist
+                                        $nice_command $clamscan $clamopts --infected --no-summary -f $monitor_scanlist > $clamscan_results 2>> $clamscan_log
+                                        clamscan_return=$?
+                                        if [ "$clamscan_return" == "2" ]; then
+                                                ((try++))
+                                                echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $retry_sleep seconds ($try)" >> $clamscan_log
+                                                sleep $remote_clamd_retry_sleep
+                                        else
+                                                break
+                                        fi
+                                done
+                        else
+                                $nice_command $clamscan $clamopts --infected --no-summary -f $monitor_scanlist > $clamscan_results 2>> $clamscan_log || clamscan_return=$?
+                        fi
 			if [ "$inotify_verbose" == "1" ]; then
 				for file in `cat $monitor_scanlist | tr ' ' '%'`; do
 					file=`echo $file | tr '%' ' '`
@@ -1631,19 +1881,17 @@ monitor_init() {
 		eout "{mon} could not find inotifywait command, install yum package inotify-tools or download from https://github.com/rvoicilas/inotify-tools/wiki/" 1
 		exit
 	fi
-	
+
+	ksup=0
 	if [ -f "/boot/System.map-$(uname -r)" ]; then
-		ksup=`grep -i inotify_ /boot/System.map-$(uname -r)`
-		if [ -z "$ksup" ]; then
-			eout "{mon} kernel does not support inotify(), aborting." 1
-			exit
-		fi
-	elif [ -f "/boot/config-$(uname -r)" ]; then
+		ksup=`grep inotify_ /boot/System.map-$(uname -r)`
+	fi
+	if [ -f "/boot/config-$(uname -r)" ]; then
 		ksup=`grep -m1 CONFIG_INOTIFY /boot/config-$(uname -r)`
-		if [ -z "$ksup" ]; then
-			eout "{mon} kernel does not support inotify(), aborting." 1
-			exit
-		fi
+	fi
+	if [ -z "$ksup" ]; then
+		eout "{mon} kernel does not support inotify(), aborting." 1
+		exit
 	fi
 	
 	inotify_pid=`pgrep -f inotify.paths.[0-9]+`
@@ -1780,7 +2028,7 @@ monitor_init() {
                 if [ "$inotify_cpulimit" -gt "$max_cpulimit" ]; then
                         scan_cpulimit="0"
 		else
-	                nice_command="$cpulimit -l $scan_cpulimit -i $nice_command"
+	                nice_command="$cpulimit -l $scan_cpulimit -- $nice_command"
                 fi
         fi
 
@@ -1801,8 +2049,8 @@ monitor_init() {
 checkout() {
 	file="$1"
 	host=ftp.rfxn.com
-	user=anonymous
-	passwd=anonymous
+	user=anonymous@rfxn.com
+	passwd=anonymous@rfxn.com
 	upath=incoming
 	
 	cfile="$startdir/$file"
@@ -1952,7 +2200,7 @@ lmdup() {
 			doupdate=1
 		elif [ "$autoupdate_version_hashed" == "1" ]; then
 			eout "{update} hashing install files and checking against server..." 1
-			eval $md5sum $inspath/maldet $intfunc | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > $lmd_hash_file
+			$md5sum $inspath/maldet $intfunc | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > $lmd_hash_file
 			upstreamhash="$tmpwd/.lmdup_hashcheck$$"
 		        get_remote_file "$lmd_hash_url" "update" "1"
 			upstreamhash="$return_file"
@@ -1988,7 +2236,7 @@ lmdup() {
 
 		if [ -s "$tmpwd/${lmd_current_tgzfile}.md5" ] && [ -s "$tmpwd/${lmd_current_tgzfile}" ]; then
 			upstream_md5=`cat $tmpwd/${lmd_current_tgzfile}.md5 | awk '{print$1}'`
-			local_md5=`eval $md5sum $tmpwd/${lmd_current_tgzfile} | awk '{print$1}'`
+			local_md5=`$md5sum "$tmpwd/${lmd_current_tgzfile}" | awk '{print$1}'`
 			if [ ! "$upstream_md5" == "$local_md5" ]; then
 				eout "{update} unable to verify md5sum of ${lmd_current_tgzfile}, update failed!" 1
 				cd $inspath ; rm -rf $tmpwd
@@ -2074,7 +2322,7 @@ sigup() {
 	
 	if [ "$nver" != "$sig_version" ]; then
 		cd $tmpwd/
-		tar=`which tar 2> /dev/null`
+		tar=`command -v tar 2> /dev/null`
 		eout "{sigup} new signature set $nver available" 1
 		
 		eout "{sigup} downloading $sig_sigpack_url" 1
@@ -2087,7 +2335,7 @@ sigup() {
 		get_remote_file "${sig_clpack_url}.md5" "sigup" "1" "$tmpwd/maldet-clean.tgz.md5"
 		
 		if [ -f "$tmpwd/maldet-sigpack.tgz.md5" ]; then
-			sigpack_md5=`eval $md5sum maldet-sigpack.tgz | awk '{print$1}'`
+			sigpack_md5=`$md5sum maldet-sigpack.tgz | awk '{print$1}'`
 			sigpack_goodmd5=`cat maldet-sigpack.tgz.md5 | awk '{print$1}'`
 			if [ ! "$sigpack_md5" == "$sigpack_goodmd5" ]; then
 				eout "{sigup} unable to verify md5sum of maldet-sigpack.tgz, please try again or contact proj@rfxn.com" 1
@@ -2121,7 +2369,7 @@ sigup() {
 		fi
 		
 		if [ -f "$tmpwd/maldet-clean.tgz.md5" ]; then
-			clpack_md5=`eval $md5sum maldet-clean.tgz | awk '{print$1}'`
+			clpack_md5=`$md5sum maldet-clean.tgz | awk '{print$1}'`
 			clpack_goodmd5=`cat maldet-clean.tgz.md5 | awk '{print$1}'`
 			if [ ! "$clpack_md5" == "$clpack_goodmd5" ]; then
 				eout "{sigup} unable to verify md5sum of maldet-clean.tgz, please try again or contact proj@rfxn.com" 1
