@@ -5,15 +5,15 @@ inspath='/usr/local/maldetect'
 intcnf="$inspath/internals/internals.conf"
 
 if [ -f "$intcnf" ]; then
-	source $intcnf
+	. $intcnf
 else
 	echo "\$intcnf not found."
 	exit 1
 fi
 if [ -f "$cnf" ]; then
-	source $cnf
+	. $cnf
 	if [ -f "$compatcnf" ]; then
-	        source $compatcnf
+	        . $compatcnf
 	fi
 else
 	echo "could not find \$cnf, fatal error, bye."
