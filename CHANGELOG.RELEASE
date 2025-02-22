@@ -3,3 +3,5 @@ v1.6.6 | Feb 19 2025:
 [Fix] malware notification emails to ignore inactive siteworx users; pr #425
 [New] add reporting support for telegram channel; pr #378
 [New] add statistics collection and sending to ELK; pr #359
+[Fix] prune ignore_paths with find -prune; pr #423, issue #433
+[Fix] suppress excessive clamav temporary file inotify alerts by adding '/tmp/.*scantemp.*' to ignore_inotify; issue #431, #104

@@ -8,3 +8,4 @@
 ^/usr/local/maldetect*
 ^/dev/pts*
 ^/dev/null
+^/tmp/.*scantemp.*
