@@ -5,6 +5,7 @@ v1.6.6 | Feb 19 2025:
 [New] add statistics collection and sending to ELK; pr #359
 [Fix] prune ignore_paths with find -prune; pr #423, issue #433
 [Fix] suppress excessive clamav temporary file inotify alerts by adding '/tmp/.*scantemp.*' to ignore_inotify; issue #431, #104
+[Fix] consistent cron.daily file sourcing to allow configuration overrides; issue #401, #115
 
 v1.6.5 | Mar 27 2023:
 [Fix] monitor mode white space detection; issue #354
