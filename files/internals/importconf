@@ -303,7 +303,7 @@ inotify_minuid="$inotify_minuid"
 # This is the html/web root for users relative to homedir, when
 # this option is set, users will only have the webdir monitored
 # [ comma spaced list, clear option to default monitor user homedir ]
-inotify_docroot="public_html,public_ftp"
+inotify_docroot="$inotify_docroot"
 
 # Process CPU scheduling (nice) priority level for monitoring process.
 # [ -19 = high prio , 19 = low prio, default = 15 ]
