@@ -235,6 +235,7 @@ else
 				trap trap_exit 2
 				shift
 				spath="$1"
+				hrspath="$1"
 				shift
 				days="$1"
 				if [ -z "$spath" ]; then
