@@ -2,8 +2,8 @@
 #
 ##
 # Linux Malware Detect v2.0.1
-#             (C) 2002-2025, R-fx Networks <proj@rfxn.com>
-#             (C) 2025, Ryan MacDonald <ryan@rfxn.com>
+#             (C) 2002-2026, R-fx Networks <proj@rfxn.com>
+#             (C) 2026, Ryan MacDonald <ryan@rfxn.com>
 # This program may be freely redistributed under the terms of the GNU GPL v2
 ##
 #
@@ -19,7 +19,7 @@ find=$(command -v find 2>/dev/null)
 clamav_linksigs() {
         cpath="$1"
         if [ -d "$cpath" ]; then
-                rm -f "$cpath"/rfxn.* ; cp -f "$inspath/sigs/rfxn.ndb" "$inspath/sigs/rfxn.hdb" "$cpath/" 2> /dev/null
+                rm -f "$cpath"/rfxn.* ; cp -f "$inspath/sigs/rfxn.ndb" "$inspath/sigs/rfxn.hdb" "$inspath/sigs/rfxn.yara" "$cpath/" 2> /dev/null
                 rm -f "$cpath"/lmd.user.* ; cp -f "$inspath/sigs/lmd.user.ndb" "$inspath/sigs/lmd.user.hdb" "$cpath/" 2> /dev/null
         fi
 }
@@ -65,6 +65,9 @@ else
                 cp -f "$inspath.bk$$"/cron/* "$inspath/cron/"
 	fi
 	cp -f "$inspath.bk$$"/sigs/custom.* "$inspath/sigs/" >> /dev/null 2>&1
+	if [ -d "$inspath.bk$$"/sigs/custom.yara.d ]; then
+		cp -rf "$inspath.bk$$"/sigs/custom.yara.d "$inspath/sigs/" >> /dev/null 2>&1
+	fi
 	cp -f "$inspath.bk$$"/monitor_paths "$inspath/" >> /dev/null 2>&1
 	cp -pf "$inspath.bk$$"/clean/custom.* "$inspath/clean/" >> /dev/null 2>&1
 	cp -f CHANGELOG COPYING.GPL README "$inspath/"
@@ -80,6 +83,11 @@ fi
 if [ -d "/etc/cron.daily" ]; then
 	cp -f cron.daily /etc/cron.daily/maldet
 	chmod 755 /etc/cron.daily/maldet
+fi
+
+if [ -d "/etc/cron.weekly" ]; then
+	cp -f cron.watchdog /etc/cron.weekly/maldet-watchdog
+	chmod 755 /etc/cron.weekly/maldet-watchdog
 fi
 
 if [ -d "/etc/cron.d" ]; then
@@ -130,8 +138,8 @@ ln -fs "$logf" "$inspath/event_log"
 $inspath/maldet --alert-daily 2> /dev/null
 
 echo "Linux Malware Detect v$ver"
-echo "            (C) 2002-2025, R-fx Networks <proj@rfxn.com>"
-echo "            (C) 2025, Ryan MacDonald <ryan@rfxn.com>"
+echo "            (C) 2002-2026, R-fx Networks <proj@rfxn.com>"
+echo "            (C) 2026, Ryan MacDonald <ryan@rfxn.com>"
 echo "This program may be freely redistributed under the terms of the GNU GPL v2"
 echo ""
 echo "installation completed to $inspath"

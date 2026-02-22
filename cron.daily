@@ -4,13 +4,13 @@ export LMDCRON=1
 inspath='/usr/local/maldetect'
 intcnf="$inspath/internals/internals.conf"
 
-# prevent overlapping cron runs
+# prevent overlapping cron runs — use flock command form so the lock fd is
+# CLOEXEC and never inherited by backgrounded maldet -b scans
 LOCKFILE="$inspath/tmp/.cron.lock"
-if command -v flock >/dev/null 2>&1; then
-	exec 9>"$LOCKFILE"
-	if ! flock -n 9; then
-		exit 0
-	fi
+if command -v flock >/dev/null 2>&1 && [ -z "$_CRON_FLOCK" ]; then
+	export _CRON_FLOCK=1
+	flock -n "$LOCKFILE" "$0" "$@" || :
+	exit 0
 fi
 
 if [ -f "$intcnf" ]; then
@@ -52,7 +52,7 @@ if [ "$find" ]; then
 	tmpdirs="$tmpdir $varlibpath/sess $varlibpath/quarantine $varlibpath/pub"
 	for dir in $tmpdirs; do
 	 if [ -d "$dir" ]; then
-	  $find $dir -type f -mtime +${cron_prune_days} -print0 | xargs -0 rm -f >> /dev/null 2>&1
+	  $find "$dir" -type f -mtime +${cron_prune_days} -delete 2>/dev/null
 	 fi
 	done
 fi
@@ -64,12 +64,18 @@ fi
 
 if [ "$autoupdate_version" == "1" ]; then
 	# check for new release version
-	$inspath/maldet -d >> /dev/null 2>&1
+	$inspath/maldet -d 1 2>&1 | tail -20 >> "$inspath/logs/event_log"
+	if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+		echo "$(date) cron.daily: maldet -d (version update) failed" >> "$inspath/logs/event_log"
+	fi
 fi
 
 if [ "$autoupdate_signatures" == "1" ]; then
 	# check for new definition set
-	$inspath/maldet -u >> /dev/null 2>&1
+	$inspath/maldet -u 1 2>&1 | tail -20 >> "$inspath/logs/event_log"
+	if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+		echo "$(date) cron.daily: maldet -u (signature update) failed" >> "$inspath/logs/event_log"
+	fi
 fi
 
 # if we're running inotify monitoring, send daily hit summary
@@ -109,8 +115,26 @@ elif [ "$cron_daily_scan" == "1" ]; then
                     . /var/lib/dtc/saved_install_config
                 fi
                 $inspath/maldet -b -r ${conf_hosting_path:-/var/www/sites}/?/?/subdomains/?/html/ $scan_days >> /dev/null 2>&1
+	elif [ -d "/usr/local/cpanel" ] || [ -d "/var/cpanel" ]; then
+		# cPanel: parse /etc/userdatadomains for all document roots
+		# format: domain: user==owner==type==parent==/docroot==ip:port==
+		cpanel_paths="/home?/?/public_html/"
+		if [ -f /etc/userdatadomains ]; then
+			cpanel_extra=$(awk -F'==' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $5); if ($5 != "" && $5 != "/") print $5}' /etc/userdatadomains | sort -u | while IFS= read -r docroot; do
+				# skip paths already covered by the public_html glob
+				case "$docroot" in
+					/home*/public_html|/home*/public_html/*) continue ;;
+				esac
+				[ -d "$docroot" ] && printf '%s/,' "$docroot"
+			done)
+			cpanel_extra="${cpanel_extra%,}"
+			if [ -n "$cpanel_extra" ]; then
+				cpanel_paths="${cpanel_paths},${cpanel_extra}"
+			fi
+		fi
+		$inspath/maldet -b -r ${cpanel_paths},/var/www/,/usr/local/apache/htdocs/ $scan_days >> /dev/null 2>&1
 	else
-		# cpanel, interworx and other standard home/user/public_html setups
+		# interworx and other standard home/user/public_html setups
 	        $inspath/maldet -b -r /home?/?/public_html/,/var/www/,/usr/local/apache/htdocs/ $scan_days >> /dev/null 2>&1
 	fi
 fi

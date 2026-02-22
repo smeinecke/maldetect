@@ -14,7 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-ALL_TARGETS="centos6 centos7 rocky8 rocky9 ubuntu2004 ubuntu2404 debian12"
+ALL_TARGETS="centos6 centos7 rocky8 rocky9 rocky10 ubuntu2004 ubuntu2404 debian12 yara-x"
 
 usage() {
     echo "Usage: $0 [--os OS] [--filter PATTERN] [BATS_ARGS...]"
@@ -58,7 +58,7 @@ case "$OS" in
     debian12)
         DOCKERFILE="$SCRIPT_DIR/Dockerfile"
         ;;
-    centos6|centos7|rocky8|rocky9|ubuntu2004|ubuntu2404)
+    centos6|centos7|rocky8|rocky9|rocky10|ubuntu2004|ubuntu2404|yara-x)
         DOCKERFILE="$SCRIPT_DIR/Dockerfile.${OS}"
         ;;
     *)

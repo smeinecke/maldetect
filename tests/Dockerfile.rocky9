@@ -1,8 +1,9 @@
 FROM rockylinux:9-minimal
 RUN microdnf install -y \
-    bash findutils diffutils procps-ng \
+    bash curl findutils diffutils procps-ng \
     perl file ed hostname util-linux \
     wget ca-certificates gawk sed grep tar gzip \
+    && (microdnf install -y epel-release && microdnf install -y yara || true) \
     && microdnf clean all
 
 # Install BATS + helpers
@@ -19,6 +20,9 @@ RUN mkdir -p /opt/bats && \
 
 COPY . /opt/lmd-src
 COPY tests/ /opt/tests/
+
+# Ensure cron directories exist for watchdog install
+RUN mkdir -p /etc/cron.weekly
 
 # Pre-install LMD with test config
 RUN cd /opt/lmd-src && ./install.sh && \

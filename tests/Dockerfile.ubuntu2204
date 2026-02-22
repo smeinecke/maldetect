@@ -3,7 +3,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash coreutils findutils diffutils procps \
-    perl file inotify-tools ed \
+    perl file inotify-tools ed yara \
     wget curl ca-certificates gawk sed grep \
     && rm -rf /var/lib/apt/lists/*
 
@@ -21,6 +21,9 @@ RUN mkdir -p /opt/bats && \
 
 COPY . /opt/lmd-src
 COPY tests/ /opt/tests/
+
+# Ensure cron directories exist for watchdog install
+RUN mkdir -p /etc/cron.weekly
 
 RUN cd /opt/lmd-src && ./install.sh && \
     sed -i 's/^autoupdate_signatures=.*/autoupdate_signatures="0"/' /usr/local/maldetect/conf.maldet && \

@@ -1,7 +1,7 @@
 ##
 # Linux Malware Detect v2.0.1
-#             (C) 2002-2025, R-fx Networks <proj@rfxn.com>
-#             (C) 2025, Ryan MacDonald <ryan@rfxn.com>
+#             (C) 2002-2026, R-fx Networks <proj@rfxn.com>
+#             (C) 2026, Ryan MacDonald <ryan@rfxn.com>
 # This program may be freely redistributed under the terms of the GNU GPL v2
 ##
 #
@@ -108,7 +108,12 @@ prerun() {
 	if [ "$email_alert" == "1" ] && [ ! -f "$mail" ] && [ ! -f "$sendmail" ]; then
 		email_alert=0
 	fi
-	
+
+	if [ "$scan_yara" == "1" ] && [ -z "$yr" ] && [ -z "$yara" ]; then
+		eout "{yara} no yara or yr binary found, native YARA scanning disabled" 1
+		scan_yara=0
+	fi
+
 	if [ ! -f "$sig_user_hex_file" ]; then
 		touch $sig_user_hex_file
 		chmod 644 $sig_user_hex_file
@@ -118,7 +123,16 @@ prerun() {
 		touch $sig_user_md5_file
 		chmod 644 $sig_user_md5_file
 	fi
-	
+
+	if [ ! -f "$sig_user_yara_file" ]; then
+		touch "$sig_user_yara_file"
+		chmod 644 "$sig_user_yara_file"
+	fi
+	if [ ! -d "$sig_user_yara_dir" ]; then
+		mkdir -p "$sig_user_yara_dir"
+		chmod 755 "$sig_user_yara_dir"
+	fi
+
 	if [ "$scan_hexfifo" == "1" ]; then
 		mkfifo=`command -v mkfifo 2> /dev/null`
 		if [ ! -f "$mkfifo" ]; then
@@ -216,7 +230,7 @@ trap_exit() {
 			fi
 		fi
 		mv $scan_session $nsess_hits 2> /dev/null
-		rm -f $clamscan_results $find_results $runtime_hdb $runtime_hexstrings $runtime_ndb $scan_session $tmpdir/.find_killed.$scanid $tmpdir/.tmp* $tmpdir/.tmpf* $tmpf 2> /dev/null
+		rm -f $clamscan_results $find_results $runtime_hdb $runtime_hexstrings $runtime_ndb $scan_session $tmpdir/.find_killed.$scanid $tmpdir/.tmp* $tmpdir/.tmpf* $tmpdir/.yara_* $tmpf 2> /dev/null
 		eout "{glob} scan interrupt by user, aborting scan..." 1
 		eout "{scan} scan report saved, to view run: maldet --report $datestamp.$$" 1
 		if [ "$quarantine_hits" == "0" ] && [ ! "$tot_hits" == "0" ]; then
@@ -228,7 +242,7 @@ trap_exit() {
 
 clean_exit() {
 	mv -f $scan_session $nsess_hits 2> /dev/null
-	rm -f $clamscan_results $find_results $list $runtime_hdb $runtime_hexstrings $runtime_ndb $scan_session $tmpdir/.find_killed.$scanid $tmpdir/.tmp* $tmpdir/.tmpf* $tmpf 0 2> /dev/null
+	rm -f $clamscan_results $find_results $list $runtime_hdb $runtime_hexstrings $runtime_ndb $scan_session $tmpdir/.find_killed.$scanid $tmpdir/.tmp* $tmpdir/.tmpf* $tmpdir/.yara_* $tmpf 0 2> /dev/null
 }
 
 detect_control_panel() {
@@ -287,7 +301,9 @@ get_panel_contacts() {
 		;;
 		"interworx")
 			master_domain=$(/usr/local/interworx/bin/listaccounts.pex | grep "${user}" | awk '{print $2}')
-			contact_emails=$(siteworx -un --login_domain ${master_domain} -c Users -a listUsers -o json | python -c 'import json,sys;data=json.load(sys.stdin);emails=[elem["email"] for elem in data if elem["user_status"] == "active"];print(", ".join(emails))')
+			if [ -n "$master_domain" ]; then
+				contact_emails=$(siteworx -un --login_domain "${master_domain}" -c Users -a listUsers -o json | python -c 'import json,sys;data=json.load(sys.stdin);emails=[elem["email"] for elem in data if elem["user_status"] == "active"];print(", ".join(emails))')
+			fi
 		;;
 	esac
 }
@@ -341,7 +357,7 @@ get_remote_file() {
 		if [ "$web_proxy" ]; then
 			get_proxy_arg="-x http://$web_proxy"
 		fi
-		get_opts="-s $get_proxy_arg --connect-timeout $remote_uri_timeout --retry $remote_uri_retries $id"
+		get_opts="-sf $get_proxy_arg --connect-timeout $remote_uri_timeout --retry $remote_uri_retries $id"
 		get_output_arg='-o'
 	elif [ "$get_type" == "wget" ]; then
 		if [ "$web_proxy" ]; then
@@ -384,6 +400,23 @@ import_user_sigs() {
 		if [ -f "$return_file" ]; then
 			cp -f $return_file $sig_user_hex_file
 			eout "{importsigs} imported custom signature data from $import_custsigs_hex_url"
+		fi
+	fi
+	if [ "$import_custsigs_yara_url" ]; then
+		get_remote_file "$import_custsigs_yara_url" "importsigs" "1"
+		if [ -f "$return_file" ]; then
+			local yara_valid=1
+			if [ -n "$yr" ] && [ -f "$yr" ]; then
+				"$yr" check "$return_file" > /dev/null 2>&1 || yara_valid=0
+			elif [ -n "$yara" ] && [ -f "$yara" ]; then
+				"$yara" "$return_file" /dev/null > /dev/null 2>&1 || yara_valid=0
+			fi
+			if [ "$yara_valid" == "1" ]; then
+				cp -f "$return_file" "$sig_user_yara_file"
+				eout "{importsigs} imported custom YARA rules from $import_custsigs_yara_url"
+			else
+				eout "{importsigs} WARNING: downloaded YARA rules from $import_custsigs_yara_url failed syntax check, skipping import"
+			fi
 		fi
 	fi
 }
@@ -450,6 +483,7 @@ usage: maldet [OPTION] [ARGUMENT]
     -x|--exclude-regex REGEX    exclude matching paths
     -co|--config-option VAR=VAL override config options at runtime
     -U|--user USER              run as specified user
+                                (enable YARA: -co scan_yara=1)
 
   monitoring:
     -m|--monitor USERS|PATHS    start inotify real-time monitoring
@@ -520,7 +554,7 @@ SCAN FILTERS:
 MONITORING:
     -m, --monitor USERS|PATHS|FILE
        Start inotify kernel-level file create/modify monitoring
-       USERS: monitor homedirs for UIDs >= $inotify_minuid
+       USERS: monitor homedirs for UIDs >= inotify_minuid (default: 500)
        FILE:  extract paths from line-spaced file
        PATHS: comma-separated path list (no wildcards)
        e.g: maldet --monitor users
@@ -560,6 +594,22 @@ REPORTING:
 
     -l, --log
        View maldet event log
+
+YARA SCANNING:
+    Native YARA scanning invokes the yara (or yr from YARA-X) binary
+    independently of ClamAV. Enable via conf.maldet or runtime -co flag.
+
+    Config options (set in conf.maldet or via -co):
+      scan_yara              enable YARA scan stage [0|1] (default: 0)
+      scan_yara_timeout      YARA timeout in seconds (default: 300, 0=none)
+      scan_yara_scope        rule scope when ClamAV also active [all|custom]
+                             (default: custom)
+
+    Custom rules:
+      sigs/custom.yara       single-file YARA rules
+      sigs/custom.yara.d/    drop-in directory for .yar/.yara rule files
+
+    e.g: maldet -co scan_yara=1 -a /home/?/public_html
 
 UPDATES:
     -u, --update-sigs [--force]
@@ -608,6 +658,12 @@ clean() {
 			eout "{clean} rescanning $file_path for malware hits" 1
 			clean_state="1"
 			scan_stage1 "$file_path" >> /dev/null 2>&1
+			if [ -f "$file_path" ] && [ "$scan_yara" == "1" ]; then
+				local clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
+				echo "$file_path" > "$clean_yara_list"
+				scan_stage_yara "$clean_yara_list" >> /dev/null 2>&1
+				rm -f "$clean_yara_list"
+			fi
 			unset clean_state
 			if [ -f "$file_path" ]; then
 				echo "$file_path" >> $sessdir/clean.$$
@@ -630,6 +686,12 @@ clean() {
 			clean_state="1"
 			unset clean_failed
 			scan_stage1 "$file_path" 1 >> /dev/null 2>&1
+			if [ -f "$file_path" ] && [ "$scan_yara" == "1" ]; then
+				local clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
+				echo "$file_path" > "$clean_yara_list"
+				scan_stage_yara "$clean_yara_list" 1 >> /dev/null 2>&1
+				rm -f "$clean_yara_list"
+			fi
 			unset clean_state
 			if [ "$clean_failed" == "1" ]; then
 				eout "{clean} clean failed on $file" 1
@@ -755,79 +817,73 @@ view_report() {
 	rid="$1"
 	if [ "$rid" == "list" ]; then
 		tmpf="$tmpdir/.areps$$"
-		for file in `ls $sessdir/session.[0-9]* 2> /dev/null`; do
-			SCANID=`cat $file | grep "SCAN ID" | sed 's/SCAN ID/SCANID/'`
-			FILES=`cat $file | grep "TOTAL FILES" | sed 's/TOTAL //'`
-			HITS=`cat $file | grep "TOTAL HITS" | sed 's/TOTAL //'`
-			CLEAN=`cat $file | grep "TOTAL CLEANED" | sed 's/TOTAL //'`
-			TIME=`cat $file | grep -E "^TIME|^STARTED" | sed -e 's/TIME: //' -e 's/STARTED: //' | awk '{print$1,$2,$3,$4}'`
-			TIME_U=`date -d "$TIME" "+%s" 2> /dev/null`
-                        ETIME=`cat $file | grep "ELAPSED" | awk '{print$1,$2}' | sed 's/ELAPSED/RUNTIME/'`
+		for file in $(ls $sessdir/session.[0-9]* 2> /dev/null); do
+			SCANID=$(grep "SCAN ID" "$file" | sed 's/SCAN ID/SCANID/')
+			FILES=$(grep "TOTAL FILES" "$file" | sed 's/TOTAL //')
+			HITS=$(grep "TOTAL HITS" "$file" | sed 's/TOTAL //')
+			CLEAN=$(grep "TOTAL CLEANED" "$file" | sed 's/TOTAL //')
+			TIME=$(grep -E "^TIME|^STARTED" "$file" | sed -e 's/TIME: //' -e 's/STARTED: //' | awk '{print$1,$2,$3,$4}')
+			TIME_U=$(date -d "$TIME" "+%s" 2> /dev/null)
+			ETIME=$(grep "ELAPSED" "$file" | awk '{print$1,$2}' | sed 's/ELAPSED/RUNTIME/')
 			if [ -z "$ETIME" ]; then
 				ETIME="RUNTIME: unknown"
 			fi
 			if [ ! -z "$SCANID" ] && [ ! -z "$TIME" ]; then
-				clean_zero=`echo $CLEAN | awk '{print$2}'`
+				clean_zero=$(echo $CLEAN | awk '{print$2}')
 				if [ -z "$clean_zero" ]; then
 					CLEAN="CLEANED:  0"
 				fi
-				echo "$TIME_U | $TIME | $SCANID | $ETIME | $FILES | $HITS | $CLEAN" >> $tmpf
+				echo "$TIME_U | $TIME | $SCANID | $ETIME | $FILES | $HITS | $CLEAN" >> "$tmpf"
 			fi
 		done
 		if [ -f "$tmpf" ]; then
 			if [ "$OSTYPE" == "FreeBSD" ]; then
-				cat $tmpf | sort -k1 -n | cut -d'|' -f2-7 | column -t | more
+				sort -k1 -n "$tmpf" | cut -d'|' -f2-7 | column -t | more
 			else
-				cat $tmpf | sort -k1 -n | tac | cut -d'|' -f2-7 | column -t | more
+				sort -k1 -n "$tmpf" | tac | cut -d'|' -f2-7 | column -t | more
 			fi
-			rm -f $tmpf 2> /dev/null
+			rm -f "$tmpf" 2> /dev/null
 			exit 0
 		else
-			echo  "error no report data found"
+			eout "{report} no report data found" 1
 			exit 1
 		fi
 	fi
-	if [ -f "$sessdir/session.$rid" ] && [ ! -z "$(echo $2 | grep '\@')" ]; then
-	    if [ -f "$mail" ]; then
-		    cat $sessdir/session.$rid | $mail -s "$email_subj" "$2"
-		elif [ -f "$sendmail" ]; then
-		    if ! grep -q "SUBJECT: " "$sessdir/session.$rid"; then
-		        echo -e "SUBJECT: $email_subj\n$(cat $sessdir/session.$rid)" > $sessdir/session.$rid
-		    fi
-		    cat $sessdir/session.$rid | $sendmail -t "$2"
+	# Resolve "newest" or empty rid to the most recent scan ID
+	if [ "$rid" == "newest" ] || [ "$rid" == "" ]; then
+		if [ -f "$sessdir/session.last" ]; then
+			rid=$(cat "$sessdir/session.last")
 		else
-		    eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
-		    exit
+			eout "{report} no recent scan session found" 1
+			exit 1
 		fi
-
-        eout "{report} report ID $rid sent to $2" 1
+	fi
+	if [ ! -f "$sessdir/session.$rid" ]; then
+		eout "{report} no report found for scan ID $rid" 1
+		exit 1
+	fi
+	# Email report if second argument contains @
+	if [ ! -z "$(echo $2 | grep '\@')" ]; then
+		if [ -f "$mail" ]; then
+			cat "$sessdir/session.$rid" | $mail -s "$email_subj" "$2"
+		elif [ -f "$sendmail" ]; then
+			if ! grep -q "SUBJECT: " "$sessdir/session.$rid"; then
+				echo -e "SUBJECT: $email_subj\n$(cat "$sessdir/session.$rid")" > "$sessdir/session.$rid"
+			fi
+			cat "$sessdir/session.$rid" | $sendmail -t "$2"
+		else
+			eout "{report} no \$mail or \$sendmail binaries found, e-mail alerts disabled." 1
+			exit 1
+		fi
+		eout "{report} report ID $rid sent to $2" 1
 		exit
 	fi
-	if [ "$rid" == "" ] && [ -f "$sessdir/session.last" ]; then
-		rid=`cat $sessdir/session.last`
-		if [ "$2" == "dump" ]; then
-			cat $sessdir/session.$rid
-			exit
-		fi
-		$EDITOR $sessdir/session.$rid
-	elif [ -f "$sessdir/session.$rid" ]; then
-		if [ "$2" == "dump" ]; then
-			cat $sessdir/session.$rid
-			exit
-		fi
-		$EDITOR $sessdir/session.$rid
-	else
-		echo "{report} no report found, aborting."
-		exit
-	fi
+	# Display report to terminal
+	cat "$sessdir/session.$rid"
 }
 
 dump_report() {
-	rid="$1"
-	if [ "$rid" == "" ]; then
-		rid=`cat $sessdir/session.last`
-	fi
-	view_report $rid dump
+	view_report "$1"
 }
 
 view() {
@@ -1006,13 +1062,10 @@ quar_hitlist() {
 }
 
 clamselector() {
-        scan_max_filesize=`cat $sig_md5_file | cut -d':' -f2 | sort -n | tail -n1`
-        if [ "$scan_max_filesize" -gt "1" 2> /dev/null ]; then
-                scan_max_filesize=$[scan_max_filesize+1]
-                clamscan_max_filesize="${scan_max_filesize}"
-                scan_max_filesize="${scan_max_filesize}c"
+        sig_max_filesize=$(cat "$sig_md5_file" | cut -d':' -f2 | sort -n | tail -n1)
+        if [ "$sig_max_filesize" -gt "1" 2> /dev/null ]; then
+                clamscan_max_filesize=$((sig_max_filesize+1))
         else
-                scan_max_filesize="2048k"
                 clamscan_max_filesize="2592000"
         fi
 
@@ -1072,6 +1125,11 @@ clamselector() {
                                 clamd_test=`$clamscan --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?`
                         fi
                         if [ ! -z "$clamd_test" ]; then
+                                if [ "$scan_clamd_remote" == "1" ]; then
+                                        eout "{scan} warning: remote clamd test failed (rc=$clamd_test), falling back to local clamscan" 1
+                                else
+                                        eout "{scan} warning: local clamd test failed (rc=$clamd_test), falling back to clamscan" 1
+                                fi
                                 clamd=0
                                 clambin="clamscan"
                                 clamopts="$clamscan_extraopts --max-filesize=$clamscan_max_filesize --max-scansize=$[clamscan_max_filesize*2] -d $runtime_hdb -d $runtime_ndb $clamav_db -r"
@@ -1159,13 +1217,26 @@ scan() {
 	
 	hex_sigs=`$wc -l $sig_hex_file | awk '{print$1}'`
 	md5_sigs=`$wc -l $sig_md5_file | awk '{print$1}'`
-	yara_sigs=`grep -E -c ^rule $sig_yara_file | awk '{print$1}'`
+	yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)
+	user_yara_sigs=0
+	if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
+		user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$sig_user_yara_file" 2>/dev/null || true)))
+	fi
+	for _yar in "$sig_user_yara_dir"/*.yar "$sig_user_yara_dir"/*.yara; do
+		if [ -f "$_yar" ] && [ -s "$_yar" ]; then
+			user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$_yar" 2>/dev/null || true)))
+		fi
+	done
 	user_hex_sigs=`$wc -l $sig_user_hex_file | awk '{print$1}'`
 	user_md5_sigs=`$wc -l $sig_user_md5_file | awk '{print$1}'`
-	user_sigs=$[user_hex_sigs+user_md5_sigs]
-	tot_sigs=$[md5_sigs+hex_sigs+user_hex_sigs+user_md5_sigs+yara_sigs]
+	user_sigs=$[user_hex_sigs+user_md5_sigs+user_yara_sigs]
+	tot_sigs=$[md5_sigs+hex_sigs+yara_sigs+user_sigs]
 	if [ -z "$hscan" ]; then
-		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs YARA | $user_sigs USER)" 1
+		local yara_label="YARA"
+		if [ "$scan_yara" != "1" ]; then
+			yara_label="YARA(cav)"
+		fi
+		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
 	fi
 	ignore_fext_args=()
 	if [ -f "$ignore_file_ext" ]; then
@@ -1380,6 +1451,12 @@ scan() {
 		done
 		lbreakifs unset
 		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end"  >> $clamscan_log
+		if [ "$scan_yara" == "1" ]; then
+			local yara_filelist
+			yara_filelist=$(_yara_filter_filelist "$find_results")
+			scan_stage_yara "$yara_filelist"
+			rm -f "$yara_filelist"
+		fi
 	else
 		if [ -z "$hscan" ]; then
 			eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
@@ -1402,8 +1479,14 @@ scan() {
 			
 		done < $find_results
 		lbreakifs unset
+		if [ "$scan_yara" == "1" ]; then
+			local yara_filelist
+			yara_filelist=$(_yara_filter_filelist "$find_results")
+			scan_stage_yara "$yara_filelist"
+			rm -f "$yara_filelist"
+		fi
 	fi
-	
+
 	if [ -z "$hscan" ]; then
 		if [ ! "$set_background" == "1" ] && [ "$scan_clamscan" == "0" ] && [ -z "$single_filescan" ]; then
 			echo
@@ -1541,6 +1624,241 @@ scan_stage2() {
 	fi
 }
 
+_yara_filter_filelist() {
+	# Rebuild file list keeping only files that still exist and are readable.
+	# Filters out files quarantined (perms 000) by prior scan stages.
+	local src="$1" dst _yf
+	dst=$(mktemp "$tmpdir/.yara_flist.XXXXXX")
+	while IFS= read -r _yf; do
+		[ -f "$_yf" ] && [ -r "$_yf" ] && printf '%s\n' "$_yf"
+	done < "$src" > "$dst"
+	echo "$dst"
+}
+
+_yara_init_cache() {
+	# Cache YARA binary selection and --scan-list detection in globals.
+	# Called once per scan; monitor config-reload clears the cache.
+	if [ -n "$_yara_bin" ]; then
+		return
+	fi
+	if [ -n "$yr" ] && [ -f "$yr" ]; then
+		_yara_bin="$yr"
+		_yara_type="yr"
+	elif [ -n "$yara" ] && [ -f "$yara" ]; then
+		_yara_bin="$yara"
+		_yara_type="yara"
+	else
+		_yara_bin=""
+		_yara_type=""
+		_yara_has_scan_list=""
+		return
+	fi
+	_yara_has_scan_list=0
+	if [ "$_yara_type" == "yr" ]; then
+		if "$_yara_bin" scan --help 2>&1 | grep -q -- '--scan-list'; then
+			_yara_has_scan_list=1
+		fi
+	else
+		if "$_yara_bin" --help 2>&1 | grep -q -- 'scan-list'; then
+			_yara_has_scan_list=1
+		fi
+	fi
+}
+
+_yara_scan_rules() {
+	# Scan files with YARA using given rules argument and log label.
+	# Uses dynamic scoping to access parent locals from scan_stage_yara():
+	#   yara_bin, yara_type, has_scan_list, file_list,
+	#   yara_timeout_opts, yara_warn_opts, yara_results, yara_stderr,
+	#   yara_rc_file, nice_command, clean_check, clean_state,
+	#   scan_session, ignore_sigs
+	local rules_arg="$1"
+	local log_label="$2"
+
+	> "$yara_results"
+	> "$yara_stderr"
+
+	if [ "$has_scan_list" == "1" ]; then
+		if [ "$yara_type" == "yr" ]; then
+			YARA_RC="$yara_rc_file" $nice_command sh -c '"$@"; echo $? > "$YARA_RC"' -- \
+				"$yara_bin" scan --scan-list $yara_timeout_opts $yara_warn_opts $rules_arg "$file_list" \
+				> "$yara_results" 2> "$yara_stderr"
+		else
+			YARA_RC="$yara_rc_file" $nice_command sh -c '"$@"; echo $? > "$YARA_RC"' -- \
+				"$yara_bin" --scan-list $yara_timeout_opts $yara_warn_opts $rules_arg "$file_list" \
+				> "$yara_results" 2> "$yara_stderr"
+		fi
+	else
+		local pf_rc=0 pf_last=0 scan_file
+		while IFS= read -r scan_file; do
+			if [ ! -f "$scan_file" ]; then
+				continue
+			fi
+			if [ "$yara_type" == "yr" ]; then
+				YARA_RC="$yara_rc_file" $nice_command sh -c '"$@"; echo $? > "$YARA_RC"' -- \
+					"$yara_bin" scan $yara_timeout_opts $yara_warn_opts $rules_arg "$scan_file" \
+					>> "$yara_results" 2>> "$yara_stderr"
+			else
+				YARA_RC="$yara_rc_file" $nice_command sh -c '"$@"; echo $? > "$YARA_RC"' -- \
+					"$yara_bin" $yara_timeout_opts $yara_warn_opts $rules_arg "$scan_file" \
+					>> "$yara_results" 2>> "$yara_stderr"
+			fi
+			pf_last=$(cat "$yara_rc_file" 2>/dev/null || echo 0)
+			[ "$pf_last" -gt "$pf_rc" ] && pf_rc=$pf_last
+		done < "$file_list"
+		echo "$pf_rc" > "$yara_rc_file"
+	fi
+
+	# Log stderr (filter out expected "could not open/map" from quarantined files)
+	if [ -s "$yara_stderr" ]; then
+		local stderr_line
+		while IFS= read -r stderr_line; do
+			case "$stderr_line" in
+				*"could not open"*|*"could not map"*|*"can't open"*) continue ;;
+			esac
+			eout "{yara} warning: $stderr_line"
+		done < "$yara_stderr"
+	fi
+	local yara_rc
+	yara_rc=$(cat "$yara_rc_file" 2>/dev/null || echo 0)
+	if [ "$yara_rc" -gt 0 ]; then
+		eout "{yara} warning: $log_label exited with code $yara_rc"
+	fi
+
+	# Parse results: format is "RULE_NAME FILEPATH"
+	if [ -s "$yara_results" ]; then
+		local yara_line rule_name match_file signame ignore_hit
+		while IFS= read -r yara_line; do
+			rule_name="${yara_line%% *}"
+			match_file="${yara_line#* }"
+			if [ -z "$rule_name" ] || [ -z "$match_file" ]; then
+				continue
+			fi
+			signame="{YARA}$rule_name"
+			ignore_hit=$(echo "$signame" | grep -E -vf "$ignore_sigs")
+			if [ -n "$ignore_hit" ] && [ -f "$match_file" ]; then
+				# Skip if file already recorded by a prior scan stage (skip during clean verification)
+				if [ "$clean_state" != "1" ]; then
+					local esc_match_file
+					esc_match_file=$(printf '%s' "$match_file" | sed 's/[][.\\*^$()+?{|]/\\&/g')
+					if [ -n "$scan_session" ] && [ -f "$scan_session" ] && grep -qE " : ${esc_match_file}( =>|$)" "$scan_session"; then
+						continue
+					fi
+				fi
+				if [ "$clean_check" == "1" ]; then
+					clean_failed=1
+				else
+					record_hit "$match_file" "$signame"
+					quarantine "$match_file" "$signame"
+				fi
+			fi
+		done < "$yara_results"
+	fi
+}
+
+scan_stage_yara() {
+	local file_list="$1"
+	local clean_check="$2"
+	if [ ! -f "$file_list" ] || [ ! -s "$file_list" ]; then
+		return
+	fi
+
+	# Select yara binary from cache (populated once, cleared on config reload)
+	_yara_init_cache
+	if [ -z "$_yara_bin" ]; then
+		eout "{yara} no yara or yr binary available, skipping YARA scan stage"
+		return
+	fi
+	local yara_bin="$_yara_bin"
+	local yara_type="$_yara_type"
+
+	# Build list of rule files to scan
+	local yara_rules_list=$(mktemp "$tmpdir/.yara_rules.XXXXXX")
+	chmod 600 "$yara_rules_list"
+
+	# Include rfxn.yara if scope allows (when ClamAV disabled or scope=all)
+	if [ "$scan_clamscan" == "0" ] || [ "$scan_yara_scope" == "all" ]; then
+		if [ -f "$sig_yara_file" ] && [ -s "$sig_yara_file" ]; then
+			echo "$sig_yara_file" >> "$yara_rules_list"
+		fi
+	fi
+
+	# Always include custom rules
+	if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
+		echo "$sig_user_yara_file" >> "$yara_rules_list"
+	fi
+	if [ -d "$sig_user_yara_dir" ]; then
+		for yar_file in "$sig_user_yara_dir"/*.yar "$sig_user_yara_dir"/*.yara; do
+			if [ -f "$yar_file" ] && [ -s "$yar_file" ]; then
+				echo "$yar_file" >> "$yara_rules_list"
+			fi
+		done
+	fi
+
+	# Include compiled rules if available
+	local compiled_rules="$sigdir/compiled.yarc"
+	local has_compiled=0
+	if [ -f "$compiled_rules" ] && [ -s "$compiled_rules" ]; then
+		has_compiled=1
+	fi
+	if [ "$has_compiled" == "1" ]; then
+		if [ "$yara_type" == "yr" ]; then
+			"$yara_bin" scan -C "$compiled_rules" /dev/null > /dev/null 2>&1 || {
+				eout "{yara} warning: compiled rules ($compiled_rules) failed validation (engine: $yara_type), skipping"
+				has_compiled=0
+			}
+		else
+			"$yara_bin" -C "$compiled_rules" /dev/null > /dev/null 2>&1 || {
+				eout "{yara} warning: compiled rules ($compiled_rules) failed validation (engine: $yara_type), skipping"
+				has_compiled=0
+			}
+		fi
+	fi
+
+	if [ ! -s "$yara_rules_list" ] && [ "$has_compiled" == "0" ]; then
+		rm -f "$yara_rules_list"
+		return
+	fi
+
+	# Build yara command options
+	local yara_timeout_opts=""
+	local yara_warn_opts=""
+	if [ "$scan_yara_timeout" ] && [ "$scan_yara_timeout" != "0" ]; then
+		if [ "$yara_type" == "yr" ]; then
+			yara_timeout_opts="--timeout $scan_yara_timeout"
+		else
+			yara_timeout_opts="--timeout=$scan_yara_timeout"
+		fi
+	fi
+	if [ "$yara_type" == "yr" ]; then
+		yara_warn_opts="--disable-warnings"
+	else
+		yara_warn_opts="--no-warnings"
+	fi
+
+	local has_scan_list="$_yara_has_scan_list"
+
+	eout "{yara} starting native YARA scan stage..."
+
+	local yara_results yara_stderr yara_rc_file rules_file
+	yara_results=$(mktemp "$tmpdir/.yara_results.XXXXXX")
+	yara_stderr=$(mktemp "$tmpdir/.yara_stderr.XXXXXX")
+	yara_rc_file=$(mktemp "$tmpdir/.yara_rc.XXXXXX")
+
+	# Scan with text rules
+	while IFS= read -r rules_file; do
+		_yara_scan_rules "$rules_file" "$rules_file"
+	done < "$yara_rules_list"
+
+	# Scan with compiled rules if available
+	if [ "$has_compiled" == "1" ]; then
+		_yara_scan_rules "-C $compiled_rules" "compiled rules"
+	fi
+
+	rm -f "$yara_rules_list" "$yara_results" "$yara_stderr" "$yara_rc_file"
+	eout "{yara} native YARA scan stage completed"
+}
+
 gen_report() {
 	if [ -f "$scan_session" ]; then
 		tot_hits=`$wc -l $scan_session | awk '{print$1}'`
@@ -1604,17 +1922,28 @@ genalert() {
                 eout "{panel} Failed to set control panel. Will not send alerts to control panel account contacts." 1
             else 
             	# Sort malware hits from $file and map the detected files to their system user owner
-            	file_hits=$(awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag{print $3}' $file)
-            	for hit in $file_hits; do
-            	    hit_line=$(grep "$hit" $file)
-            	    if [ -f "$hit" ]; then 
-            	        file_owner=$(stat -c "%U" $hit)
-            	    elif ! [ -f "$hit" ] && [ "$quarantine_hits" == "1" ] && [[ "$hit_line" == *"=>"* ]]; then 
-            	        quarantined_file=$(echo $hit_line | awk '{print $NF}')
-            	        file_owner=$(awk -F':' '/^[^#]/{print $1}' ${quarantined_file}.info)
-            	    fi   
-            	    echo "$file_owner : $hit" >> $tmpdir/.panel_alert.hits
-            	done 
+            	while IFS= read -r hit_line; do
+            	    [ -z "$hit_line" ] && continue
+            	    if [[ "$hit_line" =~ ^(.*)[[:space:]]:[[:space:]](.*)[[:space:]]=\>[[:space:]](.*)$ ]]; then
+            	        hit_sig="${BASH_REMATCH[1]}"
+            	        hit_file="${BASH_REMATCH[2]}"
+            	        quarantined_file="${BASH_REMATCH[3]}"
+            	    elif [[ "$hit_line" =~ ^(.*)[[:space:]]:[[:space:]](.*)$ ]]; then
+            	        hit_sig="${BASH_REMATCH[1]}"
+            	        hit_file="${BASH_REMATCH[2]}"
+            	        quarantined_file=""
+            	    else
+            	        continue
+            	    fi
+            	    if [ -f "$hit_file" ]; then
+            	        file_owner=$(stat -c "%U" "$hit_file")
+            	    elif [ -n "$quarantined_file" ] && [ -f "${quarantined_file}.info" ]; then
+            	        file_owner=$(awk -F':' '/^[^#]/{print $1}' "${quarantined_file}.info")
+            	    else
+            	        continue
+            	    fi
+            	    echo "$file_owner : $hit_sig : $hit_file" >> "$tmpdir/.panel_alert.hits"
+            	done < <(awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag' "$file")
             	# Sort cleaned files too
             	if [ "$quarantine_clean" == "1" ]; then 
             	    for clean_file in $(cat $sessdir/clean.$$); do
@@ -1632,7 +1961,7 @@ genalert() {
                 	    contact_emails=""
                 	    get_panel_contacts $control_panel $sys_user
 
-                	    grep "^$sys_user " $tmpdir/.panel_alert.hits | awk '{print $3}' > $tmpdir/.${sys_user}.hits
+                	    grep "^$sys_user " "$tmpdir/.panel_alert.hits" | awk -F' : ' '{print $2" : "$3}' > "$tmpdir/.${sys_user}.hits"
                 	    user_tot_hits=$($wc -l $tmpdir/.${sys_user}.hits | awk '{print$1}')
                 	    if [ -f $tmpdir/.panel_alert.clean ]; then 
                 	        grep "^$sys_user " $tmpdir/.panel_alert.clean | awk '{print $3}' > $tmpdir/.${sys_user}.clean
@@ -1761,7 +2090,7 @@ genalert() {
 
 	if [ "$telegram_alert" == "1" ]; then
 		if [ -f "$file" ]; then
-			telegram_response=$(curl -F "document=@$file" -F "caption=$telegram_file_caption" "https://api.telegram.org/$telegram_bot_token/sendDocument?chat_id=$telegram_channel_id" | grep -oP '^{"ok":true')
+			telegram_response=$(curl -F "document=@$file" -F "caption=$telegram_file_caption" "https://api.telegram.org/bot$telegram_bot_token/sendDocument?chat_id=$telegram_channel_id" | grep -oP '^{"ok":true')
 			if [ "$telegram_response" ]; then
 				eout "{alert} scan report sent to telegram channel: $telegram_channel_id" 0
 			else
@@ -1853,6 +2182,7 @@ monitor_cycle() {
 		                        fi
 		                done
 		        fi
+			_yara_bin="" _yara_type="" _yara_has_scan_list=""
 			eout "{mon} reloaded configuration data" 1
 		fi
 		sleep $inotify_sleep
@@ -1957,6 +2287,9 @@ monitor_check() {
 			lbreakifs unset
 			scanned_count=`wc -l $monitor_scanlist | awk '{print$1}'`
 			eout "{mon} scanned ${scanned_count} new/changed files with clamav engine"
+			if [ "$scan_yara" == "1" ]; then
+				scan_stage_yara "$monitor_scanlist"
+			fi
 			rm -f $clamscan_results $monitor_scanlist
 		else
 			for file in `cat $monitor_scanlist | tr ' ' '%'`; do
@@ -1973,6 +2306,9 @@ monitor_check() {
 			done
 			scanned_count=`wc -l $monitor_scanlist | awk '{print$1}'`
 			eout "{mon} scanned ${scanned_count} new/changed files with native engine"
+			if [ "$scan_yara" == "1" ]; then
+				scan_stage_yara "$monitor_scanlist"
+			fi
 			rm -f $clamscan_results $monitor_scanlist
 		fi
 }
@@ -2231,6 +2567,14 @@ gensigs() {
 	rm -f $runtime_ndb $runtime_hdb $runtime_hexstrings 2> /dev/null
 	ln -fs $runtime_ndb $sigdir/lmd.user.ndb 2> /dev/null
 	ln -fs $runtime_hdb $sigdir/lmd.user.hdb 2> /dev/null
+	if [ ! -f "$sig_user_yara_file" ]; then
+		touch "$sig_user_yara_file"
+		chmod 644 "$sig_user_yara_file"
+	fi
+	if [ ! -d "$sig_user_yara_dir" ]; then
+		mkdir -p "$sig_user_yara_dir"
+		chmod 755 "$sig_user_yara_dir"
+	fi
 	if [ -s "$sig_user_hex_file" ]; then
 		cat "$sig_hex_file" "$sig_user_hex_file" | grep -vE '^\s*$' > $runtime_hexstrings
 	else
@@ -2512,7 +2856,16 @@ sigup() {
 			
 			hex_sigs=`$wc -l $sig_hex_file | awk '{print$1}'`
 			md5_sigs=`$wc -l $sig_md5_file | awk '{print$1}'`
-			yara_sigs=`grep -E -c ^rule $sig_yara_file | awk '{print$1}'`
+			yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)
+			user_yara_sigs=0
+			if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
+				user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$sig_user_yara_file" 2>/dev/null || true)))
+			fi
+			for _yar in "$sig_user_yara_dir"/*.yar "$sig_user_yara_dir"/*.yara; do
+				if [ -f "$_yar" ] && [ -s "$_yar" ]; then
+					user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$_yar" 2>/dev/null || true)))
+				fi
+			done
 			if [ ! -f "$sig_user_md5_file" ]; then
 				user_md5_sigs=0
 			else
@@ -2523,10 +2876,13 @@ sigup() {
 			else
 				user_hex_sigs=`$wc -l $sig_user_hex_file | awk '{print$1}'`
 			fi
-			user_sigs=$[user_hex_sigs+user_md5_sigs]
-			
-			tot_sigs=$[md5_sigs+hex_sigs+user_hex_sigs+user_md5_sigs+yara_sigs]
-			eout "{sigup} $tot_sigs signatures ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs YARA | $user_sigs USER)" 1
+			user_sigs=$[user_hex_sigs+user_md5_sigs+user_yara_sigs]
+			tot_sigs=$[md5_sigs+hex_sigs+yara_sigs+user_sigs]
+			local yara_label="YARA"
+			if [ "$scan_yara" != "1" ]; then
+				yara_label="YARA(cav)"
+			fi
+			eout "{sigup} $tot_sigs signatures ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
 		fi
 		cd $inspath
 		rm -rf $tmpwd

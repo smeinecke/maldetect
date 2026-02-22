@@ -1,16 +1,21 @@
-FROM centos:7
+FROM debian:12-slim
+ENV DEBIAN_FRONTEND=noninteractive
 
-# CentOS 7 is EOL — point to vault mirrors
-RUN sed -i 's|^mirrorlist=|#mirrorlist=|g; s|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-Base.repo
-
-RUN yum install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     bash coreutils findutils diffutils procps \
-    perl file ed \
-    wget curl ca-certificates gawk sed grep tar gzip which \
-    epel-release \
-    && yum install -y inotify-tools \
-    && yum install -y yara || true \
-    && yum clean all
+    perl file inotify-tools ed \
+    wget curl ca-certificates gawk sed grep \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install YARA-X (yr) instead of classic yara
+RUN YARA_X_VERSION=1.13.0 && \
+    YARA_X_SHA256=b93fb0b87016c60498c26b8a17d2617bbc49f5d5b1a291cde5b09658ce93bb69 && \
+    wget -qO /tmp/yr.tar.gz \
+      "https://github.com/VirusTotal/yara-x/releases/download/v${YARA_X_VERSION}/yara-x-v${YARA_X_VERSION}-x86_64-unknown-linux-gnu.gz" && \
+    echo "${YARA_X_SHA256}  /tmp/yr.tar.gz" | sha256sum -c - && \
+    tar xzf /tmp/yr.tar.gz -C /usr/local/bin && \
+    chmod 755 /usr/local/bin/yr && \
+    rm -f /tmp/yr.tar.gz
 
 # Install BATS + helpers
 RUN mkdir -p /opt/bats && \
@@ -30,7 +35,9 @@ COPY tests/ /opt/tests/
 # Ensure cron directories exist for watchdog install
 RUN mkdir -p /etc/cron.weekly
 
+# Pre-install LMD with test config
 RUN cd /opt/lmd-src && ./install.sh && \
+    # Disable network-dependent features for deterministic tests
     sed -i 's/^autoupdate_signatures=.*/autoupdate_signatures="0"/' /usr/local/maldetect/conf.maldet && \
     sed -i 's/^autoupdate_version=.*/autoupdate_version="0"/' /usr/local/maldetect/conf.maldet && \
     sed -i 's/^autoupdate_version_hashed=.*/autoupdate_version_hashed="0"/' /usr/local/maldetect/conf.maldet && \
@@ -40,6 +47,7 @@ RUN cd /opt/lmd-src && ./install.sh && \
     sed -i 's/^scan_ignore_root=.*/scan_ignore_root="0"/' /usr/local/maldetect/conf.maldet && \
     sed -i 's/^scan_tmpdir_paths=.*/scan_tmpdir_paths=""/' /usr/local/maldetect/conf.maldet
 
+# Save clean state for test resets
 RUN cp /usr/local/maldetect/conf.maldet /usr/local/maldetect/conf.maldet.clean && \
     cp -a /usr/local/maldetect/sigs /usr/local/maldetect/sigs.clean
 

@@ -1,8 +1,10 @@
-FROM rockylinux:10
-RUN dnf install -y \
+FROM rockylinux/rockylinux:10
+RUN dnf install -y --allowerasing \
     bash coreutils findutils diffutils procps-ng \
-    perl file inotify-tools ed \
+    perl file ed hostname util-linux \
     wget curl ca-certificates gawk sed grep tar gzip \
+    && (dnf install -y inotify-tools || true) \
+    && (dnf install -y --enablerepo=crb yara || true) \
     && dnf clean all
 
 # Install BATS + helpers
@@ -19,6 +21,9 @@ RUN mkdir -p /opt/bats && \
 
 COPY . /opt/lmd-src
 COPY tests/ /opt/tests/
+
+# Ensure cron directories exist for watchdog install
+RUN mkdir -p /etc/cron.weekly
 
 RUN cd /opt/lmd-src && ./install.sh && \
     sed -i 's/^autoupdate_signatures=.*/autoupdate_signatures="0"/' /usr/local/maldetect/conf.maldet && \

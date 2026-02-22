@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        os: [debian12, centos6, centos7, rocky8, rocky9, ubuntu2004, ubuntu2404]
+        os: [debian12, centos6, centos7, rocky8, rocky9, rocky10, ubuntu2004, ubuntu2404, yara-x]
       fail-fast: false
     steps:
       - uses: actions/checkout@v4

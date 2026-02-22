@@ -7,6 +7,12 @@ LMD_INSTALL="${LMD_INSTALL:-/usr/local/maldetect}"
 # Restore clean config
 cp "$LMD_INSTALL/conf.maldet.clean" "$LMD_INSTALL/conf.maldet"
 
+# Restore internals.conf if a backup exists (from tests that modify it)
+if [ -f "$LMD_INSTALL/internals/internals.conf.bak" ]; then
+    cp "$LMD_INSTALL/internals/internals.conf.bak" "$LMD_INSTALL/internals/internals.conf"
+    rm -f "$LMD_INSTALL/internals/internals.conf.bak"
+fi
+
 # Restore clean signature files (sigignore modifies sigs in place)
 if [ -d "$LMD_INSTALL/sigs.clean" ]; then
     rm -rf "$LMD_INSTALL/sigs"
@@ -21,6 +27,9 @@ rm -rf "$LMD_INSTALL/tmp/"*
 # Reset custom signatures
 > "$LMD_INSTALL/sigs/custom.md5.dat"
 > "$LMD_INSTALL/sigs/custom.hex.dat"
+> "$LMD_INSTALL/sigs/custom.yara"
+rm -rf "$LMD_INSTALL/sigs/custom.yara.d"
+mkdir -p "$LMD_INSTALL/sigs/custom.yara.d"
 
 # Clear ignore files
 > "$LMD_INSTALL/ignore_paths"
