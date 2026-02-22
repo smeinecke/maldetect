@@ -4,6 +4,15 @@ export LMDCRON=1
 inspath='/usr/local/maldetect'
 intcnf="$inspath/internals/internals.conf"
 
+# prevent overlapping cron runs
+LOCKFILE="$inspath/tmp/.cron.lock"
+if command -v flock >/dev/null 2>&1; then
+	exec 9>"$LOCKFILE"
+	if ! flock -n 9; then
+		exit 0
+	fi
+fi
+
 if [ -f "$intcnf" ]; then
 	. $intcnf
 else
@@ -88,6 +97,9 @@ elif [ "$cron_daily_scan" == "1" ]; then
 	elif [ -d "/var/customers/webs" ]; then
 		# froxlor
 		$inspath/maldet -b -r /var/customers/webs/ $scan_days >> /dev/null 2>&1
+	elif [ -d "/opt/webdir" ] && [ -d "/etc/nginx/bx" ]; then
+		# Bitrix
+		$inspath/maldet -b -r /home/bitrix/www/,/home/bitrix/ext_www/?/ $scan_days >> /dev/null 2>&1
         elif [ -d "/usr/local/vesta" ] || [ -d "/usr/local/hestia" ]; then
                 # VestaCP or HestiaCP
                 $inspath/maldet -b -r /home/?/web/?/public_html/,/home/?/web/?/public_shtml/,/home/?/tmp/,/home/?/web/?/private/ $scan_days >> /dev/null 2>&1

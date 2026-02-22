@@ -1,4 +1,76 @@
-v1.6.6.1  | Feb 25 2025:
+v2.0.1 | Feb 21 2026:
+[Fix] find_recentopts incorrectly escaping find options to the right of
+      ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442
+[Fix] persist configuration value inotify_docroot between upgrades; issue #439
+[Fix] monitor_check() clamd fatal errors (no reply from clamd) no longer treated
+      as malware hits causing false quarantines; issue #454, #447
+[Fix] upgrade install no longer kills inotify monitoring; use systemctl restart
+      when systemd is available; issue #414
+[Fix] cron.daily overlapping runs prevented with flock-based lockfile; issue #373
+[Fix] quarantine.hist missing signature name in batch quarantine (-q SCANID);
+      use grep -F for literal file matching instead of egrep regex; issue #399
+[Fix] Slack alerting updated from deprecated files.upload API to
+      files.getUploadURLExternal + files.completeUploadExternal; issue #458
+[Fix] Slack and Telegram alerts now fire in monitor mode digest/daily reports,
+      not just single-file scan alerts; issue #387
+[Fix] unrecognized CLI arguments now return exit code 1 instead of 0; issue #366
+[Fix] monitor_check() no longer launches clamscan/native engine with empty file list,
+      avoiding unnecessary CPU usage during idle monitor periods; issue #459
+[Fix] scan_ignore_user/scan_ignore_group with non-existent user/group no longer
+      causes find to error out and return empty file list; issue #335
+[Fix] replace ed dependency with tail/cat for inotify log and event log trimming,
+      preserving file inode for inotifywait; ed no longer required for monitor mode;
+      issue #308
+[Fix] empty -regex expressions no longer cause find errors when --include-regex or
+      --exclude-regex are not specified; issue #72
+[Fix] ignore_file_ext, --exclude-regex, --include-regex, and ignore_paths prune
+      broken after eval removal; convert from string variables with embedded quotes
+      to bash arrays for correct find argument passing; issue #446, #438, #450
+[Fix] md5_hash typo in quarantine clean path causing incorrect hash passed to clean()
+[Fix] compat.conf suppress_cleanhit mapping had contradictory logic (always false);
+      corrected to migrate old suppress_cleanhit to new email_ignore_clean
+[Fix] maldet.sh init script syntax errors: missing semicolons between RETVAL=$? and
+      conditional on lines 68 and 82
+[Fix] replace predictable temp files ($RANDOM/$$) with mktemp across functions library
+[Fix] cleanup_scanlist() hardcoded wrong path /var/lib/maldetect/tmp; use $tmpdir
+[Fix] placeholder username in cPanel cpapi2 fallback in get_panel_contacts()
+[Fix] sigup() swapped user_hex_sigs/user_md5_sigs variable assignments causing
+      incorrect signature count reporting
+[Fix] undefined $retry_sleep in clamd remote retry log messages; use
+      $remote_clamd_retry_sleep
+[Fix] break used outside loop context in get_remote_file(); replaced with return
+[Fix] ignore_sigs file not created when both ignore_paths and ignore_sigs missing;
+      elif changed to independent if
+[Fix] inotify cpulimit block incorrectly referenced $scan_cpulimit instead of
+      $inotify_cpulimit in monitor_init()
+[Fix] importconf Slack scope reference updated from files:write:user to
+      files:write, files:read
+[Fix] $intfunc variable name typo in maldet error message
+[Fix] install.sh GPL output missing v2 qualifier
+[Fix] typo "orginal" corrected to "original" in usage_long() and man page
+[Fix] missing ;; terminator before esac in maldet wildcard case
+[Fix] quote critical variable expansions in mkdir/chmod/chown/rm/source commands
+[Fix] replace deprecated which with command -v in maldet and install.sh
+[Fix] HEX stdin mode (hexstring.pl) had swapped arguments causing scan failures
+      when scan_hexfifo=0
+[Change] modernize all backtick command substitutions to $() in internals.conf and
+      install.sh
+[Change] update copyright headers to 2025 across all files (hexfifo.pl, hexstring.pl,
+      maldet header(), install.sh output)
+[Change] unify domain references from r-fx.org to rfxn.com across all file headers
+[Change] rewrite usage_short() and usage_long() with categorized sections, complete
+      option coverage (-co, -U, --web-proxy, -h), argument placeholders, and
+      consistent formatting; replace runtime variables with literal text
+[Change] version bump to v2.0.1
+[New] cron.daily Bitrix panel detection (/opt/webdir + /etc/nginx/bx); issue #381
+[New] BATS test infrastructure with Docker CI; 17 test files covering install/CLI,
+      MD5 scanning, HEX scanning, quarantine, ignore files, config options, cron,
+      reporting, signatures, file list generation, string length analysis, logging,
+      purge, compat.conf migrations, hook scanning, resource control, and version
+[New] GitHub Actions CI workflow with 9-OS matrix: CentOS 6/7, Rocky 8/9/10,
+      Ubuntu 20.04/22.04/24.04, Debian 12
+
+v1.6.6.1 | Feb 25 2025:
 [Fix] find_recentopts incorrectly escaping find options to the right of ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442
 [Fix] persist configuration value inotify_docroot between upgrades; issue #439
 

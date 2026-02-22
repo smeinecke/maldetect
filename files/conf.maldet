@@ -1,7 +1,7 @@
 ##
-# Linux Malware Detect v1.6.6
-#             (C) 2002-2025, R-fx Networks <proj@r-fx.org>
-#             (C) 2025, Ryan MacDonald <ryan@r-fx.org>
+# Linux Malware Detect v2.0.1
+#             (C) 2002-2025, R-fx Networks <proj@rfxn.com>
+#             (C) 2025, Ryan MacDonald <ryan@rfxn.com>
 # This program may be freely redistributed under the terms of the GNU GPL v2
 ##
 #
@@ -54,9 +54,9 @@ slack_alert="0"
 # The file name of the file that will be uploaded to slack channel(s)
 slack_subj="maldet alert from $(hostname)"
 
-# Slack authentication token.
-# Requires scope: files:write:user
-# more information https://api.slack.com/methods/files.upload
+# Slack authentication token (Bot or User token).
+# Requires scopes: files:write, files:read
+# more information https://api.slack.com/methods/files.getUploadURLExternal
 slack_token="AUTH_TOKEN"
 
 # Comma-separated list of channel names or IDs

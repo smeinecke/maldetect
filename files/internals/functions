@@ -1,7 +1,7 @@
 ##
-# Linux Malware Detect v1.6.6
-#             (C) 2002-2025, R-fx Networks <proj@r-fx.org>
-#             (C) 2025, Ryan MacDonald <ryan@r-fx.org>
+# Linux Malware Detect v2.0.1
+#             (C) 2002-2025, R-fx Networks <proj@rfxn.com>
+#             (C) 2025, Ryan MacDonald <ryan@rfxn.com>
 # This program may be freely redistributed under the terms of the GNU GPL v2
 ##
 #
@@ -47,15 +47,15 @@ prerun() {
 		fi
 		maldet_log="$userbasedir/$user/event_log"
 		clamscan_log="$userbasedir/$user/clamscan_log"
-                mkdir -p $quardir $sessdir $tmpdir 2> /dev/null
-		chmod 711 $userbasedir 2> /dev/null
-		touch $maldet_log 2> /dev/null
-		chown -R ${user}.root $userbasedir/$user 2> /dev/null
-		chmod 750 $userbasedir/$user $quardir $sessdir $tmpdir 2> /dev/null
-		chmod 640 $maldet_log 2> /dev/null
-		cd $tmpdir
+                mkdir -p "$quardir" "$sessdir" "$tmpdir" 2> /dev/null
+		chmod 711 "$userbasedir" 2> /dev/null
+		touch "$maldet_log" 2> /dev/null
+		chown -R "${user}.root" "$userbasedir/$user" 2> /dev/null
+		chmod 750 "$userbasedir/$user" "$quardir" "$sessdir" "$tmpdir" 2> /dev/null
+		chmod 640 "$maldet_log" 2> /dev/null
+		cd "$tmpdir"
 	else
-		echo $ver > $lmd_version_file
+		echo "$ver" > "$lmd_version_file"
 	fi
 	
 	if [ ! -d "$sigdir" ]; then
@@ -182,10 +182,13 @@ eout() {
 		touch $maldet_log
 	fi
 	if [ "$maldet_log_truncate" == "1" ]; then
-		log_size=`$wc -l $maldet_log | awk '{print$1}'`
+		log_size=$($wc -l "$maldet_log" | awk '{print$1}')
 		if [ "$log_size" -ge "20000" ]; then
 			trim=1000
-			printf "%s\n" "$trim,${log_size}d" w | ed -s $maldet_log 2> /dev/null
+			local tmplog=$(mktemp "${maldet_log}.trim.XXXXXX")
+			tail -n +"$((trim + 1))" "$maldet_log" > "$tmplog" 2>/dev/null
+			cat "$tmplog" > "$maldet_log" 2>/dev/null
+			rm -f "$tmplog"
 		fi
 	fi
 	if [ ! "$msg" == "" ]; then
@@ -279,7 +282,7 @@ get_panel_contacts() {
 			if [ -f /var/cpanel/users/${user} ]; then
 				contact_emails=$(awk -F '=' '/^CONTACTEMAIL/{print $2}'  /var/cpanel/users/${user} | sed '/^ *$/d' | tr '\n' ',' | sed 's/,$//')
 			else
-				contact_emails=$(cpapi2 --user=herpaderpadoo --output=xml CustInfo contactemails | grep -o 'value>.*</value' | sed -r 's,(</)?value>?,,g;/^$/d' | tr '\n' ',' | sed 's/,$//')
+				contact_emails=$(cpapi2 --user=${user} --output=xml CustInfo contactemails | grep -o 'value>.*</value' | sed -r 's,(</)?value>?,,g;/^$/d' | tr '\n' ',' | sed 's/,$//')
 			fi
 		;;
 		"interworx")
@@ -301,7 +304,7 @@ get_remote_file() {
 	fi
 	if [ -z "$get_uri" ]; then
 		eout "{internal} missing or invalid URI passed to get_remote_file()" 1
-		break
+		return 1
 	fi
 	if [ -z "$service" ]; then
 		svc="internal"
@@ -351,8 +354,8 @@ get_remote_file() {
 	if [ "$save_path" ]; then
 		tmpf="$save_path"
 	else
-		tmpf="$tmpdir/.tmpf_get.${RANDOM}"
-		touch $tmpf ; chmod 600 $tmpf
+		tmpf=$(mktemp "$tmpdir/.tmpf_get.XXXXXX")
+		chmod 600 "$tmpf"
 		get_file=`echo "$get_uri" | tr '/' '\n' | tail -n1`
 	fi
 
@@ -434,57 +437,92 @@ clamav_linksigs() {
 usage_short() {
 cat <<EOF
 signature set: $sig_version
-usage maldet [-h|--help] [-a|--scan-all PATH] [-r|--scan-recent PATH DAYS]
-      [-f|--file-list PATH] [-i|--include-regex] [-x|--exclude-regex]
-      [-b|--background] [-m|--monitor] [-k|--kill-monitor] [-c|--checkout]
-      [-q|--quarantine] [-s|--restore] [-n|--clean] [-l|--log] [-e|--report]
-      [-u|--update-sigs] [-d|--update-ver]
+usage: maldet [OPTION] [ARGUMENT]
+
+  scanning:
+    -a|--scan-all PATH          scan all files in path
+    -r|--scan-recent PATH DAYS  scan recently created/modified files
+    -f|--file-list FILE         scan files from a file list
+    -b|--background             run scan in the background
+
+  scan filters:
+    -i|--include-regex REGEX    include only matching paths
+    -x|--exclude-regex REGEX    exclude matching paths
+    -co|--config-option VAR=VAL override config options at runtime
+    -U|--user USER              run as specified user
+
+  monitoring:
+    -m|--monitor USERS|PATHS    start inotify real-time monitoring
+    -k|--kill-monitor           stop inotify monitoring
+
+  quarantine & restore:
+    -q|--quarantine SCANID      quarantine hits from scan
+    -n|--clean SCANID           clean malware from scan hits
+    -s|--restore FILE|SCANID    restore quarantined file(s)
+
+  reporting:
+    -e|--report [SCANID]        view scan report
+    -E|--dump-report SCANID     dump report to stdout
+    -l|--log                    view event log
+
+  updates:
+    -u|--update-sigs            update malware signatures
+    -d|--update-ver             update maldet version
+
+  other:
+    -p|--purge                  clear logs, quarantine, temp data
+    -c|--checkout FILE          submit suspected malware to rfxn.com
+    --web-proxy IP:PORT         set HTTP/HTTPS proxy
+    -h|--help                   show detailed help
 EOF
 }
 
 usage_long() {
 cat<<EOF
 signature set: $sig_version
-usage $0 [ OPTION ]
-    -b, --background
-      Execute operations in the background, ideal for large scans
-      e.g: maldet -b -r /home/?/public_html 7
+usage: maldet [OPTION] [ARGUMENT]
 
-    -u, --update-sigs [--force]
-       Update malware detection signatures from rfxn.com
-
-    -d, --update-ver [--force]
-       Update the installed version from rfxn.com
-
-    -f, --file-list
-       Scan files or paths defined in line spaced file
-       e.g: maldet -f /root/scan_file_list
+SCANNING:
+    -a, --scan-all PATH
+       Scan all files in path (default: /home, wildcard: ?)
+       e.g: maldet -a /home/?/public_html
 
     -r, --scan-recent PATH DAYS
        Scan files created/modified in the last X days (default: 7d, wildcard: ?)
        e.g: maldet -r /home/?/public_html 2
 
-    -a, --scan-all PATH
-       Scan all files in path (default: /home, wildcard: ?)
-       e.g: maldet -a /home/?/public_html
+    -f, --file-list FILE
+       Scan files or paths defined in line-spaced file
+       e.g: maldet -f /root/scan_file_list
 
+    -b, --background
+       Execute operations in the background, ideal for large scans
+       e.g: maldet -b -r /home/?/public_html 7
+
+SCAN FILTERS:
     -i, --include-regex REGEX
-       Include paths/files from file list based on supplied posix-egrep regular
-       expression.
-       e.g: To include only paths named wp-content and files ending in .php:
-       --include-regex ".*/wp-content/.*|.*.php$"
+       Include paths/files based on POSIX egrep regular expression
+       e.g: maldet --include-regex ".*/wp-content/.*|.*.php\$"
 
     -x, --exclude-regex REGEX
-       Exclude paths/files from file list based on supplied posix-egrep regular
-       expression.
-       e.g: To exclude paths containing 'wp-content/w3tc/' and core files:
-       --exclude-regex ".*wp-content/w3tc/.*|.*core.[0-9]+$"
+       Exclude paths/files based on POSIX egrep regular expression
+       e.g: maldet --exclude-regex ".*wp-content/w3tc/.*|.*core.[0-9]+\$"
 
-    -m, --monitor USERS|PATHS|FILE|RELOAD
-       Run maldet with inotify kernel level file create/modify monitoring
-       If USERS is specified, monitor user homedirs for UID's > 500
-       If FILE is specified, paths will be extracted from file, line spaced
-       If PATHS are specified, must be comma spaced list, NO WILDCARDS!
+    -co, --config-option VAR=VALUE[,VAR=VALUE,...]
+       Override conf.maldet config options at runtime
+       e.g: maldet --config-option email_addr=you@domain.com,quarantine_hits=1
+
+    -U, --user USER
+       Run as specified user, for user quarantine or viewing user reports
+       e.g: maldet --user nobody --report
+       e.g: maldet --user nobody --restore 050910-1534.21135
+
+MONITORING:
+    -m, --monitor USERS|PATHS|FILE
+       Start inotify kernel-level file create/modify monitoring
+       USERS: monitor homedirs for UIDs >= $inotify_minuid
+       FILE:  extract paths from line-spaced file
+       PATHS: comma-separated path list (no wildcards)
        e.g: maldet --monitor users
        e.g: maldet --monitor /root/monitor_paths
        e.g: maldet --monitor /home/mike,/home/ashton
@@ -492,49 +530,56 @@ usage $0 [ OPTION ]
     -k, --kill-monitor
        Terminate inotify monitoring service
 
-    -c, --checkout FILE
-       Upload suspected malware to rfxn.com for review & hashing into signatures
-
-    -l, --log
-       View maldet log file events
-
-    -e, --report SCANID email
-       View scan report of most recent scan or of a specific SCANID and optionally
-       e-mail the report to a supplied e-mail address
-       e.g: maldet --report
-       e.g: maldet --report list
-       e.g: maldet --report 050910-1534.21135
-       e.g: maldet --report SCANID user@domain.com
-
-    -s, --restore FILE|SCANID
-       Restore file from quarantine queue to orginal path or restore all items from
-       a specific SCANID
-       e.g: maldet --restore $varlibpath/quarantine/config.php.23754
-       e.g: maldet --restore 050910-1534.21135
-
+QUARANTINE & RESTORE:
     -q, --quarantine SCANID
-       Quarantine all malware from report SCANID
+       Quarantine all malware from scan report
        e.g: maldet --quarantine 050910-1534.21135
 
     -n, --clean SCANID
-       Try to clean & restore malware hits from report SCANID
+       Try to clean & restore malware hits from scan report
        e.g: maldet --clean 050910-1534.21135
 
-    -U, --user USER
-       Set execution under specified user, ideal for restoring from user quarantine or
-       to view user reports.
-       e.g: maldet --user nobody --report
-       e.g: maldet --user nobody --restore 050910-1534.21135
+    -s, --restore FILE|SCANID
+       Restore file from quarantine to original path, or restore all
+       items from a specific scan
+       e.g: maldet --restore /usr/local/maldetect/quarantine/config.php.23754
+       e.g: maldet --restore 050910-1534.21135
 
-    -co, --config-option VAR1=VALUE,VAR2=VALUE,VAR3=VALUE
-       Set or redefine the value of $cnffile config options
-       e.g: maldet --config-option email_addr=you@domain.com,quarantine_hits=1
+REPORTING:
+    -e, --report [SCANID] [email]
+       View scan report of most recent scan or of a specific SCANID;
+       optionally e-mail the report to a supplied address
+       e.g: maldet --report
+       e.g: maldet --report list
+       e.g: maldet --report 050910-1534.21135
+       e.g: maldet --report 050910-1534.21135 user@domain.com
 
+    -E, --dump-report SCANID
+       Dump scan report to stdout for a specific SCANID
+       e.g: maldet --dump-report 050910-1534.21135
+
+    -l, --log
+       View maldet event log
+
+UPDATES:
+    -u, --update-sigs [--force]
+       Update malware detection signatures from rfxn.com
+
+    -d, --update-ver [--force]
+       Update the installed version from rfxn.com
+
+OTHER:
     -p, --purge
-       Clear logs, quarantine queue, session and temporary data.
+       Clear logs, quarantine queue, session and temporary data
+
+    -c, --checkout FILE
+       Upload suspected malware to rfxn.com for review & hashing into signatures
 
     --web-proxy IP:PORT
-       Enable use of HTTP/HTTPS proxy for all remote URL calls. 
+       Set HTTP/HTTPS proxy for all remote URL calls
+
+    -h, --help
+       Show this help message
 EOF
 }
 
@@ -792,13 +837,16 @@ view() {
 
 purge() {
 	:> $maldet_log
-        log_size=`$wc -l $inotify_log | awk '{print$1}'`
+        log_size=$($wc -l "$inotify_log" | awk '{print$1}')
         if [ "$inotify_trim" ]; then
                 trim=$(($log_size - 1000))
-                log_chars=`printf "%s\n" "1,${trim}p" | ed -s $inotify_log 2> /dev/null | wc -c`
-                tlog_new=$(( `cat $inspath/tmp/inotify` - $log_chars ))
-                echo $tlog_new > $inspath/tmp/inotify
-                printf "%s\n" "1,${trim}d" w | ed -s $inotify_log 2> /dev/null
+                log_chars=$(head -n "$trim" "$inotify_log" 2>/dev/null | wc -c)
+                tlog_new=$(( $(cat "$inspath/tmp/inotify") - $log_chars ))
+                echo "$tlog_new" > "$inspath/tmp/inotify"
+                local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
+                tail -n +"$((trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
+                cat "$tmplog" > "$inotify_log" 2>/dev/null
+                rm -f "$tmplog"
                 eout "{mon} inotify log file trimmed"
 	fi
 	rm -f $tmpdir/* $quardir/* $sessdir/* 2> /dev/null
@@ -919,7 +967,10 @@ quar_hitlist() {
 				get_filestat "$file" 1
 				file_name=`basename "$file"`
 				file_namewc=`echo "$file_name" | $wc -m`
-				file_hitname=`egrep -m1 "$file" $hitlist | awk '{print$1}'`
+				file_hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
+				if [ -z "$file_hitname" ]; then
+					file_hitname="unknown"
+				fi
 				if [ ! "$md5_hash" ]; then
 					md5_hash="$($md5sum "$file" | awk '{print$1}')"
 				fi
@@ -941,8 +992,8 @@ quar_hitlist() {
 				fi
 				if [ "$quarantine_clean" == "1" ] && [ ! "$clean_state" == "1" ]; then
 					unset clean_state
-					hitname=`cat $hitlist | grep $file | awk '{print$1}'`
-					clean "$quardir/$file_name.$rnd" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hah" "$file"
+					hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
+					clean "$quardir/$file_name.$rnd" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
 				fi
 				
 			fi
@@ -1073,7 +1124,8 @@ scan() {
 	if [ ! -f "$ignore_paths" ]; then
 		touch $ignore_paths
 		chmod 640 $ignore_paths
-	elif [ ! -f "$ignore_sigs" ]; then
+	fi
+	if [ ! -f "$ignore_sigs" ]; then
 		touch $ignore_sigs
 		chmod 640 $ignore_sigs
 	fi
@@ -1096,10 +1148,8 @@ scan() {
 	  fi
 	done
 
-	scan_session="$tmpdir/.sess.$$"
-	find_results="$tmpdir/.find.$$"
-	touch $find_results
-	touch $scan_session
+	scan_session=$(mktemp "$tmpdir/.sess.XXXXXX")
+	find_results=$(mktemp "$tmpdir/.find.XXXXXX")
 	
 	sigignore
 	gensigs
@@ -1117,14 +1167,11 @@ scan() {
 	if [ -z "$hscan" ]; then
 		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs YARA | $user_sigs USER)" 1
 	fi
+	ignore_fext_args=()
 	if [ -f "$ignore_file_ext" ]; then
 		if [ ! "$(cat $ignore_file_ext)" == "" ]; then
 			for i in `cat $ignore_file_ext`; do
-				if [ "$ignore_fext" == "" ]; then
-					ignore_fext="-not -iname \"*$i\""
-				else
-					ignore_fext="$ignore_fext -not -iname \"*$i\""
-				fi
+				ignore_fext_args+=(-not -iname "*$i")
 			done
 		fi
 	fi
@@ -1133,19 +1180,27 @@ scan() {
 	fi
 	if [ "$scan_ignore_user" ]; then
 		for i in `echo $scan_ignore_user | tr ', ' ' '`; do
-			if [ "$ignore_user" == "" ]; then
-				ignore_user="-not -user $i"
+			if id "$i" >/dev/null 2>&1; then
+				if [ "$ignore_user" == "" ]; then
+					ignore_user="-not -user $i"
+				else
+					ignore_user="$ignore_user -not -user $i"
+				fi
 			else
-				ignore_user="$ignore_user -not -user $i"
+				eout "{scan} scan_ignore_user: user '$i' does not exist, skipping" 1
 			fi
 		done
 	fi
 	if [ "$scan_ignore_group" ]; then
 		for i in `echo $scan_ignore_group | tr ', ' ' '`; do
-			if [ "$ignore_group" == "" ]; then
-				ignore_group="-not -group $i"
+			if getent group "$i" >/dev/null 2>&1; then
+				if [ "$ignore_group" == "" ]; then
+					ignore_group="-not -group $i"
+				else
+					ignore_group="$ignore_group -not -group $i"
+				fi
 			else
-				ignore_group="$ignore_group -not -group $i"
+				eout "{scan} scan_ignore_group: group '$i' does not exist, skipping" 1
 			fi
 		done
 	fi
@@ -1171,31 +1226,32 @@ scan() {
 			scan_find_timeout=0
 		fi
 		if [ "$scan_find_timeout" -ge "60" ]; then
-			echo -e "sleep $scan_find_timeout\ntouch $tmpdir/.find_killed.$scanid\npkill -f lmd_find" > $tmpdir/.lmd_find_sleep.$$
-			sh -c "sh $tmpdir/.lmd_find_sleep.$$ >> /dev/null 2>&1 &" >> /dev/null 2>&1 &
-			rm -f $tmpdir/.lmd_find_sleep.$$ 2> /dev/null
+			lmd_find_sleep=$(mktemp "$tmpdir/.lmd_find_sleep.XXXXXX")
+			echo -e "sleep $scan_find_timeout\ntouch $tmpdir/.find_killed.$scanid\npkill -f lmd_find" > "$lmd_find_sleep"
+			sh -c "sh $lmd_find_sleep >> /dev/null 2>&1 &" >> /dev/null 2>&1 &
+			rm -f "$lmd_find_sleep" 2> /dev/null
 			eout "{scan} setting maximum execution time for 'find' file list: ${scan_find_timeout}sec" 1
 		fi
                 if [ -z "$hscan" ]; then
 			eout "{scan} setting nice scheduler priorities for all operations: cpunice $scan_cpunice , ionice $scan_ionice" 1
 		fi
 		file_list_start=`date +"%s"`
-		tmpscandir="$tmpdir/scan.$RANDOM"
-		mkdir -p "$tmpscandir" ; chmod 700 $tmpscandir ; cd $tmpscandir
+		tmpscandir=$(mktemp -d "$tmpdir/scan.XXXXXX")
+		chmod 700 "$tmpscandir" ; cd "$tmpscandir"
+		find_prune_args=()
 		if [[ -s "$ignore_paths" ]] && [[ -r "$ignore_paths" ]]; then
-		    find_prune=""
 		    while IFS= read -r ignore_path; do
 		        if [[ -n "$ignore_path" && -d "$ignore_path" ]]; then
-		            find_prune="${find_prune} -path \"$(printf '%q' "$ignore_path")\" -prune -o"
+		            find_prune_args+=(-path "$ignore_path" -prune -o)
 		        fi
 		    done < "$ignore_paths"
 		fi
 		if [ "$days" == "all" ]; then
-			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs $find_prune -maxdepth $scan_max_depth $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group"
-			$nice_command $find /lmd_find/ "${spaths[@]}" $spath_tmpdirs $find_prune -maxdepth "$scan_max_depth" $find_opts -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
+			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs ${find_prune_args[*]} -maxdepth $scan_max_depth $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize ${include_regex_args[*]} -not -perm 000 ${exclude_regex_args[*]} ${ignore_fext_args[*]} $ignore_root $ignore_user $ignore_group"
+			$nice_command $find /lmd_find/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
 		else
-			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs $find_prune -maxdepth $scan_max_depth $find_opts \( -mtime -${days} -o -ctime -${days} \) -type f -size +${scan_min_filesize}c -size -$scan_max_filesize $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group"
-			$nice_command $find /lmd_find/ "${spaths[@]}" $spath_tmpdirs $find_prune -maxdepth "$scan_max_depth" $find_opts  \( -mtime -${days} -o -ctime -${days} \) -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" $include_regex -not -perm 000 $exclude_regex $ignore_fext $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
+			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs ${find_prune_args[*]} -maxdepth $scan_max_depth $find_opts \( -mtime -${days} -o -ctime -${days} \) -type f -size +${scan_min_filesize}c -size -$scan_max_filesize ${include_regex_args[*]} -not -perm 000 ${exclude_regex_args[*]} ${ignore_fext_args[*]} $ignore_root $ignore_user $ignore_group"
+			$nice_command $find /lmd_find/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts  \( -mtime -${days} -o -ctime -${days} \) -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
 		fi
 
 		cd $tmpdir
@@ -1273,7 +1329,7 @@ scan() {
                                 clamscan_return=$?
                                 if [ "$clamscan_return" == "2" ]; then
                                         ((try++))
-                                        echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $retry_sleep seconds ($try)"
+                                        echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $remote_clamd_retry_sleep seconds ($try)"
                                         sleep $remote_clamd_retry_sleep
                                 else
                                         break
@@ -1466,9 +1522,9 @@ scan_stage2() {
 			val_hex=`$perl $hex_fifo_script $runtime_hexstrings`
 		else
 			if [ "$OSTYPE" == "FreeBSD" ]; then
-				val_hex=`$perl $runtime_hexstrings $hex_string_script $($od -v -N$scan_hexdepth -tx1 "$file" | cut -c12-256 | tr -d ' \n')`
+				val_hex=`$perl $hex_string_script $runtime_hexstrings $($od -v -N$scan_hexdepth -tx1 "$file" | cut -c12-256 | tr -d ' \n')`
 			else
-				val_hex=`$perl $runtime_hexstrings $hex_string_script $($od -v -w$scan_hexdepth -N$scan_hexdepth -tx1 "$file" | tr -d '\n ')`
+				val_hex=`$perl $hex_string_script $runtime_hexstrings $($od -v -w$scan_hexdepth -N$scan_hexdepth -tx1 "$file" | tr -d '\n ')`
 			fi
 		fi
 		if [ ! -z "$val_hex" ]; then
@@ -1500,13 +1556,16 @@ trim_log() {
 	log="$1"
 	logtrim="$2"
 	if [ -f "$log" ]; then
-		log_size=`$wc -l $log | awk '{print$1}'`
+		log_size=$($wc -l "$log" | awk '{print$1}')
 		if [ "$log_size" -gt "$logtrim" 2> /dev/null ]; then
-			trim=$[logtrim/10]
-			printf "%s\n" "$trim,${log_size}d" w | ed -s $log 2> /dev/null
+			trim=$((logtrim/10))
+			local tmplog=$(mktemp "${log}.trim.XXXXXX")
+			tail -n +"$((trim + 1))" "$log" > "$tmplog" 2>/dev/null
+			cat "$tmplog" > "$log" 2>/dev/null
+			rm -f "$tmplog"
 		fi
 	elif [ ! -f "$log" ] && [ "$3" == "1" ]; then
-		touch $log ; chmod 640 $log
+		touch "$log" ; chmod 640 "$log"
 	fi
 }
 
@@ -1631,7 +1690,7 @@ genalert() {
 			$tlog $suspend_history digest.susp.alert >> /dev/null 2>&1
 
 			if [ ! -z "$(cat $tmpdir/.digest.alert.hits)" ]; then
-				tmpf="$tmpdir/.alert.$RANDOM.$$"
+				tmpf=$(mktemp "$tmpdir/.alert.XXXXXX")
 				if [ "$tot_hits" -gt "$tot_files" ]; then
 					tot_files="$tot_hits"
 				fi
@@ -1652,7 +1711,10 @@ genalert() {
 				else
 					eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
 				fi
-				rm -f $tmpf $tmpdir/.digest.alert.hits $tmpdir/.digest.clean.hits $tmpdir/.digest.monitor.alert $tmpdir/.digest.susp.hits
+				# set file for slack/telegram alerts below
+				file="$tmpf"
+				digest_tmpf="$tmpf"
+				rm -f $tmpdir/.digest.alert.hits $tmpdir/.digest.clean.hits $tmpdir/.digest.monitor.alert $tmpdir/.digest.susp.hits
 			fi
 		else
 			eout "{alert} file input error, alert discarded."
@@ -1661,10 +1723,34 @@ genalert() {
 	fi
 
 	if [ "$slack_alert" == "1" ]; then
-		if [ "$type" == "file" ] && [ -f "$file" ] && [ -f "$curl" ]; then
-			slack_response=$($curl -s -F "token=$slack_token" -F "file=@$file" -F "filename=$slack_subj" -F "channels=$slack_channels" -X POST https://slack.com/api/files.upload | grep -oP '^{"ok":true')
-			if [ "$slack_response" ]; then
-				eout "{alert} scan report sent to slack channel(s): $slack_channels" 0
+		if [ -f "$file" ] && [ -f "$curl" ]; then
+			local fsize=$($wc -c < "$file")
+			local upload_url upload_file_id
+			local url_response=$($curl -s -X POST "https://slack.com/api/files.getUploadURLExternal" \
+				-H "Authorization: Bearer $slack_token" \
+				-d "filename=$slack_subj" \
+				-d "length=$fsize")
+			upload_url=$(echo "$url_response" | grep -oP '"upload_url"\s*:\s*"\K[^"]+')
+			upload_file_id=$(echo "$url_response" | grep -oP '"file_id"\s*:\s*"\K[^"]+')
+			if [ "$upload_url" ] && [ "$upload_file_id" ]; then
+				$curl -s -X POST "$upload_url" -F "file=@$file" > /dev/null 2>&1
+				local channel_ids=""
+				for ch in $(echo "$slack_channels" | tr ',' ' '); do
+					if [ "$channel_ids" ]; then
+						channel_ids="${channel_ids},{\"id\":\"${ch}\"}"
+					else
+						channel_ids="{\"id\":\"${ch}\"}"
+					fi
+				done
+				local complete_response=$($curl -s -X POST "https://slack.com/api/files.completeUploadExternal" \
+					-H "Authorization: Bearer $slack_token" \
+					-H "Content-Type: application/json" \
+					-d "{\"files\":[{\"id\":\"$upload_file_id\",\"title\":\"$slack_subj\"}],\"channel_id\":\"$(echo "$slack_channels" | cut -d',' -f1)\"}")
+				if echo "$complete_response" | grep -q '"ok":true'; then
+					eout "{alert} scan report sent to slack channel(s): $slack_channels" 0
+				else
+					eout "{alert} could not upload scan report to slack channel(s), alert discarded" 1
+				fi
 			else
 				eout "{alert} could not upload scan report to slack channel(s), alert discarded" 1
 			fi
@@ -1674,7 +1760,7 @@ genalert() {
 	fi
 
 	if [ "$telegram_alert" == "1" ]; then
-		if [ "$type" == "file" ] && [ -f "$file" ]; then
+		if [ -f "$file" ]; then
 			telegram_response=$(curl -F "document=@$file" -F "caption=$telegram_file_caption" "https://api.telegram.org/$telegram_bot_token/sendDocument?chat_id=$telegram_channel_id" | grep -oP '^{"ok":true')
 			if [ "$telegram_response" ]; then
 				eout "{alert} scan report sent to telegram channel: $telegram_channel_id" 0
@@ -1682,6 +1768,11 @@ genalert() {
 				eout "{alert} could not upload scan report to telegram channel, alert discarded" 1
 			fi
 		fi
+	fi
+
+	# clean up digest report temp file if generated
+	if [ "$digest_tmpf" ] && [ -f "$digest_tmpf" ]; then
+		rm -f "$digest_tmpf"
 	fi
 }
 
@@ -1713,13 +1804,16 @@ monitor_cycle() {
 			eout "{mon} no inotify process found, exiting (are we a zombie process?)" 1
 			exit
 		fi
-		log_size=`$wc -l $inotify_log | awk '{print$1}'`
+		log_size=$($wc -l "$inotify_log" | awk '{print$1}')
 		if [ "$log_size" -ge "$inotify_trim" ]; then
 			trim=$(($log_size - 1000))
-			log_chars=`printf "%s\n" "1,${trim}p" | ed -s $inotify_log 2> /dev/null | wc -c`
-			tlog_new=$(( `cat $inspath/tmp/inotify` - $log_chars ))
-			echo $tlog_new > $inspath/tmp/inotify
-			printf "%s\n" "1,${trim}d" w | ed -s $inotify_log 2> /dev/null
+			log_chars=$(head -n "$trim" "$inotify_log" 2>/dev/null | wc -c)
+			tlog_new=$(( $(cat "$inspath/tmp/inotify") - $log_chars ))
+			echo "$tlog_new" > "$inspath/tmp/inotify"
+			local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
+			tail -n +"$((trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
+			cat "$tmplog" > "$inotify_log" 2>/dev/null
+			rm -f "$tmplog"
 			eout "{mon} inotify log file trimmed"
 		fi
 		if [ "$inotify_cycle_runtime" -ge "$inotify_reloadtime" ] || [ -f "$inspath/reload_monitor" ]; then
@@ -1730,14 +1824,11 @@ monitor_cycle() {
 			source $intcnf
 			import_conf
 			inotify_cycle_runtime=0
+		        ignore_fext_args=()
 		        if [ -f "$ignore_file_ext" ]; then
 		                if [ ! "$(cat $ignore_file_ext)" == "" ]; then
 		                        for i in `cat $ignore_file_ext`; do
-		                                if [ "$ignore_fext" == "" ]; then
-		                                        ignore_fext="-not -iname \"*$i\""
-		                                else
-		                                        ignore_fext="$ignore_fext -not -iname \"*$i\""
-		                                fi
+		                                ignore_fext_args+=(-not -iname "*$i")
 		                        done
 		                fi
 		        fi
@@ -1793,7 +1884,7 @@ cleanup_scanlist() {
         # Checks for files that are already gone (temporary files, cache
         # files, ...) and removes them from $monitor_scanlist, so we don't
         # get errors and too many retries
-        TMP_FILE=$(mktemp -p /var/lib/maldetect/tmp)
+        TMP_FILE=$(mktemp "$tmpdir/.cleanup_scanlist.XXXXXX")
         lbreakifs set
         for FILE in $(cat $monitor_scanlist); do
                 if [ -f "$FILE" ]; then
@@ -1806,12 +1897,17 @@ cleanup_scanlist() {
  
 
 monitor_check() {
-                monitor_scanlist="$tmpdir/.monitor.scan.${RANDOM}${RANDOM}"
-		touch $monitor_scanlist ; chmod 600 $monitor_scanlist
+                monitor_scanlist=$(mktemp "$tmpdir/.monitor.scan.XXXXXX")
+		chmod 600 "$monitor_scanlist"
                 $tlog $inotify_log inotify | grep -E " CREATE| MODIFY| MOVED_TO" | awk -F" CREATE| MODIFY| MOVED_TO" '{print $1}' | sort -u | grep -vf $ignore_paths> $monitor_scanlist
+		scanned_count=$($wc -l "$monitor_scanlist" | awk '{print$1}')
+		if [ "$scanned_count" -eq 0 ] 2>/dev/null; then
+			rm -f "$monitor_scanlist"
+			return
+		fi
 		if [ "$scan_clamscan" == "1" ]; then
-	                clamscan_results="$tmpdir/.clamscan.result.${RANDOM}${RANDOM}"
-			touch $clamscan_results ; chmod 600 $clamscan_results
+	                clamscan_results=$(mktemp "$tmpdir/.clamscan.result.XXXXXX")
+			chmod 600 "$clamscan_results"
 	                $nice_command $clamscan $clamopts --infected --no-summary -f $monitor_scanlist > $clamscan_results 2>> $clamscan_log || clamscan_return=$?
                         if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
                                 try=0
@@ -1821,7 +1917,7 @@ monitor_check() {
                                         clamscan_return=$?
                                         if [ "$clamscan_return" == "2" ]; then
                                                 ((try++))
-                                                echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $retry_sleep seconds ($try)" >> $clamscan_log
+                                                echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $remote_clamd_retry_sleep seconds ($try)" >> $clamscan_log
                                                 sleep $remote_clamd_retry_sleep
                                         else
                                                 break
@@ -1830,6 +1926,12 @@ monitor_check() {
                         else
                                 $nice_command $clamscan $clamopts --infected --no-summary -f $monitor_scanlist > $clamscan_results 2>> $clamscan_log || clamscan_return=$?
                         fi
+			clamscan_fatal_error=$(grep -m1 'no reply from clamd' "$clamscan_results")
+			if [ "$clamscan_fatal_error" ]; then
+				eout "{mon} clamscan returned a fatal error (no reply from clamd), skipping quarantine for this cycle" 1
+				rm -f "$clamscan_results" "$monitor_scanlist"
+				return
+			fi
 			if [ "$inotify_verbose" == "1" ]; then
 				for file in `cat $monitor_scanlist | tr ' ' '%'`; do
 					file=`echo $file | tr '%' ' '`
@@ -1837,7 +1939,7 @@ monitor_check() {
 				done
 			fi
 			lbreakifs set
-                	for hit in `grep -E -v 'ERROR$|lstat()' $clamscan_results | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//'`; do
+                	for hit in `grep -E -v 'ERROR$|lstat()|no reply from clamd' $clamscan_results | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//'`; do
 	                        file=`echo "$hit" | cut -d':' -f2`
         	                signame=`echo "$hit" | cut -d':' -f1`
 	                        if [ ! -z "$(echo $signame | grep -E 'YARA')" ]; then
@@ -1860,7 +1962,7 @@ monitor_check() {
 			for file in `cat $monitor_scanlist | tr ' ' '%'`; do
 				file=`echo $file | tr '%' ' '`
 				if [ -f "$file" ]; then
-					for fscan in `$nice_command $find "$file" -maxdepth 1 $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize -not -perm 000 $ignore_fext $ignore_root $ignore_user $ignore_group 2> /dev/null`; do
+					for fscan in `$nice_command $find "$file" -maxdepth 1 $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize -not -perm 000 "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2> /dev/null`; do
 						if [ "$inotify_verbose" == "1" ]; then
 							eout "{mon} inotify native file scan on $file"
 						fi
@@ -2035,9 +2137,9 @@ monitor_init() {
         if [ -f "$cpulimit" ] && [ "$inotify_cpulimit" -gt 2> /dev/null "0" ]; then
                 max_cpulimit=$[$(grep -E -w processor /proc/cpuinfo -c)*100]
                 if [ "$inotify_cpulimit" -gt "$max_cpulimit" ]; then
-                        scan_cpulimit="0"
+                        inotify_cpulimit="0"
 		else
-	                nice_command="$cpulimit -l $scan_cpulimit -- $nice_command"
+	                nice_command="$cpulimit -l $inotify_cpulimit -- $nice_command"
                 fi
         fi
 
@@ -2178,9 +2280,9 @@ sigignore() {
 
 
 lmdup() {
-	tmpwd="$tmpdir/.lmdup.$RANDOM.$$"
-	upstreamver="$tmpwd/.lmdup_vercheck.$$"
-	mkdir -p $tmpwd ; chmod 700 $tmpwd
+	tmpwd=$(mktemp -d "$tmpdir/.lmdup.XXXXXX")
+	upstreamver="$tmpwd/.lmdup_vercheck"
+	chmod 700 "$tmpwd"
 
 	if [ "$lmdup_beta" ]; then
 		lmd_hash_url="${lmd_hash_url}.beta"
@@ -2284,8 +2386,8 @@ lmdup() {
 sigup() {
 	eout "{sigup} performing signature update check..." 1
 	
-        tmpwd="$tmpdir/.sigup.$RANDOM.$$"
-        mkdir -p $tmpwd ; chmod 700 $tmpwd
+        tmpwd=$(mktemp -d "$tmpdir/.sigup.XXXXXX")
+        chmod 700 "$tmpwd"
 
 	import_user_sigs
 	
@@ -2412,14 +2514,14 @@ sigup() {
 			md5_sigs=`$wc -l $sig_md5_file | awk '{print$1}'`
 			yara_sigs=`grep -E -c ^rule $sig_yara_file | awk '{print$1}'`
 			if [ ! -f "$sig_user_md5_file" ]; then
-				user_hex_sigs=0
-			else
-				user_hex_sigs=`$wc -l $sig_user_hex_file | awk '{print$1}'`
-			fi
-			if [ ! -f "$sig_user_hex_file" ]; then
 				user_md5_sigs=0
 			else
 				user_md5_sigs=`$wc -l $sig_user_md5_file | awk '{print$1}'`
+			fi
+			if [ ! -f "$sig_user_hex_file" ]; then
+				user_hex_sigs=0
+			else
+				user_hex_sigs=`$wc -l $sig_user_hex_file | awk '{print$1}'`
 			fi
 			user_sigs=$[user_hex_sigs+user_md5_sigs]
 			

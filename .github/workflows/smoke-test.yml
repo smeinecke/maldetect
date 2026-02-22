@@ -1,0 +1,28 @@
+name: LMD Smoke Tests
+on:
+  push:
+    branches: [master, '2.*']
+  pull_request:
+    branches: [master]
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [debian12, centos6, centos7, rocky8, rocky9, ubuntu2004, ubuntu2404]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.os == 'debian12' && 'tests/Dockerfile' || format('tests/Dockerfile.{0}', matrix.os) }}
+          tags: lmd-test-${{ matrix.os }}
+          load: true
+          cache-from: type=gha,scope=${{ matrix.os }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.os }}
+      - name: Run smoke tests (${{ matrix.os }})
+        run: docker run --rm lmd-test-${{ matrix.os }}

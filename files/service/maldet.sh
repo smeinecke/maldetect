@@ -19,8 +19,8 @@ inspath='/usr/local/maldetect'
 intcnf="$inspath/internals/internals.conf"
 
 if [ -f "$intcnf" ]; then
-	source $intcnf
-	source $cnf
+	source "$intcnf"
+	source "$cnf"
 else
 	echo "$intcnf not found."
 	exit 1
@@ -65,7 +65,7 @@ fi
 start() {
         echo -n "Starting $prog: "
         $inspath/maldet --monitor $MONITOR_MODE
-        RETVAL=$? [ $RETVAL -eq 0 ] && touch $LOCKFILE
+        RETVAL=$?; [ $RETVAL -eq 0 ] && touch $LOCKFILE
         echo
         return $RETVAL
 }
@@ -79,7 +79,7 @@ stop() {
         else
             $inspath/maldet --kill-monitor && success || failure
         fi
-        RETVAL=$? [ $RETVAL -eq 0 ] && rm -f $LOCKFILE
+        RETVAL=$?; [ $RETVAL -eq 0 ] && rm -f $LOCKFILE
         echo
         return $RETVAL
 }

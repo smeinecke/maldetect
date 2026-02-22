@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
 ##
-# Linux Malware Detect v1.6.6
+# Linux Malware Detect v2.0.1
 #             (C) 2002-2025, R-fx Networks <proj@rfxn.com>
 #             (C) 2025, Ryan MacDonald <ryan@rfxn.com>
 # This program may be freely redistributed under the terms of the GNU GPL v2
 ##
 #
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
-ver=1.6.6
+ver=2.0.1
 inspath='/usr/local/maldetect'
 intcnf="$inspath/internals/internals.conf"
 if [ -f "/etc/sysconfig/maldet" ]; then
@@ -19,14 +19,14 @@ fi
 
 header() {
 	echo "Linux Malware Detect v$ver"
-	echo "            (C) 2002-2023, R-fx Networks <proj@rfxn.com>"
-	echo "            (C) 2023, Ryan MacDonald <ryan@rfxn.com>"
+	echo "            (C) 2002-2025, R-fx Networks <proj@rfxn.com>"
+	echo "            (C) 2025, Ryan MacDonald <ryan@rfxn.com>"
 	echo "This program may be freely redistributed under the terms of the GNU GPL v2"
 	echo ""
 }
 
 if [ -f "$intcnf" ]; then
-	source $intcnf
+	source "$intcnf"
 else
 	header
 	echo "maldet($$): {glob} \$intcnf not found, aborting."
@@ -34,7 +34,7 @@ else
 fi
 
 if [ -f "$cnf" ]; then
-	source $cnf
+	source "$cnf"
 else
 	header
 	echo "maldet($$): {glob} \$cnf not found, aborting."
@@ -42,19 +42,19 @@ else
 fi
 
 if [ -f "$intfunc" ]; then
-	source $intfunc
+	source "$intfunc"
 else
 	header
-	echo "maldet($$): {glob} \$intfunct not found, aborting."
+	echo "maldet($$): {glob} \$intfunc not found, aborting."
 	exit 1
 fi
 
 if [ -f "$compatcnf" ]; then
-	source $compatcnf
+	source "$compatcnf"
 fi
 
 if [ -f "$syscnf" ]; then
-	source $syscnf
+	source "$syscnf"
 fi
 
 # prerun operations
@@ -68,7 +68,7 @@ else
 		case "$1" in
 			--mkpubpaths)
 				if [ "$scan_user_access" == "1" ]; then
-					chmod 711 $userbasedir
+					chmod 711 "$userbasedir"
 					for user in `cat /etc/passwd | cut -d ':' -f1`; do
 						uid=`id --user $user`
 						if [ -z "$uid" ]; then
@@ -78,11 +78,11 @@ else
 							scan_user_access_minuid=10
 						fi
 						if [ "$uid" -ge "$scan_user_access_minuid" ] && [ ! -d "$userbasedir/$user" ]; then
-							mkdir -p $userbasedir/$user/quar $userbasedir/$user/sess $userbasedir/$user/tmp
-							touch $userbasedir/$user/event_log
-							chown -R $user $userbasedir/$user
-							chmod 750 $userbasedir/$user $userbasedir/$user/quar $userbasedir/$user/sess $userbasedir/$user/tmp
-							chmod 640 $userbasedir/$user/event_log
+							mkdir -p "$userbasedir/$user/quar" "$userbasedir/$user/sess" "$userbasedir/$user/tmp"
+							touch "$userbasedir/$user/event_log"
+							chown -R "$user" "$userbasedir/$user"
+							chmod 750 "$userbasedir/$user" "$userbasedir/$user/quar" "$userbasedir/$user/sess" "$userbasedir/$user/tmp"
+							chmod 640 "$userbasedir/$user/event_log"
 							eout "{glob} created public scanning paths for user $user"
 						fi
 						unset uid user
@@ -111,14 +111,14 @@ else
 				if [ ! "$user" == "root" ]; then
 					tmpdir=$userbasedir/$user/tmp
 				fi
-				tmpco=$tmpdir/config.cli
-				rm -f $tmpco
-				touch $tmpco
-				echo ,$1 | sed -e 's/-\(-config-option\|co\) //' -e 's/\(, *[a-zA-Z0-9_][a-zA-Z0-9_]*=\)/\n\1\n/g' | sed -e '1d' -e 's/^\([^,].*\|.*[^=]\)$/"\1"/' | sed -e '$!N;s/\n//' -e 's/^, *//' | grep -v "^ *compatcnf" > $tmpco
-				. $tmpco
-				rm -f $tmpco
+				tmpco="$tmpdir/config.cli"
+				rm -f "$tmpco"
+				touch "$tmpco"
+				echo ,$1 | sed -e 's/-\(-config-option\|co\) //' -e 's/\(, *[a-zA-Z0-9_][a-zA-Z0-9_]*=\)/\n\1\n/g' | sed -e '1d' -e 's/^\([^,].*\|.*[^=]\)$/"\1"/' | sed -e '$!N;s/\n//' -e 's/^, *//' | grep -v "^ *compatcnf" > "$tmpco"
+				. "$tmpco"
+				rm -f "$tmpco"
 				if [ -f "$compatcnf" ]; then
-					source $compatcnf
+					source "$compatcnf"
 				fi
 			;;
 			-qd)
@@ -139,13 +139,13 @@ else
 			-x|--exclude-regex)
 				shift
 				if [ "$1" ]; then
-					exclude_regex="-not -regex \"$1\""
+					exclude_regex_args=(-not -regex "$1")
 				fi
 			;;
 			-i|--include-regex)
 				shift
 				if [ "$1" ]; then
-					include_regex="-regex \"$1\""
+					include_regex_args=(-regex "$1")
 				fi
 			;;
 			--wget-proxy|--curl-proxy|--web-proxy)
@@ -165,8 +165,6 @@ else
 				elif [ "$1" == "reload" ] || [ "$1" == "RELOAD" ]; then
 					eout "{mon} queued monitor for configuration reload" 1
 					touch $inspath/reload_monitor
-				elif [ ! -f "$(which ed 2> /dev/null)" ]; then
-					eout "{mon} could not find monitor mode dependency 'ed' in PATH, please apt/yum/dnf install ed and try again." 1
 				else
 					svc=m
 					trap trap_exit 2
@@ -317,7 +315,10 @@ else
 			;;
 			*)
 				header
+				echo "maldet: unrecognized option '$1'"
 				usage_short
+				exit 1
+			;;
 		esac
 		shift
 	done
