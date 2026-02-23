@@ -19,13 +19,16 @@ operations, and multi-channel alerting (email, Slack, Telegram).
 - [1. Introduction](#1-introduction)
 - [2. Installation](#2-installation)
 - [3. Configuration](#3-configuration)
-  - [3.1 Alerting](#31-alerting)
-  - [3.2 Scanning Options](#32-scanning-options)
-  - [3.3 YARA Scanning](#33-yara-scanning)
-  - [3.4 Quarantine Options](#34-quarantine-options)
-  - [3.5 Monitoring Options](#35-monitoring-options)
-  - [3.6 ClamAV Integration](#36-clamav-integration)
-  - [3.7 Configuration Loading Order](#37-configuration-loading-order)
+  - [3.1 General Options](#31-general-options)
+  - [3.2 Alerting](#32-alerting)
+  - [3.3 Scanning Options](#33-scanning-options)
+  - [3.4 YARA Scanning](#34-yara-scanning)
+  - [3.5 Quarantine Options](#35-quarantine-options)
+  - [3.6 Monitoring Options](#36-monitoring-options)
+  - [3.7 ClamAV Integration](#37-clamav-integration)
+  - [3.8 Remote ClamAV](#38-remote-clamav)
+  - [3.9 ELK Integration](#39-elk-integration)
+  - [3.10 Configuration Loading Order](#310-configuration-loading-order)
 - [4. CLI Usage](#4-cli-usage)
 - [5. Ignore Options](#5-ignore-options)
 - [6. Cron Daily](#6-cron-daily)
@@ -159,22 +162,43 @@ Configuration can also be overridden at runtime using the `-co` flag:
 maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 ```
 
-### 3.1 Alerting
+### 3.1 General Options
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `autoupdate_signatures` | Auto-update signatures daily via cron | `1` |
+| `autoupdate_version` | Auto-update LMD version daily via cron | `1` |
+| `autoupdate_version_hashed` | Verify LMD executable MD5 against upstream | `1` |
+| `cron_prune_days` | Days to retain quarantine/session/temp data | `21` |
+| `cron_daily_scan` | Enable daily automatic scanning via cron | `1` |
+| `import_config_url` | URL to download remote configuration override | — |
+| `import_config_expire` | Cache expiry for imported config (seconds) | `43200` |
+| `import_custsigs_md5_url` | URL to download custom MD5 signatures | — |
+| `import_custsigs_hex_url` | URL to download custom HEX signatures | — |
+| `import_custsigs_yara_url` | URL to download custom YARA rules | — |
+
+### 3.2 Alerting
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `email_alert` | Enable email alerts after scans | `0` |
 | `email_addr` | Alert recipient address | `you@domain.com` |
 | `email_subj` | Email subject line template | `maldet alert from $(hostname)` |
-| `email_ignore_clean` | Suppress alerts when no hits found | `1` |
+| `email_ignore_clean` | Suppress alerts when all hits were cleaned | `1` |
+| `email_panel_user_alerts` | Send panel user alerts on hit detection | `0` |
+| `email_panel_from` | From header for panel user alerts | `you@example.com` |
+| `email_panel_replyto` | Reply-To header for panel user alerts | `you@example.com` |
+| `email_panel_alert_subj` | Subject line for panel user alerts | `maldet alert from $(hostname)` |
 | `slack_alert` | Enable Slack file upload alerts | `0` |
+| `slack_subj` | File name for Slack upload | `maldet alert from $(hostname)` |
 | `slack_token` | Slack Bot API token (scopes: `files:write`, `files:read`) | — |
-| `slack_channels` | Slack channel ID | — |
+| `slack_channels` | Comma-separated list of channel names or IDs | `maldetreports` |
 | `telegram_alert` | Enable Telegram alerts | `0` |
+| `telegram_file_caption` | Caption for Telegram report file | `maldet alert from $(hostname)` |
 | `telegram_bot_token` | Telegram Bot API token | — |
 | `telegram_channel_id` | Telegram chat or group ID | — |
 
-### 3.2 Scanning Options
+### 3.3 Scanning Options
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -187,10 +211,17 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `scan_cpunice` | Nice priority for scan process (0-19) | `19` |
 | `scan_ionice` | IO scheduling class priority (0-7) | `6` |
 | `scan_cpulimit` | Hard CPU limit percentage (0=disabled) | `0` |
+| `scan_ignore_root` | Skip root-owned files in scans | `1` |
+| `scan_ignore_user` | Skip files owned by specific users | — |
+| `scan_ignore_group` | Skip files owned by specific groups | — |
+| `scan_user_access` | Allow non-root users to run scans | `0` |
+| `scan_find_timeout` | Timeout for find file list generation (0=disabled) | `0` |
+| `scan_export_filelist` | Save find results to tmp/find_results.last | `0` |
+| `scan_tmpdir_paths` | World-writable temp paths included in -a/-r scans | `/tmp /var/tmp /dev/shm /var/fcgi_ipc` |
 | `string_length_scan` | Enable statistical string-length analysis | `0` |
 | `string_length` | Minimum suspicious string length | `150000` |
 
-### 3.3 YARA Scanning
+### 3.4 YARA Scanning
 
 Native YARA scanning invokes the `yara` binary (or `yr` from YARA-X) independently of ClamAV, supporting full YARA modules, compiled rules, and custom rule files that ClamAV's limited YARA subset cannot handle. When both are available, `yr` (YARA-X) is preferred.
 
@@ -215,7 +246,7 @@ Enable at runtime without editing config:
 maldet -co scan_yara=1 -a /home/?/public_html
 ```
 
-### 3.4 Quarantine Options
+### 3.5 Quarantine Options
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -223,11 +254,14 @@ maldet -co scan_yara=1 -a /home/?/public_html
 | `quarantine_clean` | Try to clean malware from quarantined files | `0` |
 | `quarantine_suspend_user` | Suspend cPanel account or revoke shell on hit | `0` |
 | `quarantine_suspend_user_minuid` | Minimum UID to suspend (protects system accounts) | `500` |
+| `quarantine_on_error` | Quarantine files when scan engine returns error | `1` |
 
-### 3.5 Monitoring Options
+### 3.6 Monitoring Options
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
+| `default_monitor_mode` | Startup mode for monitor (`users` or path to file) | `users` |
+| `inotify_base_watches` | Base number of file watches per user path | `16384` |
 | `inotify_minuid` | Minimum UID for user home monitoring | `500` |
 | `inotify_docroot` | Subdirectories to monitor in user homes | `public_html,public_ftp` |
 | `inotify_sleep` | Seconds between scan batches | `15` |
@@ -235,8 +269,9 @@ maldet -co scan_yara=1 -a /home/?/public_html
 | `inotify_cpunice` | Nice priority for monitor process | `18` |
 | `inotify_ionice` | IO priority for monitor process | `6` |
 | `inotify_cpulimit` | Hard CPU limit for monitor (0=disabled) | `0` |
+| `inotify_verbose` | Log every file scanned (debug only) | `0` |
 
-### 3.6 ClamAV Integration
+### 3.7 ClamAV Integration
 
 When `scan_clamscan=1`, LMD selects the best available ClamAV engine in priority order:
 
@@ -250,9 +285,26 @@ LMD signatures are automatically symlinked to ClamAV data directories by `instal
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `scan_clamscan` | Enable ClamAV as scan engine | `1` |
-| `scan_clamd_remote` | Use remote clamd server | `0` |
 
-### 3.7 Configuration Loading Order
+### 3.8 Remote ClamAV
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `scan_clamd_remote` | Use a remote clamd server for scanning | `0` |
+| `remote_clamd_config` | Path to remote clamd config file | `/etc/clamd.d/clamd.remote.conf` |
+| `remote_clamd_max_retry` | Max retries on remote clamd failure | `5` |
+| `remote_clamd_retry_sleep` | Seconds between retries | `3` |
+
+### 3.9 ELK Integration
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `enable_statistic` | Enable ELK stack statistics collection | `0` |
+| `elk_host` | TCP host for ELK input | — |
+| `elk_port` | TCP port for ELK input | — |
+| `elk_index` | Elasticsearch index name | — |
+
+### 3.10 Configuration Loading Order
 
 Later sources override earlier values:
 
@@ -282,7 +334,7 @@ SCAN FILTERS:
   -U, --user USER               run as specified user
 
 MONITORING:
-  -m, --monitor USERS|PATHS     start inotify real-time monitoring
+  -m, --monitor USERS|PATHS|FILE  start inotify real-time monitoring
   -k, --kill-monitor            stop inotify monitoring
 
 QUARANTINE & RESTORE:
@@ -297,7 +349,7 @@ REPORTING:
 
 UPDATES:
   -u, --update-sigs [--force]   update malware signatures
-  -d, --update-ver [--force]    update LMD version
+  -d, --update-ver [--force|--beta]  update LMD version
 
 OTHER:
   -p, --purge                   clear logs, quarantine, temp data

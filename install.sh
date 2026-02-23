@@ -29,6 +29,8 @@ if [ ! -d "$inspath" ] && [ -d "files" ]; then
 	chmod 755 "$inspath"
 	cp -pR files/* "$inspath"
 	chmod 755 "$inspath/maldet"
+	chmod 640 "$inspath/conf.maldet"
+	test -f "$inspath/conf.maldet.hookscan" && chmod 640 "$inspath/conf.maldet.hookscan"
 	mkdir -p "$inspath/clean" "$inspath/pub" "$inspath/quarantine" "$inspath/sess" "$inspath/sigs" "$inspath/tmp" 2> /dev/null
 	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/internals/tlog" 2> /dev/null
 	ln -fs "$inspath/maldet" /usr/local/sbin/maldet
@@ -52,18 +54,19 @@ else
 	chmod 755 "$inspath"
 	cp -pR files/* "$inspath"
 	chmod 755 "$inspath/maldet"
+	chmod 640 "$inspath/conf.maldet"
+	test -f "$inspath/conf.maldet.hookscan" && chmod 640 "$inspath/conf.maldet.hookscan"
 	ln -fs "$inspath/maldet" /usr/local/sbin/maldet
 	ln -fs "$inspath/maldet" /usr/local/sbin/lmd
 	mkdir -p /usr/local/share/man/man1/
 	gzip -9 "$inspath/maldet.1"
 	ln -fs "$inspath/maldet.1.gz" /usr/local/share/man/man1/maldet.1.gz
 	cp -f "$inspath.bk$$"/ignore_* "$inspath/"  >> /dev/null 2>&1
-	if [ "$ver_major" == "1.5" ] || [ "$ver_major" == "1.6" ] || [ "$ver_major" == "2.0" ]; then
-		cp -f "$inspath.bk$$"/sess/* "$inspath/sess/" >> /dev/null 2>&1
-		cp -f "$inspath.bk$$"/tmp/* "$inspath/tmp/" >> /dev/null 2>&1
-		cp -f "$inspath.bk$$"/quarantine/* "$inspath/quarantine/" >> /dev/null 2>&1
-                cp -f "$inspath.bk$$"/cron/* "$inspath/cron/"
-	fi
+	cp -f "$inspath.bk$$"/sess/* "$inspath/sess/" >> /dev/null 2>&1
+	cp -f "$inspath.bk$$"/tmp/* "$inspath/tmp/" >> /dev/null 2>&1
+	cp -f "$inspath.bk$$"/quarantine/* "$inspath/quarantine/" >> /dev/null 2>&1
+	cp -f "$inspath.bk$$"/cron/* "$inspath/cron/" >> /dev/null 2>&1
+	cp -f "$inspath.bk$$"/logs/* "$inspath/logs/" >> /dev/null 2>&1
 	cp -f "$inspath.bk$$"/sigs/custom.* "$inspath/sigs/" >> /dev/null 2>&1
 	if [ -d "$inspath.bk$$"/sigs/custom.yara.d ]; then
 		cp -rf "$inspath.bk$$"/sigs/custom.yara.d "$inspath/sigs/" >> /dev/null 2>&1

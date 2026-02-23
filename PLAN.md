@@ -3,7 +3,7 @@
 Organized by phase. Each phase is independent and can be shipped separately.
 Items marked ~~RESOLVED~~ are completed and kept for reference.
 
-**Status:** Phases 1-5 complete. All items resolved.
+**Status:** Phases 1-5 complete. Phase 6 (post-release audit) open with 4 items (5 resolved).
 
 ---
 
@@ -69,6 +69,97 @@ normally without compiled.yarc.
 ## ~~5.6 README.md md5v2.dat format description missing SIZE field~~ RESOLVED
 
 Corrected format column to `HASH:SIZE:{MD5}sig.name.N` in README.md section 8.
+
+---
+
+# Phase 6 — Post-Release Audit
+
+Findings from comprehensive assessment of v2.0.1 changes. Organized by
+severity. All items are independent.
+
+## ~~6.1 cron.daily update failure logging is dead code (Medium, Bug)~~ RESOLVED
+
+Fixed pipeline exit code capture using `${PIPESTATUS[0]}` matching
+cron.watchdog pattern. Added 2 tests for failure logging.
+
+## ~~6.2 README.md config variable names/defaults wrong (Medium, Doc)~~ RESOLVED
+
+Corrected all variable names (slack_channels, telegram_bot_token,
+telegram_channel_id), defaults (email_alert=0, quarantine_clean=0,
+email_addr, inotify_cpunice=18), and paths (maldetect.last,
+/usr/lib/systemd/system/).
+
+## 6.3 CLAUDE.md stale data (Low, Doc)
+
+**Problem:** Several items in CLAUDE.md are stale:
+- Test counts: `06-config-options.bats` says 11 (actual 10),
+  `17-version.bats` says 5 (actual 6), files 18-22 say "(tests)"
+  instead of counts
+- Known Issues section still lists PLAN.md 5.6 (md5v2.dat SIZE field)
+  as open, but it was resolved in Phase 5
+- Signature table shows `HASH:{MD5}sig.name.N` without SIZE field
+  (inconsistent with README fix in 5.6)
+
+**Fix:** Update test counts, remove resolved known-issues entries,
+fix signature table format.
+
+**Files:** `CLAUDE.md:283,294-299,~390,~422`
+
+## 6.4 Dockerfile.ubuntu2204 orphaned (Low)
+
+**Problem:** `tests/Dockerfile.ubuntu2204` exists and is functional but
+is not wired into `smoke-test.yml`, `tests/Makefile`, or
+`tests/run-tests.sh`. Was intentionally excluded from CI per Phase 5.1,
+but the orphaned file could confuse contributors.
+
+**Options:**
+1. Delete `Dockerfile.ubuntu2204` (cleanest — Ubuntu 20.04 and 24.04
+   already cover the Ubuntu matrix)
+2. Add a comment at top: `# Not in CI — covered by ubuntu2004/ubuntu2404`
+
+**Files:** `tests/Dockerfile.ubuntu2204`
+
+## 6.5 cron.daily `|| :` swallows inner-run errors (Low)
+
+**Problem:** The flock command form uses `flock -n "$LOCKFILE" "$0" "$@" || :`.
+The `|| :` cannot distinguish lock contention (exit 1, intended silent skip)
+from real inner-script errors (exit 1 for missing $intcnf, also suppressed).
+
+**Mitigation:** In practice, cron.daily errors surface via stdout/stderr
+which cron captures and mails to root. The `|| :` only suppresses the
+exit code, not the output. Using `flock -n -E 73` would cleanly separate
+lock contention from real errors, but `-E` requires util-linux >= 2.25
+(excludes CentOS 6).
+
+**Deferred until CentOS 6 support is dropped.**
+
+**Files:** `cron.daily:12`
+
+## 6.6 LMDCRON=1 exported but never read (Low, Cleanup)
+
+**Problem:** `cron.daily` line 3 exports `LMDCRON=1` but no code in
+`files/maldet`, `files/internals/functions`, or `files/internals/internals.conf`
+references this variable. It is dead code.
+
+**Fix:** Either remove the export (if truly unused) or document its purpose
+if it is intended for user scripts or future use.
+
+**Files:** `cron.daily:3`
+
+## ~~6.7 Rocky 8/9 Dockerfiles missing curl (Low, CI)~~ RESOLVED
+
+Added `curl` to `microdnf install` in both Dockerfile.rocky8 and
+Dockerfile.rocky9.
+
+## ~~6.8 conf.maldet comment typo (Low, Doc)~~ RESOLVED
+
+Changed `-a|--al` to `-a|--scan-all` in conf.maldet comment.
+
+## ~~6.9 email_subj documented as user config but lives in internals.conf (Low, Doc)~~ RESOLVED
+
+Relocated `email_subj` from `internals.conf` to `conf.maldet` (after
+`email_ignore_clean`). `internals.conf` now uses `${email_subj:-...}`
+fallback for backward compatibility with old configs.
 
 ---
 

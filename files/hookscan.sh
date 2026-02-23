@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
 file="$1"
 
+# Reject filenames with shell metacharacters, newlines, or null bytes
+case "$file" in
+	*[![:print:]]*)
+		logger -t maldet-hookscan "rejected filename with non-printable characters"
+		exit 1
+		;;
+esac
+if [[ "$file" =~ [\;\|\&\$\(\)\`\{\}] ]]; then
+	logger -t maldet-hookscan "rejected filename with shell metacharacters"
+	exit 1
+fi
+if [ ! -f "$file" ]; then
+	exit 1
+fi
+
 inspath='/usr/local/maldetect'
 intcnf="$inspath/internals/internals.conf"
 if [ -f "$intcnf" ]; then
-	source $intcnf
+	source "$intcnf"
 fi
 
 ## these values can be overridden in conf.maldet.hookscan
@@ -14,7 +29,7 @@ scan_tmpdir_paths=''
 scan_yara=0
 hscan=1
 
-isclamd=`pidof clamd 2> /dev/null`
+isclamd=$(pidof clamd 2> /dev/null)
 if [ "$isclamd" ] && [ -f "$clamdscan" ]; then
 	clamd_scan=1
 else
@@ -23,7 +38,7 @@ fi
 
 hookcnf="$inspath/conf.maldet.hookscan"
 if [ -f "$hookcnf" ]; then
-        source $hookcnf
+        source "$hookcnf"
 fi
 
 cd /tmp ; $inspath/maldet --hook-scan --config-option quarantine_hits=$quarantine_hits,quarantine_clean=$quarantine_clean,tmpdir=/var/tmp,scan_tmpdir_paths=$scan_tmpdir_paths,scan_clamscan=$clamd_scan,scan_yara=$scan_yara -a "$file"

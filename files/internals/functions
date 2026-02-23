@@ -139,7 +139,7 @@ prerun() {
 			scan_hexfifo=0
 		else
 			if [ -f "$mkfifo" ] && [ ! -p "$hex_fifo_path" ]; then
-				$mkfifo -m 666 $hex_fifo_path
+				$mkfifo -m 600 "$hex_fifo_path"
 			fi
 		fi
 	fi
@@ -421,17 +421,48 @@ import_user_sigs() {
 	fi
 }
 
+_safe_source_conf() {
+	local _ssc_file="$1"
+	local _ssc_line _ssc_var _ssc_val
+	while IFS= read -r _ssc_line || [ -n "$_ssc_line" ]; do
+		# Skip blank lines and comments
+		case "$_ssc_line" in
+			''|\#*) continue ;;
+		esac
+		# Must match: VARNAME=value
+		if [[ "$_ssc_line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]]; then
+			_ssc_var="${_ssc_line%%=*}"
+			_ssc_val="${_ssc_line#*=}"
+			# Strip surrounding quotes
+			case "$_ssc_val" in
+				\"*\") _ssc_val="${_ssc_val#\"}"; _ssc_val="${_ssc_val%\"}" ;;
+				\'*\') _ssc_val="${_ssc_val#\'}"; _ssc_val="${_ssc_val%\'}" ;;
+			esac
+			# Reject values containing shell metacharacters
+			case "$_ssc_val" in
+				*'$'*|*'`'*|*';'*|*'|'*|*'&'*|*'('*|*')'*)
+					eout "{importconf} WARNING: rejected unsafe line in remote config: $_ssc_var"
+					continue
+					;;
+			esac
+			printf -v "$_ssc_var" '%s' "$_ssc_val"
+		else
+			eout "{importconf} WARNING: skipped non-assignment line in remote config"
+		fi
+	done < "$_ssc_file"
+}
+
 import_conf() {
-	current_utime=`date +"%s"`
+	current_utime=$(date +"%s")
 	if [ -z "$import_config_expire" ]; then
 		import_config_expire=43200
 	fi
 	if [ -f "$sessdir/.import_conf.utime" ]; then
-		import_utime=`cat $sessdir/.import_conf.utime`
+		import_utime=$(cat "$sessdir/.import_conf.utime")
 		if [ -z "$import_utime" ]; then
 			import_utime="0"
 		fi
-		import_diff=$[current_utime-import_utime]
+		import_diff=$((current_utime-import_utime))
 		if [ "$import_diff" -lt "$import_config_expire" ]; then
 			import_config_skip="1"
 			eout "{importconf} configuration expire value has not lapsed (${import_diff}/${import_config_expire}), using cache."
@@ -442,14 +473,14 @@ import_conf() {
 		if [ -z "$import_config_skip" ]; then
 			get_remote_file "$import_config_url" "importconf" "1"
 			if [ -f "$return_file" ]; then
-				cp -f $return_file $sessdir/.import_conf.cache
-				echo "$current_utime" > $sessdir/.import_conf.utime
+				cp -f "$return_file" "$sessdir/.import_conf.cache"
+				echo "$current_utime" > "$sessdir/.import_conf.utime"
 			fi
 		fi
 		if [ -f "$sessdir/.import_conf.cache" ]; then
-			source $cnf
-			source $intcnf
-			source $sessdir/.import_conf.cache
+			source "$intcnf"
+			source "$cnf"
+			_safe_source_conf "$sessdir/.import_conf.cache"
 			if [ "$import_conf_cached" ]; then
 				eout "{importconf} imported configuration from $import_config_url (cached)"
 			else
@@ -482,11 +513,11 @@ usage: maldet [OPTION] [ARGUMENT]
     -i|--include-regex REGEX    include only matching paths
     -x|--exclude-regex REGEX    exclude matching paths
     -co|--config-option VAR=VAL override config options at runtime
-    -U|--user USER              run as specified user
                                 (enable YARA: -co scan_yara=1)
+    -U|--user USER              run as specified user
 
   monitoring:
-    -m|--monitor USERS|PATHS    start inotify real-time monitoring
+    -m|--monitor USERS|PATHS|FILE  start inotify real-time monitoring
     -k|--kill-monitor           stop inotify monitoring
 
   quarantine & restore:
@@ -495,13 +526,13 @@ usage: maldet [OPTION] [ARGUMENT]
     -s|--restore FILE|SCANID    restore quarantined file(s)
 
   reporting:
-    -e|--report [SCANID]        view scan report
+    -e|--report [SCANID] [email]  view scan report
     -E|--dump-report SCANID     dump report to stdout
     -l|--log                    view event log
 
   updates:
-    -u|--update-sigs            update malware signatures
-    -d|--update-ver             update maldet version
+    -u|--update-sigs [--force]  update malware signatures
+    -d|--update-ver [--force]   update maldet version
 
   other:
     -p|--purge                  clear logs, quarantine, temp data
@@ -561,7 +592,7 @@ MONITORING:
        e.g: maldet --monitor /root/monitor_paths
        e.g: maldet --monitor /home/mike,/home/ashton
 
-    -k, --kill-monitor
+    -k, --kill-monitor (also: -kill)
        Terminate inotify monitoring service
 
 QUARANTINE & RESTORE:
@@ -612,10 +643,10 @@ YARA SCANNING:
     e.g: maldet -co scan_yara=1 -a /home/?/public_html
 
 UPDATES:
-    -u, --update-sigs [--force]
+    -u, --update-sigs (also: --update) [--force]
        Update malware detection signatures from rfxn.com
 
-    -d, --update-ver [--force]
+    -d, --update-ver (also: --update-version) [--force|--beta]
        Update the installed version from rfxn.com
 
 OTHER:
@@ -625,7 +656,7 @@ OTHER:
     -c, --checkout FILE
        Upload suspected malware to rfxn.com for review & hashing into signatures
 
-    --web-proxy IP:PORT
+    --web-proxy (also: --wget-proxy, --curl-proxy) IP:PORT
        Set HTTP/HTTPS proxy for all remote URL calls
 
     -h, --help
@@ -643,7 +674,7 @@ clean() {
 
 	sh_hitname=`echo $hitname | sed -r -e 's/\{(HEX|MD5|CAV|YARA)\}//' -e 's/\.[0-9]+$//'`
 	if [ -d "$cldir" ] && [ "$quarantine_clean" == "1" ] && [ "$quarantine_hits" == "1" ] && [ -f "$file" ]; then
-		if [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ] && [ -f "${file}.info" ]; then
+		if { [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ]; } && [ -f "${file}.info" ]; then
 			file_path=`grep -E -v '\#' ${file}.info | cut -d':' -f9`
 			eout "{clean} restoring $file for cleaning attempt" 1
 			restore "$file" >> /dev/null 2>&1
@@ -657,22 +688,27 @@ clean() {
 			fi
 			eout "{clean} rescanning $file_path for malware hits" 1
 			clean_state="1"
-			scan_stage1 "$file_path" >> /dev/null 2>&1
+			unset clean_failed
+			scan_stage1 "$file_path" 1 >> /dev/null 2>&1
 			if [ -f "$file_path" ] && [ "$scan_yara" == "1" ]; then
 				local clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
 				echo "$file_path" > "$clean_yara_list"
-				scan_stage_yara "$clean_yara_list" >> /dev/null 2>&1
+				scan_stage_yara "$clean_yara_list" 1 >> /dev/null 2>&1
 				rm -f "$clean_yara_list"
 			fi
 			unset clean_state
-			if [ -f "$file_path" ]; then
+			if [ "$clean_failed" == "1" ]; then
+				chattr -ia "$file_path" 2>/dev/null
+				mv -f "$file_path" "$file"
+				chmod 000 "$file"
+				chown root.root "$file"
+				eout "{clean} clean failed on $file_path and returned to quarantine" 1
+			else
 				echo "$file_path" >> $sessdir/clean.$$
 				echo "$file_path" >> $clean_history
 				eout "{clean} clean successful on $file_path" 1
-			else
-				eout "{clean} clean failed on $file_path and returned to quarantine" 1
 			fi
-		elif [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ] && [ -f "$file" ]; then
+		elif { [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ]; } && [ -f "$file" ]; then
 			file_path="$file"
 			if [ -f "$cldir/$sh_hitname" ]; then
 				eout "{clean} attempting to clean $file with $sh_hitname rule" 1
@@ -981,7 +1017,7 @@ quarantine() {
 	if [ -f "$file" ] && [ -d "$quardir" ]; then
 		if [ "$quarantine_hits" == "1" ]; then
 			file_namewc=`echo $file_name | $wc -m`
-			rnd="${RANDOM}${RANDOM}"
+			rnd=$($stat -c %i "$file" 2>/dev/null || echo "$$")
 			if [ "$quarantine_suspend_user" == "1" ]; then
 				quarantine_suspend_user "$file"
 			fi
@@ -1030,6 +1066,9 @@ quar_hitlist() {
 				if [ ! "$md5_hash" ]; then
 					md5_hash="$($md5sum "$file" | awk '{print$1}')"
 				fi
+				if [ "$quarantine_suspend_user" == "1" ]; then
+					quarantine_suspend_user "$file"
+				fi
 				if [ "$pub" == "1" ]; then
 					chattr -ia "$file" >> /dev/null 2>&1
 					chmod 400 "$file"
@@ -1037,15 +1076,12 @@ quar_hitlist() {
 					chattr -ia "$file"
 					chmod 000 "$file"
 				fi
-				rnd="${RANDOM}${RANDOM}"
+				rnd=$($stat -c %i "$file" 2>/dev/null || echo "$$")
 				mv "$file" "$quardir/$file_name.$rnd"
 				touch --no-create "$quardir/$file_name.$rnd"
 				echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$file" > $quardir/$file_name.$rnd.info
 				eout "{quar} malware quarantined from '$file' to '$quardir/$file_name.$rnd'" 1
 				echo "$utime:$file_hitname:$file:$file_owner:$file_group:$md5_hash:$file_size:$quardir/$file_name.$rnd" >> $quar_history
-				if [ "$quarantine_suspend_user" == "1" ]; then
-					quarantine_suspend_user "$file"
-				fi
 				if [ "$quarantine_clean" == "1" ] && [ ! "$clean_state" == "1" ]; then
 					unset clean_state
 					hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
@@ -2107,16 +2143,24 @@ genalert() {
 
 
 monitor_kill() {
-	touch $tmpdir/stop_monitor
-	inotify_pid=`pgrep -f inotify.paths.[0-9]+`
+	touch "$tmpdir/stop_monitor"
+	inotify_pid=$(pgrep -f 'inotify.paths.[0-9]+')
 	if [ -f "$tmpdir/monitor.pid" ]; then
-		monitor_pid=`cat $tmpdir/monitor.pid`
+		monitor_pid=$(cat "$tmpdir/monitor.pid")
 		exit_code="0"
 	else
 		exit_code="1"
 	fi
-	monitor_pgid=`ps -p "$monitor_pid" -o pgid= | tr -d ' '`
-	kill -9 -- $inotify_pid -$monitor_pgid >> /dev/null 2>&1
+	if [ -n "$monitor_pid" ]; then
+		monitor_pgid=$(ps -p "$monitor_pid" -o pgid= 2>/dev/null | tr -d ' ')
+		if [ -n "$monitor_pgid" ]; then
+			kill -9 -- $inotify_pid -$monitor_pgid >> /dev/null 2>&1
+		elif [ -n "$inotify_pid" ]; then
+			kill -9 $inotify_pid >> /dev/null 2>&1
+		fi
+	elif [ -n "$inotify_pid" ]; then
+		kill -9 $inotify_pid >> /dev/null 2>&1
+	fi
 	exit $exit_code
 }
 
@@ -2238,7 +2282,6 @@ monitor_check() {
 		if [ "$scan_clamscan" == "1" ]; then
 	                clamscan_results=$(mktemp "$tmpdir/.clamscan.result.XXXXXX")
 			chmod 600 "$clamscan_results"
-	                $nice_command $clamscan $clamopts --infected --no-summary -f $monitor_scanlist > $clamscan_results 2>> $clamscan_log || clamscan_return=$?
                         if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
                                 try=0
                                 while [ $try -le $remote_clamd_max_retry ]; do
@@ -2288,6 +2331,7 @@ monitor_check() {
 			scanned_count=`wc -l $monitor_scanlist | awk '{print$1}'`
 			eout "{mon} scanned ${scanned_count} new/changed files with clamav engine"
 			if [ "$scan_yara" == "1" ]; then
+				_yara_filter_filelist "$monitor_scanlist"
 				scan_stage_yara "$monitor_scanlist"
 			fi
 			rm -f $clamscan_results $monitor_scanlist
@@ -2307,6 +2351,7 @@ monitor_check() {
 			scanned_count=`wc -l $monitor_scanlist | awk '{print$1}'`
 			eout "{mon} scanned ${scanned_count} new/changed files with native engine"
 			if [ "$scan_yara" == "1" ]; then
+				_yara_filter_filelist "$monitor_scanlist"
 				scan_stage_yara "$monitor_scanlist"
 			fi
 			rm -f $clamscan_results $monitor_scanlist
@@ -2520,21 +2565,21 @@ checkout() {
 user $user@rfxn.com $passwd
 prompt
 cd $upath
-lcd $lcd
 binary
 put "$file" "$storename.bin"
 ascii
 put "$file" "$storename.ascii"
 bye
 EOT
-		
+
 	elif [ -d "$file" ]; then
-		tmpf="$tmpdir/.co$$"
-		find $file -type f > $tmpf
-		cofiles=`wc -l $tmpf | awk '{print$1}'`
-		if [ "$cofiles" -ge "25" ]; then
-			eout "{checkout} path $file contains $cofiles, limit of 50 file uploads, aborting!" 1
-			rm -f $tmpf
+		tmpf=$(mktemp "$tmpdir/.co.XXXXXX")
+		find "$file" -type f > "$tmpf"
+		cofiles=$($wc -l "$tmpf" | awk '{print$1}')
+		if [ "$cofiles" -ge "50" ]; then
+			eout "{checkout} path $file contains $cofiles files, limit of 50 file uploads, aborting!" 1
+			rm -f "$tmpf"
+			return 1
 		fi
 		for i in `cat $tmpf`; do
 			filename=`basename "$i" | tr -d '[:cntrl:]' | tr -d '[:space:]'`
@@ -2547,7 +2592,6 @@ EOT
 user $user $passwd
 prompt
 cd $upath
-lcd $lcd
 binary
 put "$i" "$storename.bin"
 ascii

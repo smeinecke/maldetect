@@ -20,10 +20,14 @@ email_alert="0"
 # [ multiple addresses comma (,) spaced ]
 email_addr="you@domain.com"
 
-# Ignore e-mail alerts for scan reports in which all malware hits
-# have been automatically and successfully cleaned.
+# Suppress e-mail alerts for reports where all malware hits were
+# successfully cleaned. When enabled, alerts are only sent if at
+# least one hit remains uncleaned.
 # [0 = disabled, 1 = enabled]
 email_ignore_clean="1"
+
+# The subject line for e-mail alerts.
+email_subj="maldet alert from $(hostname)"
 
 # Enable user alerts for specific web hosting control panels. If hits are detected,
 # attempt to determine the web hosting control in use, if any. If a control
@@ -51,7 +55,7 @@ email_panel_alert_subj="maldet alert from $(hostname)"
 # [0 = disabled, 1 = enabled]
 slack_alert="0"
 
-# The file name of the file that will be uploaded to slack channel(s)
+# The file name and title for scan report uploads to Slack channel(s)
 slack_subj="maldet alert from $(hostname)"
 
 # Slack authentication token (Bot or User token).
@@ -67,7 +71,7 @@ slack_channels="maldetreports"
 # [0 = disabled, 1 = enabled]
 telegram_alert="0"
 
-# Caption for report file will be sent to telegram channel
+# Caption for the report file sent to Telegram
 telegram_file_caption="maldet alert from $(hostname)"
 
 # Telegram bot token.
@@ -81,7 +85,7 @@ telegram_channel_id="TELEGRAM_CHANNEL_ID"
 # This controls the daily automatic updates of LMD signature files
 # and cleaner rules. The signature update process preserves any
 # custom signature or cleaner files. It is highly recommended that this
-# be enabled as new signatures a released multiple times per-week.
+# be enabled as new signatures are released multiple times per-week.
 # [0 = disabled, 1 = enabled]
 autoupdate_signatures="1"
 
@@ -94,7 +98,7 @@ autoupdate_signatures="1"
 autoupdate_version="1"
 
 # This controls validating the LMD executable MD5 hash with known
-# good upstream hash value. This allows LMD to replace the the
+# good upstream hash value. This allows LMD to replace the
 # executable / force a reinstallation in the event the LMD executable
 # is tampered with or corrupted. If you intend to make customizations
 # to the LMD executable, you should disable this feature.
@@ -162,8 +166,8 @@ scan_hexdepth="65536"
 # [ 0 = disabled, 1 = enabled ]
 scan_hexfifo="1"
 
-# The maximum byte depth that the scanner will search into a files content
-#s when using named pipe (FIFO). Improved performance allows for greater
+# The maximum byte depth that the scanner will search into a file's content
+# when using named pipe (FIFO). Improved performance allows for greater
 # scan depth over default scan_hexdepth value.
 # [ changing this may have an impact on scan performance ]
 scan_hexfifo_depth="524288"
@@ -197,8 +201,8 @@ scan_user_access="0"
 # [ 0 = disabled, 1 = enabled ]
 scan_yara="0"
 
-# Timeout in seconds for the YARA scan invocation. Set to 0 for no timeout.
-# [ 0 = disabled ]
+# Timeout in seconds for YARA scan invocations.
+# [ 0 = no timeout, default = 300 ]
 scan_yara_timeout="300"
 
 # When both ClamAV and native YARA are enabled, controls which rules the
@@ -264,12 +268,12 @@ scan_export_filelist="0"
 # [0 = alert only, 1 = move to quarantine & alert]
 quarantine_hits="0"
 
-# Try to clean string based malware injections
+# Try to clean malware injections using signature-matched clean rules
 # [NOTE: quarantine_hits=1 required]
 # [0 = disabled, 1 = clean]
 quarantine_clean="0"
 
-# The default suspend action for users wih hits
+# The default suspend action for users with hits
 # Cpanel suspend or set shell /bin/false on non-Cpanel
 # [NOTE: quarantine_hits=1 required]
 # [0 = disabled, 1 = suspend account]
@@ -325,11 +329,11 @@ inotify_minuid="500"
 # [ comma spaced list, clear option to default monitor user homedir ]
 inotify_docroot="public_html,public_ftp"
 
-# Process CPU scheduling (nice) priority level for scan operations.
-# [ -19 = high prio , 19 = low prio, default = 19 ]
+# Process CPU scheduling (nice) priority level for inotify monitor operations.
+# [ -19 = high prio , 19 = low prio, default = 18 ]
 inotify_cpunice="18"
 
-# Process IO scheduling (ionice) priority levels for scan operations.
+# Process IO scheduling (ionice) priority levels for inotify monitor operations.
 # (uses cbq best-effort scheduling class [-c2])
 # [ 0 = most favorable IO, 7 = least favorable IO ]
 inotify_ionice="6"
@@ -368,7 +372,7 @@ remote_clamd_config="/etc/clamd.d/clamd.remote.conf"
 # the same file
 remote_clamd_max_retry="5"
 
-# How many seconds to sleep between retrys
+# How many seconds to sleep between retries
 remote_clamd_retry_sleep="3"
 
 ##

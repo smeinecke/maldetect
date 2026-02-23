@@ -1,4 +1,63 @@
-v2.0.1 | Feb 22 2026:
+v2.0.1 | Feb 23 2026:
+[Fix] clean() operator precedence: { } grouping added to || / && conditions
+      on clean rule + .info checks; prevents wrong branch activation
+[Fix] clean() quarantine branch: rescan now uses clean_check=1 to avoid
+      duplicate hit records; explicit re-quarantine on failure
+[Fix] monitor_check() double ClamAV scan: removed unconditional scan before
+      remote/local branch; each file now scanned exactly once
+[Fix] monitor_check() YARA: _yara_filter_filelist() now called before
+      scan_stage_yara() to skip files quarantined by ClamAV
+[Fix] monitor_kill() guards empty $monitor_pid; prevents kill -9 on process
+      group 0 when monitor.pid is missing
+[Fix] quar_hitlist() quarantine_suspend_user now runs before mv so stat can
+      determine file owner; matches quarantine() ordering
+[Fix] quar_hitlist()/quarantine() replace $RANDOM filename suffix with file
+      inode for deterministic, collision-free quarantine naming
+[Fix] checkout() remove dead lcd $lcd from FTP heredocs; add return after
+      file count limit; fix threshold 25 → 50 to match error message; use
+      mktemp for temp file
+[Fix] importconf template: 5 missing variables added (email_subj, scan_yara,
+      scan_yara_timeout, scan_yara_scope, import_custsigs_yara_url) and 16
+      hardcoded values changed to $variable expansion to preserve user
+      settings across upgrades
+[Fix] importconf inotify_sleep default was "30" but conf.maldet default is
+      "15"; scan_tmpdir_paths was missing /var/fcgi_ipc
+[Fix] install.sh version gate (1.5|1.6|2.0) removed; session, quarantine,
+      and temp data now preserved regardless of version
+[Fix] install.sh upgrade now preserves event logs from previous install
+[New] test coverage for importconf variable preservation (12 tests)
+[Fix] import_conf() remote config sourcing replaced with safe parser
+      (_safe_source_conf) that validates each line is a simple variable
+      assignment; rejects $(), backticks, semicolons, pipes in values;
+      prevents remote code execution via compromised config server
+[Fix] import_conf() config source order corrected: internals.conf now
+      sourced before conf.maldet, matching documented loading order
+[Change] import_conf() modernized: backticks to $(), $[] to $(()),
+      quote variable expansions in cp/echo/cat commands
+[Fix] -co/--config-option: validate values before sourcing; reject
+      command substitution ($(), ``), semicolons, pipes, and other
+      shell metacharacters in config values
+[Fix] hookscan.sh: validate filenames from ModSecurity inspectFile;
+      reject shell metacharacters, non-printable characters, and
+      non-existent files before passing to maldet
+[Fix] conf.maldet installed world-readable (0644); changed to 0640 to
+      protect slack_token, telegram_bot_token, and email_addr from
+      local user disclosure; also applies to conf.maldet.hookscan
+[Fix] hex FIFO created with mode 666 (world-writable); changed to 600
+      since only root's scanning process uses the FIFO
+[Fix] conf.maldet: 8 comment typos corrected (grammar, inotify_cpunice
+      default, inotify scheduling descriptions)
+[Fix] email_subj relocated to conf.maldet for user configuration;
+      internals.conf provides fallback default
+[Fix] README.md config tables: added 28 missing variables across 4 new
+      sections (General Options, Remote ClamAV, ELK Integration, and
+      expanded Alerting/Scanning/Quarantine/Monitoring tables); corrected
+      slack_channels default
+[Change] usage_short() adds [--force] to -u/-d, [email] to -e, FILE to
+      -m; moves YARA hint from -U to -co sub-note
+[Change] usage_long() documents --beta flag for -d (version update)
+[Change] CHANGELOG.RELEASE entry ordering synced with CHANGELOG; 5
+      duplicate entries merged for succinctness
 [Fix] cron.daily update failure logging was dead code: pipeline exit code
       was tail's (always 0) instead of maldet's; use PIPESTATUS[0] to
       capture maldet exit code, matching cron.watchdog pattern
@@ -10,11 +69,8 @@ v2.0.1 | Feb 22 2026:
 [Change] Rocky 8/9 Dockerfiles: add curl to package list so
       get_remote_file() curl code path is exercised in CI
 [New] test coverage for cron.daily update failure logging (2 tests)
-[Fix] cron.daily flock lock leaked to backgrounded maldet -b scans via
-      inherited fd, preventing next day's cron.daily from running; switched
-      from fd-based locking (exec 9>/flock -n 9) to flock command form
-      (flock -n FILE "$0") which uses CLOEXEC so children never inherit
-      the lock fd
+[Fix] cron.daily flock lock leaked to backgrounded scans; switched to
+      CLOEXEC command form (flock -n FILE "$0") preventing fd inheritance
 [New] SHA-256 checksum verification for YARA-X binary download in
       Dockerfile.yara-x
 [Fix] cron.watchdog version update (maldet -d) now runs regardless of
@@ -23,17 +79,14 @@ v2.0.1 | Feb 22 2026:
       SIZE field (file size in bytes) was missing from description
 [New] test coverage for clean() YARA rescan path and YARA(cav) signature
       count display label (3 tests)
-[Change] Rocky Linux 10 added to CI matrix, Makefile, and run-tests.sh;
-      9-target CI matrix (was 8); Dockerfile.rocky10 fixed: base image
-      changed to rockylinux/rockylinux:10, --allowerasing for coreutils
-      conflict, optional inotify-tools/yara separated from required packages
+[Change] Rocky Linux 10 added to CI (9-target, was 8); Dockerfile.rocky10
+      fixed for base image, coreutils conflict, optional package separation
 [Change] scan_stage_yara() code duplication eliminated: extracted
       _yara_scan_rules() helper to consolidate text rules and compiled
       rules scan/parse blocks (~80 duplicate lines removed)
-[Change] scan_stage_yara() YARA binary selection and --scan-list
-      detection cached in globals via _yara_init_cache(); eliminates
-      repeated fork+exec of yara --help | grep every monitor cycle
-      (15s default); cache cleared on monitor config reload
+[Change] scan_stage_yara() caches YARA binary and --scan-list detection
+      via _yara_init_cache(); eliminates repeated yara invocations every
+      monitor cycle; cleared on config reload
 [Change] scan() filters quarantined/unreadable files from YARA file
       list via _yara_filter_filelist() before passing to
       scan_stage_yara(); reduces wasted YARA invocations on files
@@ -58,34 +111,25 @@ v2.0.1 | Feb 22 2026:
       removed Rocky 10 and Ubuntu 22.04 not in CI; merged duplicate v2.0.1
       date blocks
 [Fix] README.md cron_prune_days default corrected from 14 to 21
-[Change] sigup() signature count uses YARA(cav) qualifier when scan_yara
-      disabled, matching scan() display
-[Change] usage_short() YARA hint reformatted as sub-note under -co option
+[Change] signature count display shows "YARA(cav)" qualifier when
+      native YARA is disabled (scan_yara=0); applied in both sigup()
+      and scan() output
+[Change] usage_short() adds YARA scanning hint (-co scan_yara=1) as
+      sub-note under -co option
 [Change] legacy plain-text README replaced with pointer to README.md
 [Fix] scan_stage_yara() dedup anchored with end-of-field regex to prevent
       substring false-positives (e.g., test.php matching test.php.bak);
       ERE metacharacters in file paths are escaped
-[Fix] scan_stage_yara() per-file fallback (YARA < 4.0) uses sh -c wrapper
-      to capture YARA exit code through cpulimit, matching batch path
-      behavior; fixes silent error swallowing on CentOS 6/7 with cpulimit
-[Fix] clean() YARA rescan: skip dedup during clean verification so
-      YARA-only detections surviving cleaning are re-detected; honor
-      clean_check parameter to set clean_failed instead of re-quarantining
-      in non-quarantine clean path
+[Fix] scan_stage_yara() per-file fallback (YARA < 4.0) uses sh -c
+      wrapper to capture YARA exit code through cpulimit; captures
+      highest non-zero exit code so rule syntax errors are logged
+[Fix] clean() YARA rescan: post-clean verification now invokes
+      scan_stage_yara() so YARA-only detections are re-verified; skip
+      dedup during verification so surviving detections are re-detected;
+      honor clean_check parameter in non-quarantine clean path
 [Fix] scan_stage_yara() deduplicates hits against scan_session, preventing
       double-counted files when ClamAV and native YARA both detect the same
       file (report-only and quarantine modes)
-[Change] usage_short() now mentions YARA scanning with -co scan_yara=1
-      hint so users discover the feature without needing -h
-[Change] signature count display shows "YARA(cav)" qualifier when native
-      YARA scanning is disabled (scan_yara=0) to distinguish ClamAV-only
-      YARA rule usage from native scanning
-[Fix] clean() YARA rescan: post-clean verification now invokes
-      scan_stage_yara() so YARA-only detections are re-verified after
-      cleaning; previously only MD5/HEX were rechecked
-[Fix] scan_stage_yara() per-file fallback (YARA < 4.0) now captures the
-      highest non-zero exit code instead of hardcoding 0, so rule syntax
-      errors are logged on CentOS 6/7
 [Fix] scan_stage_yara() stderr filter handles YARA-X "can't open" message
       format in addition to classic YARA "could not open"/"could not map"
 [Fix] trap_exit()/clean_exit() now clean up YARA temp files ($tmpdir/.yara_*)
@@ -135,8 +179,6 @@ v2.0.1 | Feb 22 2026:
       Telegram alerts to fail; issue #461
 [Fix] get_remote_file() curl now uses -f flag to fail on HTTP 404/500 errors
       instead of saving error pages as valid content
-[Fix] cron.daily update calls now log exit status to event_log instead of
-      silencing all output with /dev/null
 [New] cron.watchdog weekly watchdog script for independent fallback signature
       updates when primary cron.daily is broken or stale
 [New] install.sh installs watchdog to /etc/cron.weekly/maldet-watchdog

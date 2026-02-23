@@ -162,6 +162,18 @@ MOCK
     assert_failure
 }
 
+# Helper: run cron.daily with sleep disabled to avoid random delay
+run_cron_daily() {
+    local tmpscript
+    tmpscript=$(mktemp /tmp/cron-daily-nosleep.XXXXXX)
+    sed 's/sleep $(echo $RANDOM/sleep 0 #/' /etc/cron.daily/maldet > "$tmpscript"
+    chmod 755 "$tmpscript"
+    bash "$tmpscript"
+    local rc=$?
+    rm -f "$tmpscript"
+    return $rc
+}
+
 # Helper: install mock maldet that logs args and exits with failure
 install_failing_mock_maldet() {
     cp "$LMD_INSTALL/maldet" "$LMD_INSTALL/maldet.real"
@@ -177,7 +189,7 @@ MOCK
     lmd_set_config autoupdate_version 1
     lmd_set_config cron_daily_scan 0
     install_failing_mock_maldet
-    bash /etc/cron.daily/maldet
+    run_cron_daily
     run grep "version update) failed" "$LMD_INSTALL/logs/event_log"
     assert_success
 }
@@ -186,7 +198,7 @@ MOCK
     lmd_set_config autoupdate_signatures 1
     lmd_set_config cron_daily_scan 0
     install_failing_mock_maldet
-    bash /etc/cron.daily/maldet
+    run_cron_daily
     run grep "signature update) failed" "$LMD_INSTALL/logs/event_log"
     assert_success
 }
