@@ -5,7 +5,7 @@ echo -n "Would you like to proceed? "
 read -p "[y/n] " -n 1 Z
 echo
 if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
-	if [ "$OSTYPE" != "FreeBSD" ]; then
+	if [ "$(uname -s)" != "FreeBSD" ]; then
 		if test `cat /proc/1/comm` = "systemd"
 		then
 			systemctl disable maldet.service
@@ -32,7 +32,7 @@ if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 			rm -f /etc/init.d/maldet
 		fi
 	fi
-	rm -rf /usr/local/maldetect* /etc/cron.d/maldet_pub /etc/cron.daily/maldet /usr/local/sbin/maldet /usr/local/sbin/lmd
+	rm -rf /usr/local/maldetect* /etc/cron.d/maldet_pub /etc/cron.daily/maldet /etc/cron.weekly/maldet-watchdog /usr/local/sbin/maldet /usr/local/sbin/lmd /usr/local/share/man/man1/maldet.1.gz
 	clamav_paths="/usr/local/cpanel/3rdparty/share/clamav/ /var/lib/clamav/ /var/clamav/ /usr/share/clamav/ /usr/local/share/clamav"
 	for cpath in $clamav_paths; do
 		rm -f $cpath/rfxn.* $cpath/lmd.user.*

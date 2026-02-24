@@ -36,6 +36,9 @@ if [ ! -d "$inspath" ] && [ -d "files" ]; then
 	ln -fs "$inspath/maldet" /usr/local/sbin/maldet
 	ln -fs "$inspath/maldet" /usr/local/sbin/lmd
 	cp -f CHANGELOG COPYING.GPL README "$inspath/"
+	mkdir -p /usr/local/share/man/man1/
+	gzip -9 "$inspath/maldet.1"
+	ln -fs "$inspath/maldet.1.gz" /usr/local/share/man/man1/maldet.1.gz
 	clamav_paths="/usr/local/cpanel/3rdparty/share/clamav/ /var/lib/clamav/ /var/clamav/ /usr/share/clamav/ /usr/local/share/clamav"
 	for lp in $clamav_paths; do
 		clamav_linksigs "$lp"
@@ -46,9 +49,12 @@ else
 		$inspath/maldet -k >> /dev/null 2>&1
 		monmode=1
 	fi
-	$find "${inspath}."* -maxdepth 0 -type d -mtime +30 2> /dev/null | xargs rm -rf
+	$find "${inspath}."* -maxdepth 0 -type d -mtime +30 -exec rm -rf {} + 2> /dev/null
 	chattr -ia "$inspath/internals/internals.conf"
-	mv "$inspath" "$inspath.bk$$"
+	if ! mv "$inspath" "$inspath.bk$$"; then
+		echo "ERROR: failed to backup $inspath to $inspath.bk$$, aborting install."
+		exit 1
+	fi
 	ln -fs "$inspath.bk$$" "$inspath.last"
 	mkdir -p "$inspath"
 	chmod 755 "$inspath"
@@ -111,6 +117,22 @@ if [ "$(uname -s)" != "FreeBSD" ]; then
                 cp -af ./files/service/maldet.sh /etc/init.d/maldet
                 chmod 755 /etc/init.d/maldet
 		chkconfig --level 2345 maldet on
+	fi
+	# Migrate default_monitor_mode to MONITOR_MODE in sysconfig for systemd
+	if [ -f "$inspath.bk$$/conf.maldet" ]; then
+		_old_dmm=$(grep '^default_monitor_mode=' "$inspath.bk$$/conf.maldet" 2>/dev/null | tail -1 | sed 's/^default_monitor_mode=//' | tr -d '"')
+		if [ -n "$_old_dmm" ] && [ "$_old_dmm" != "users" ]; then
+			for _scf in /etc/sysconfig/maldet /etc/default/maldet; do
+				if [ -f "$_scf" ]; then
+					if grep -q '^MONITOR_MODE=' "$_scf"; then
+						sed -i "s|^MONITOR_MODE=.*|MONITOR_MODE=\"$_old_dmm\"|" "$_scf"
+					else
+						echo "MONITOR_MODE=\"$_old_dmm\"" >> "$_scf"
+					fi
+				fi
+			done
+		fi
+		unset _old_dmm
 	fi
 	if [ -f /etc/redhat-release ]; then
 		if [ ! -f "/etc/sysconfig/maldet" ]; then

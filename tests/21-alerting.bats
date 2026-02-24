@@ -69,6 +69,36 @@ CURLEOF
     chmod 755 "$MOCK_BIN_DIR/curl"
 }
 
+# Helper: create mock curl that returns API errors
+create_mock_curl_error() {
+    cat > "$MOCK_BIN_DIR/curl" <<'CURLEOF'
+#!/usr/bin/env bash
+echo "CURL_CALL: $@" >> /tmp/mock-curl.log
+if [[ "$*" == *"getUploadURLExternal"* ]]; then
+    echo '{"ok":false,"error":"invalid_auth"}'
+elif [[ "$*" == *"completeUploadExternal"* ]]; then
+    echo '{"ok":false,"error":"channel_not_found"}'
+elif [[ "$*" == *"sendDocument"* ]]; then
+    echo '{"ok":false,"error_code":401,"description":"Unauthorized"}'
+elif [[ "$*" == *"mock-upload"* ]]; then
+    echo 'ok'
+else
+    echo '{"ok":false,"error":"unknown"}'
+fi
+CURLEOF
+    chmod 755 "$MOCK_BIN_DIR/curl"
+}
+
+# Helper: create mock curl that simulates network failure
+create_mock_curl_fail() {
+    cat > "$MOCK_BIN_DIR/curl" <<'CURLEOF'
+#!/usr/bin/env bash
+echo "CURL_CALL: $@" >> /tmp/mock-curl.log
+exit 7
+CURLEOF
+    chmod 755 "$MOCK_BIN_DIR/curl"
+}
+
 # Helper: run maldet with mock bins in PATH
 run_maldet_with_mocks() {
     PATH="$MOCK_BIN_DIR:$PATH" run maldet "$@"
@@ -197,5 +227,44 @@ run_maldet_with_mocks() {
     assert_scan_completed
     [ -f /tmp/mock-curl.log ]
     run grep "bot999:XYZ" /tmp/mock-curl.log
+    assert_success
+}
+
+@test "slack API error logs error field from response" {
+    create_mock_curl_error
+    lmd_set_config email_alert 0
+    lmd_set_config slack_alert 1
+    lmd_set_config slack_token "xoxb-test-token-123"
+    lmd_set_config slack_channels "C12345"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run_maldet_with_mocks -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    run grep "invalid_auth" "$LMD_INSTALL/logs/event_log"
+    assert_success
+}
+
+@test "slack curl failure logs exit code" {
+    create_mock_curl_fail
+    lmd_set_config email_alert 0
+    lmd_set_config slack_alert 1
+    lmd_set_config slack_token "xoxb-test-token-123"
+    lmd_set_config slack_channels "C12345"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run_maldet_with_mocks -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    run grep "curl failed (exit 7)" "$LMD_INSTALL/logs/event_log"
+    assert_success
+}
+
+@test "telegram API error logs description from response" {
+    create_mock_curl_error
+    lmd_set_config email_alert 0
+    lmd_set_config telegram_alert 1
+    lmd_set_config telegram_bot_token "bot123456:ABC-DEF"
+    lmd_set_config telegram_channel_id "-100123456"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run_maldet_with_mocks -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    run grep "Unauthorized" "$LMD_INSTALL/logs/event_log"
     assert_success
 }

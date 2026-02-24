@@ -125,3 +125,40 @@ _source_lmd_stack() {
     [ "$email_alert" = "1" ]
     rm -f "$tmpfile"
 }
+
+# F-033: restore path traversal validation
+@test "restore rejects path with .. traversal in .info" {
+    lmd_set_config quarantine_hits 1
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    local scanid
+    scanid=$(get_last_scanid)
+    # Find the .info file and inject a traversal path
+    local info_file
+    info_file=$(ls "$LMD_INSTALL/quarantine/"*.info 2>/dev/null | head -1)
+    [ -n "$info_file" ]
+    # Replace the path (field 9) with a traversal path
+    local original
+    original=$(grep -E -v '^\#' "$info_file")
+    local prefix
+    prefix=$(echo "$original" | cut -d: -f1-8)
+    echo "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)" > "$info_file"
+    echo "${prefix}:/tmp/../tmp/lmd-traversal-test" >> "$info_file"
+    local qfile
+    qfile=$(basename "${info_file%.info}")
+    run maldet -s "$qfile"
+    # The traversal path should NOT have been created
+    [ ! -f "/tmp/lmd-traversal-test" ]
+}
+
+@test "restore succeeds with valid .info path" {
+    lmd_set_config quarantine_hits 1
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/test-restore-valid.txt"
+    run maldet -a "$TEST_SCAN_DIR"
+    local qfile
+    qfile=$(ls "$LMD_INSTALL/quarantine/" 2>/dev/null | grep -v '\.info$' | head -1)
+    [ -n "$qfile" ]
+    run maldet -s "$qfile"
+    # File should be restored (normal behavior still works)
+    assert_output --partial "restored"
+}

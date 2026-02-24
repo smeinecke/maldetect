@@ -8,5 +8,5 @@
 # users      | monitor all local unix users
 # PATH FILE  | read path file, line spaced, for local paths to monitor
 
-#MONITOR_MODE="users"
+MONITOR_MODE="users"
 #MONITOR_MODE="/usr/local/maldetect/monitor_paths"

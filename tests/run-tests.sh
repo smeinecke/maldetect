@@ -165,14 +165,6 @@ for i in $(seq 0 $(( NUM_FILES - 1 ))); do
     fi
 done
 
-# Build extra bats args (e.g., --filter) to pass to each group
-EXTRA_ARGS=""
-if [ ${#BATS_ARGS[@]} -gt 0 ]; then
-    for arg in "${BATS_ARGS[@]}"; do
-        EXTRA_ARGS="$EXTRA_ARGS $arg"
-    done
-fi
-
 # Create temp dir for output
 TMPDIR_PAR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_PAR"' EXIT
@@ -185,7 +177,7 @@ PIDS=()
 for i in $(seq 0 $(( NUM_GROUPS - 1 ))); do
     # shellcheck disable=SC2086
     docker run --rm "$IMAGE_TAG" \
-        bats --formatter tap $EXTRA_ARGS ${GROUP_FILES[$i]} \
+        bats --formatter tap "${BATS_ARGS[@]}" ${GROUP_FILES[$i]} \
         > "$TMPDIR_PAR/group-$i.tap" 2>&1 &
     PIDS+=($!)
 done

@@ -97,8 +97,8 @@ teardown() {
     scanid=$(get_last_scanid)
     # -n attempts clean on quarantined hits from scanid
     run maldet -n "$scanid"
-    # Should not fail — either cleaned or attempted
-    [ "$status" -eq 0 ] || [ "$status" -eq 2 ]
+    # exit 0=cleaned, 1=file already quarantined (path gone), 2=hits found
+    [ "$status" -eq 0 ] || [ "$status" -eq 1 ] || [ "$status" -eq 2 ]
 }
 
 @test "clean handles multiple infected files" {
