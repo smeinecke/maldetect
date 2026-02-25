@@ -1,326 +1,171 @@
 v2.0.1 | Feb 24 2026:
-[Change] native scanning engine: eliminate ~500,000 fork/exec operations on
-      a 100k-file scan by replacing external command pipelines with Bash
-      parameter expansion and arithmetic builtins throughout scan hot paths
-[Change] scan progress display: replace per-file wc|awk hit/clean counting
-      with in-shell counters incremented in quarantine() and clean()
-[Change] scan_stage1/get_filestat/record_hit: replace md5sum|awk with
-      ${var%% *} parameter expansion; saves 1 fork per file scanned
-[Change] scan_stage2: replace echo|awk HEX hit field extraction with
-      ${var%% *} and ${var#* } parameter expansion
-[Fix] scan_stage2 HEX hit name: strip trailing space from perl hexfifo.pl
-      and hexstring.pl output; awk implicitly stripped it but parameter
-      expansion does not, causing clean rule lookup failures
-[Change] scan_stage1: replace echo|cut MD5 hit name extraction with
-      chained ${var#*:} parameter expansion
-[Change] get_filestat(): consolidate 4-5 separate stat calls into single
-      stat with composite format string; parse fields via parameter expansion;
-      FreeBSD path gets same treatment with -f flags
-[Change] ClamAV hit loop: replace echo|cut field extraction, echo|grep
-      YARA/HEX/MD5 detection, and echo|sed prefix rewriting with parameter
-      expansion and [[ glob ]] matching in both scan() and monitor_check()
-[Change] monitor mode: replace fragile cat|tr '%' space-escaping loops with
-      while IFS= read -r; replace wc|awk line counting with wc -l < redirect;
-      replace md5sum|awk with parameter expansion for ignore_sigs detection
-[Change] cleanup_scanlist(): replace cat|for loop with while IFS= read -r
-      for proper space handling and fork elimination
-[Change] record_hit/quarantine/quar_hitlist/restore: replace basename with
-      ${file##*/} parameter expansion
-[Change] replace all 14 instances of deprecated $[expr] arithmetic syntax
-      with POSIX $((expr)) throughout functions file
-[Change] maldet.1 man page rewritten following man-pages(7) conventions;
-      replace auto-generated help2man content with hand-crafted sections:
-      NAME, SYNOPSIS, DESCRIPTION, OPTIONS (grouped by category), EXIT
-      STATUS, FILES, CONFIGURATION, SEE ALSO, BUGS, AUTHORS; fix section
-      number from 19 to 1; remove marketing prose (FEATURES, THREAT
-      SOURCE DATA, SIGNATURE UPDATES)
-[Fix] install.sh fresh install now compresses and symlinks the man page
-      to /usr/local/share/man/man1/; previously only done on upgrades
-[Fix] uninstall.sh now removes /usr/local/share/man/man1/maldet.1.gz
-      symlink; previously orphaned after uninstall
-[New] man page smoke tests: compressed file exists, symlink exists,
-      expected sections present, uninstall cleanup (4 tests)
-[New] test coverage for special characters and path handling: spaces, parentheses,
-      brackets, quotes in filenames; quarantine/restore with spaced paths; glob ?
-      expansion for panel-style paths; comma-separated multi-path scanning; HEX and
-      string length scan in spaced directories; ignore_paths with spaces (18 tests)
-[Fix] get_remote_file() variable scoping: all function-local variables declared
-      with local; internal svc renamed to grf_svc to prevent clobbering the
-      global scan mode tracker used by trap_exit() in monitor mode
-[Fix] quarantine()/quar_hitlist() TOCTOU: check mv exit code before writing
-      metadata (.info, quarantine.hist, session); prevents phantom quarantine
-      entries when scanned files disappear before quarantine
-[Fix] scan_strlen() quoting and portability: use mktemp for temp file,
-      xargs -d '\n' for space-safe path handling, while-read loop for hits
-      processing; quote all variable expansions
-[Fix] --user flag validates username: reject empty, path traversal (.., /),
-      and non-existent users before constructing quarantine/session/tmp paths
-[Fix] --mkpubpaths id --user (GNU-only) changed to id -u (POSIX); fixes
-      FreeBSD and strict POSIX environments
-[Fix] install.sh backup cleanup: replace find|xargs rm -rf with
-      find -exec rm -rf to avoid xargs word-splitting
-[Fix] scan_stage1() quote $clean_check argument to scan_stage2()
-[Fix] Slack/Telegram alerting: check curl exit codes on all API calls
-      (getUploadURLExternal, file upload, completeUploadExternal,
-      sendDocument); verify "ok":true before extracting fields; extract
-      and log API error/description fields on failure for diagnostics
-[Fix] run-tests.sh parallel mode: pass BATS_ARGS as array instead of
-      word-split string; multi-word --filter values now work correctly
-[Fix] CI pull_request trigger: add '2.*' branch pattern matching push
-      trigger; PRs targeting version branches now run CI
-[Fix] restore() validates .info file paths before restoring: rejects path
-      traversal (..), empty paths, non-existent target directories, and
-      non-root restores outside the user's home directory
-[Fix] maldet.service PIDFile changed from inotifywait.pid to monitor.pid;
-      systemd now tracks the monitor_cycle daemon instead of the inotifywait
-      child process
-[Change] maldet.service EnvironmentFile changed from conf.maldet (bash
-      script) to /etc/sysconfig/maldet or /etc/default/maldet (KEY=VALUE);
-      ExecStart uses ${MONITOR_MODE:-users}; install.sh migrates customized
-      default_monitor_mode to MONITOR_MODE in sysconfig on upgrade
-[Fix] maldet.sysconfig MONITOR_MODE default uncommented for new installs
-[Fix] uninstall.sh now removes /etc/cron.weekly/maldet-watchdog; previously
-      orphaned after uninstall
-[Fix] install.sh backup mv now checks exit code; aborts install on failure
-      to prevent corrupted mixed old/new installations
-[Fix] FreeBSD detection: replace broken $OSTYPE == "FreeBSD" (never matches
-      on FreeBSD where $OSTYPE is "freebsd13.1") with cached os_freebsd
-      variable using uname -s in internals.conf; uninstall.sh uses uname -s
-      directly; all 9 dead FreeBSD code paths now functional
-[Fix] Slack multi-channel alerting: files.completeUploadExternal now uses
-      channels parameter (comma-separated) instead of channel_id with only
-      the first channel; dead channel_ids loop removed; issue #458
-[Fix] Slack/Telegram portability: replace grep -oP (PCRE) with sed for
-      JSON field extraction; Telegram sendDocument uses $curl variable
-      with -s flag and stderr redirect
-[Fix] 19 bare exit statements given explicit exit codes (0 for success,
-      1 for errors); error paths in monitor_init, clean, quarantine, and
-      trap_exit no longer silently exit 0
-[Fix] monitor reload now sources compat.conf and /etc/sysconfig/maldet
-      (or /etc/default/maldet) matching startup loading order; fixes
-      deprecated inotify variable names lost on reload
-[Fix] clean() operator precedence: { } grouping added to || / && conditions
-      on clean rule + .info checks; prevents wrong branch activation
-[Fix] clean() quarantine branch: rescan now uses clean_check=1 to avoid
-      duplicate hit records; explicit re-quarantine on failure
-[Fix] monitor_check() double ClamAV scan: removed unconditional scan before
-      remote/local branch; each file now scanned exactly once
-[Fix] monitor_check() YARA: _yara_filter_filelist() now called before
-      scan_stage_yara() to skip files quarantined by ClamAV
-[Fix] monitor_kill() guards empty $monitor_pid; prevents kill -9 on process
-      group 0 when monitor.pid is missing
-[Fix] quar_hitlist() quarantine_suspend_user now runs before mv so stat can
-      determine file owner; matches quarantine() ordering
-[Fix] quar_hitlist()/quarantine() replace $RANDOM filename suffix with file
-      inode for deterministic, collision-free quarantine naming
-[Fix] checkout() remove dead lcd $lcd from FTP heredocs; add return after
-      file count limit; fix threshold 25 → 50 to match error message; use
-      mktemp for temp file
-[Fix] importconf template: 5 missing variables added (email_subj, scan_yara,
-      scan_yara_timeout, scan_yara_scope, import_custsigs_yara_url), 16
-      hardcoded values changed to $variable expansion, inotify_sleep
-      default corrected to 15, scan_tmpdir_paths includes /var/fcgi_ipc;
-      issue #439
-[Fix] install.sh version gate (1.5|1.6|2.0) removed; session, quarantine,
-      temp data, and event logs now preserved regardless of version
-[New] test coverage for importconf variable preservation (12 tests)
-[Fix] import_conf() remote config sourcing replaced with safe parser
-      (_safe_source_conf) that validates each line is a simple variable
-      assignment; rejects $(), backticks, semicolons, pipes in values;
-      prevents remote code execution via compromised config server
-[Fix] import_conf() config source order corrected: internals.conf now
-      sourced before conf.maldet, matching documented loading order
-[Change] import_conf() modernized: backticks to $(), $[] to $(()),
-      quote variable expansions in cp/echo/cat commands
-[Fix] -co/--config-option: validate values before sourcing; reject
-      command substitution ($(), ``), semicolons, pipes, and other
-      shell metacharacters in config values
-[Fix] hookscan.sh: validate filenames from ModSecurity inspectFile;
-      reject shell metacharacters, non-printable characters, and
-      non-existent files before passing to maldet
-[Fix] conf.maldet installed world-readable (0644); changed to 0640 to
-      protect slack_token, telegram_bot_token, and email_addr from
-      local user disclosure; also applies to conf.maldet.hookscan
-[Fix] hex FIFO created with mode 666 (world-writable); changed to 600
-      since only root's scanning process uses the FIFO
-[Fix] conf.maldet: 9 comment typos corrected (grammar, inotify_cpunice
-      default, inotify scheduling descriptions, -a|--al → -a|--scan-all)
-[Fix] email_subj relocated to conf.maldet for user configuration;
-      internals.conf provides fallback default
-[Fix] README.md config tables: added 28 missing variables across 4 new
-      sections; corrected variable names, defaults, and paths
-[Change] usage_short() adds [--force] to -u/-d, [email] to -e, FILE to
-      -m; moves YARA hint from -U to -co sub-note
-[Change] usage_long() documents --beta flag for -d (version update)
-[Change] CHANGELOG.RELEASE entry ordering synced with CHANGELOG; 5
-      duplicate entries merged for succinctness
-[Fix] cron.daily update failure logging was dead code: pipeline exit code
-      was tail's (always 0) instead of maldet's; use PIPESTATUS[0] to
-      capture maldet exit code, matching cron.watchdog pattern
-[Change] Rocky 8/9 Dockerfiles: add curl to package list so
-      get_remote_file() curl code path is exercised in CI
-[New] test coverage for cron.daily update failure logging (2 tests)
-[Fix] cron.daily flock lock leaked to backgrounded scans; switched to
-      CLOEXEC command form (flock -n FILE "$0") preventing fd inheritance
-[New] SHA-256 checksum verification for YARA-X binary download in
-      Dockerfile.yara-x
-[Fix] cron.watchdog version update (maldet -d) now runs regardless of
-      signature update result; previously gated on sigup success
-[Fix] README.md md5v2.dat format corrected to HASH:SIZE:{MD5}sig.name.N;
-      SIZE field (file size in bytes) was missing from description
-[New] test coverage for YARA: clean() rescan path, YARA(cav) display label,
-      download validation, and compiled.yarc engine validation (9 tests)
-[Change] Rocky Linux 10 added to CI (9-target, was 8); Dockerfile.rocky10
-      fixed for base image, coreutils conflict, optional package separation
-[Change] YARA scan refactored: extract _yara_scan_rules() helper
-      eliminating ~80 lines of duplicated scan/parse code; --scan-list
-      batch scanning reduces invocations from O(N*M) to M+1;
-      _yara_init_cache() caches binary selection and --scan-list detection;
-      _yara_filter_filelist() filters quarantined files before scan;
-      unused yarac discovery removed
-[Fix] YARA rule validation: import_user_sigs() validates downloaded rules
-      with yr check or yara before installing; scan_stage_yara() validates
-      compiled.yarc with test scan before use; malformed or cross-engine
-      rules are skipped with warning
-[Change] README.md documents ignore_sigs regex/substring matching behavior,
-      hit prefix table ({MD5}/{HEX}/{SA}/{YARA}/{CAV}), YARA batch scanning,
-      hookscan YARA config, and compiled.yarc path
-[Change] copyright headers updated to 2026 across all source files
-[Fix] CHANGELOG CI matrix corrected to 8-target (was 9-OS); added YARA-X,
-      removed Rocky 10 and Ubuntu 22.04 not in CI; merged duplicate v2.0.1
-      date blocks
-[Fix] README.md cron_prune_days default corrected from 14 to 21
-[Change] signature count display shows "YARA(cav)" qualifier when
-      native YARA is disabled (scan_yara=0); applied in both sigup()
-      and scan() output
-[Change] legacy plain-text README replaced with pointer to README.md
-[Fix] scan_stage_yara() dedup anchored with end-of-field regex to prevent
-      substring false-positives (e.g., test.php matching test.php.bak);
-      ERE metacharacters in file paths are escaped
-[Fix] scan_stage_yara() per-file fallback (YARA < 4.0) uses sh -c
-      wrapper to capture YARA exit code through cpulimit; captures
-      highest non-zero exit code so rule syntax errors are logged
-[Fix] clean() YARA rescan: post-clean verification now invokes
-      scan_stage_yara() so YARA-only detections are re-verified; skip
-      dedup during verification so surviving detections are re-detected;
-      honor clean_check parameter in non-quarantine clean path
-[Fix] scan_stage_yara() deduplicates hits against scan_session, preventing
-      double-counted files when ClamAV and native YARA both detect the same
-      file (report-only and quarantine modes)
-[Fix] scan_stage_yara() stderr filter handles YARA-X "can't open" message
-      format in addition to classic YARA "could not open"/"could not map"
-[Fix] trap_exit()/clean_exit() now clean up YARA temp files ($tmpdir/.yara_*)
-      on signal/interrupt, preventing temp file leaks during aborted scans
-[Fix] hookscan.sh passes scan_yara to maldet --hook-scan so ModSecurity
-      upload scanning can leverage YARA rules when enabled in
-      conf.maldet.hookscan
-[New] YARA-X (yr) CI coverage: Dockerfile.yara-x with YARA-X v1.13.0
-      exercises yr scan code path; YARA tests accept either yara or yr
+
+-- New Features --
 [New] native YARA scanning: scan_yara=1 enables YARA as an independent scan
       stage using the yara binary (or yr from YARA-X); supports custom rules
-      via custom.yara and custom.yara.d/ drop-in directory; scan_yara_scope
-      controls rule overlap with ClamAV YARA; compiled rules via yarac
-      supported; issue #392, #277, #239
-[New] custom YARA rule infrastructure: custom.yara single-file and
-      custom.yara.d/ drop-in directory for third-party rule sets (YARA Forge,
-      Signature-Base); preserved across upgrades; import_custsigs_yara_url
-      for remote rule import
-[Fix] clamselector() logs warning when clamd test fails and falls back to local
-      clamscan, instead of silently switching engines; issue #452
-[Change] cron.daily prune uses find -delete instead of find -print0 | xargs rm -f;
-      eliminates race condition and subprocess overhead; issue #430
-[New] cron.daily explicit cPanel detection: parse /etc/userdatadomains for addon
-      domain and subdomain document roots outside public_html, ensuring all hosted
-      content is scanned; issue #268
-[Fix] view_report() resolves "newest" and empty scan ID to most recent session
-      before email and display logic, fixing --report "" user@domain.com failing to
-      email the latest report; replace $EDITOR with cat for terminal output; use eout
-      for error messages; issue #336
-[Fix] panel alerts now include signature name alongside file path; rewrite hit
-      parsing from fragile for/awk/grep loop to while-read with BASH_REMATCH regex
-      for correct handling of paths with spaces and regex metacharacters; issue #426
-[Fix] InterWorx get_panel_contacts() guard against empty master_domain preventing
-      siteworx call with missing --login_domain; issue #426
-[Fix] tlog line truncation: switch from byte-based tracking (stat -c %s + tail -c)
-      to line-based tracking (wc -l + tail -n) to prevent mid-line truncation in
-      monitor digest emails and inotify batch scanning; issue #227
-[Fix] clamselector() no longer overwrites user scan_max_filesize config; signature-
-      derived max filesize now stored in separate sig_max_filesize variable used only
-      for ClamAV --max-filesize; issue #410
-[Fix] Telegram Bot API URL missing required /bot prefix before token, causing all
-      Telegram alerts to fail; issue #461
-[Fix] get_remote_file() curl now uses -f flag to fail on HTTP 404/500 errors
-      instead of saving error pages as valid content
+      via custom.yara and custom.yara.d/ drop-in directory for third-party
+      rule sets; scan_yara_scope controls rule overlap with ClamAV YARA;
+      compiled rules via yarac supported; hookscan passes scan_yara for
+      ModSecurity upload scanning; import_custsigs_yara_url for remote rule
+      import; preserved across upgrades; issue #392, #277, #239
 [New] cron.watchdog weekly watchdog script for independent fallback signature
-      updates when primary cron.daily is broken or stale
-[New] install.sh installs watchdog to /etc/cron.weekly/maldet-watchdog
-[New] test coverage for update mechanisms: get_remote_file, sigup, lmdup,
-      cron update integration, and watchdog (22 tests)
-[Fix] find_recentopts incorrectly escaping find options to the right of
-      ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442
-[Fix] monitor_check() clamd fatal errors (no reply from clamd) no longer treated
-      as malware hits causing false quarantines; issue #454, #447
-[Fix] upgrade install no longer kills inotify monitoring; use systemctl restart
-      when systemd is available; issue #414
-[Fix] cron.daily overlapping runs prevented with flock-based lockfile; issue #373
-[Fix] quarantine.hist missing signature name in batch quarantine (-q SCANID);
-      use grep -F for literal file matching instead of egrep regex; issue #399
-[Fix] Slack alerting updated from deprecated files.upload API to
-      files.getUploadURLExternal + files.completeUploadExternal; issue #458
-[Fix] Slack and Telegram alerts now fire in monitor mode digest/daily reports,
-      not just single-file scan alerts; issue #387
-[Fix] unrecognized CLI arguments now return exit code 1 instead of 0; issue #366
-[Fix] monitor_check() no longer launches clamscan/native engine with empty file list,
-      avoiding unnecessary CPU usage during idle monitor periods; issue #459
-[Fix] scan_ignore_user/scan_ignore_group with non-existent user/group no longer
-      causes find to error out and return empty file list; issue #335
-[Fix] replace ed dependency with tail/cat for inotify log and event log trimming,
-      preserving file inode for inotifywait; ed no longer required for monitor mode;
-      issue #308
-[Fix] empty -regex expressions no longer cause find errors when --include-regex or
-      --exclude-regex are not specified; issue #72
-[Fix] ignore_file_ext, --exclude-regex, --include-regex, and ignore_paths prune
-      broken after eval removal; convert from string variables with embedded quotes
-      to bash arrays for correct find argument passing; issue #446, #438, #450
-[Fix] md5_hash typo in quarantine clean path causing incorrect hash passed to clean()
-[Fix] compat.conf suppress_cleanhit mapping had contradictory logic (always false);
-      corrected to migrate old suppress_cleanhit to new email_ignore_clean
-[Fix] maldet.sh init script syntax errors: missing semicolons between RETVAL=$? and
-      conditional on lines 68 and 82
-[Fix] replace predictable temp files ($RANDOM/$$) with mktemp across functions library
-[Fix] cleanup_scanlist() hardcoded wrong path /var/lib/maldetect/tmp; use $tmpdir
-[Fix] placeholder username in cPanel cpapi2 fallback in get_panel_contacts()
-[Fix] sigup() swapped user_hex_sigs/user_md5_sigs variable assignments causing
-      incorrect signature count reporting
-[Fix] undefined $retry_sleep in clamd remote retry log messages; use
-      $remote_clamd_retry_sleep
-[Fix] break used outside loop context in get_remote_file(); replaced with return
-[Fix] ignore_sigs file not created when both ignore_paths and ignore_sigs missing;
-      elif changed to independent if
-[Fix] inotify cpulimit block incorrectly referenced $scan_cpulimit instead of
-      $inotify_cpulimit in monitor_init()
-[Fix] importconf Slack scope reference updated from files:write:user to
-      files:write, files:read
-[Fix] $intfunc variable name typo in maldet error message
-[Fix] install.sh GPL output missing v2 qualifier
-[Fix] typo "orginal" corrected to "original" in usage_long() and man page
-[Fix] missing ;; terminator before esac in maldet wildcard case
-[Fix] quote critical variable expansions in mkdir/chmod/chown/rm/source commands
-[Fix] replace deprecated which with command -v in maldet and install.sh
-[Fix] HEX stdin mode (hexstring.pl) had swapped arguments causing scan failures
-      when scan_hexfifo=0
-[Change] modernize all backtick command substitutions to $() in internals.conf and
-      install.sh
-[Change] unify domain references from r-fx.org to rfxn.com across all file headers
+      updates when primary cron.daily is broken or stale; installed to
+      /etc/cron.weekly/maldet-watchdog
+[New] cron.daily explicit cPanel detection: parse /etc/userdatadomains for
+      addon domain and subdomain document roots outside public_html;
+      issue #268
+[New] cron.daily Bitrix panel detection (/opt/webdir + /etc/nginx/bx);
+      issue #381
+
+-- Bug Fixes --
+[Fix] Slack alerting: migrate from deprecated files.upload API to
+      files.getUploadURLExternal + files.completeUploadExternal; fix
+      multi-channel to use channels parameter instead of channel_id; check
+      curl exit codes and verify "ok":true on all API calls; extract and log
+      API error fields on failure; replace grep -oP with sed for portability;
+      issue #458
+[Fix] Telegram alerting: add missing /bot prefix before token in Bot API URL
+      causing all alerts to fail; use $curl variable with -s flag and stderr
+      redirect; check sendDocument exit code; issue #461
+[Fix] Slack and Telegram alerts now fire in monitor mode digest/daily
+      reports, not just single-file scan alerts; issue #387
+[Fix] scan_stage_yara(): anchor dedup with end-of-field regex to prevent
+      substring false-positives; deduplicate hits against scan_session for
+      ClamAV+YARA overlap; per-file fallback (YARA < 4.0) uses sh -c wrapper
+      to capture exit code through cpulimit; stderr filter handles YARA-X
+      message format; clean() invokes scan_stage_yara() for post-clean
+      verification; trap_exit()/clean_exit() clean up YARA temp files
+[Fix] YARA rule validation: import_user_sigs() validates downloaded rules
+      before installing; scan_stage_yara() validates compiled.yarc with test
+      scan before use; malformed rules skipped with warning
+[Fix] HEX hit name trailing space from perl output causing clean rule lookup
+      failures; HEX stdin mode (hexstring.pl) swapped arguments causing scan
+      failures when scan_hexfifo=0
+[Fix] import_conf() remote config sourcing replaced with safe parser
+      (_safe_source_conf) preventing remote code execution; config source
+      order corrected to match documented loading order
+[Fix] -co/--config-option: reject command substitution, semicolons, pipes,
+      and shell metacharacters in config values
+[Fix] hookscan.sh: validate filenames from ModSecurity inspectFile; reject
+      shell metacharacters, non-printable characters, and non-existent files
+[Fix] conf.maldet installed world-readable (0644) changed to 0640; hex FIFO
+      mode 666 changed to 600
+[Fix] --user flag validates username (empty, path traversal, non-existent);
+      restore() validates .info file paths (traversal, empty, non-existent
+      dirs, non-root restores outside user home)
+[Fix] monitor_check(): remove double ClamAV scan; clamd fatal errors no
+      longer cause false quarantines; no longer launches engine with empty
+      file list; YARA filter applied before scan; issue #454, #447, #459
+[Fix] monitor_kill() guards empty $monitor_pid; monitor reload now sources
+      compat.conf and sysconfig/default matching startup loading order
+[Fix] 19 bare exit statements given explicit exit codes; unrecognized CLI
+      arguments return exit 1; issue #366
+[Fix] clean() operator precedence fixed with { } grouping; quarantine branch
+      rescan uses clean_check=1; md5_hash typo corrected
+[Fix] quarantine()/quar_hitlist(): TOCTOU mv exit code check; suspend_user
+      ordering; $RANDOM replaced with file inode naming; quarantine.hist
+      signature name in batch quarantine (-q); grep -F for literal matching;
+      issue #399
+[Fix] install.sh: man page compression on fresh install; backup find|xargs
+      replaced with find -exec; backup mv exit code check; version gate
+      removed (preserves data regardless of version); upgrade no longer kills
+      inotify monitoring (systemctl restart); issue #414
+[Fix] uninstall.sh: remove man page symlink and /etc/cron.weekly/
+      maldet-watchdog; previously orphaned after uninstall
+[Fix] FreeBSD detection: replace broken $OSTYPE == "FreeBSD" with cached
+      os_freebsd using uname -s; all 9 dead code paths functional; id --user
+      (GNU-only) changed to id -u (POSIX)
+[Fix] clamselector() logs warning on clamd test failure instead of silently
+      switching; no longer overwrites user scan_max_filesize; issue #452, #410
+[Fix] cron.daily: flock lock leaked to backgrounded scans switched to
+      CLOEXEC command form; overlapping runs prevented with flock lockfile;
+      update failure logging was dead code (use PIPESTATUS[0]); issue #373
+[Fix] cron.daily: remove LMDCRON=1 dead export (unused since 2014); replace
+      flock '|| :' with exit code discrimination so config errors propagate
+      to cron (inner errors exit 2, lock contention exits 1 → silent)
+[Fix] cron.watchdog version update (maldet -d) now runs regardless of
+      signature update result
+[Fix] view_report() resolves "newest" and empty scan ID to most recent
+      session; replace $EDITOR with cat for terminal output; issue #336
+[Fix] panel alerts include signature name; rewrite hit parsing to while-read
+      with BASH_REMATCH for paths with spaces; InterWorx guard against empty
+      master_domain; issue #426
+[Fix] tlog line truncation: switch from byte-based to line-based tracking
+      to prevent mid-line truncation in monitor digest emails; issue #227
+[Fix] find_recentopts incorrectly escaping find options; issue #440, pr#442
+[Fix] ignore_file_ext, --exclude-regex, --include-regex, and ignore_paths
+      prune: convert to bash arrays for correct find argument passing; empty
+      -regex no longer causes find errors; issue #446, #438, #450, #72
+[Fix] scan_ignore_user/scan_ignore_group with non-existent user/group no
+      longer causes find to error out; issue #335
+[Fix] replace ed dependency with tail/cat for log trimming, preserving file
+      inode for inotifywait; issue #308
+[Fix] get_remote_file(): local variable scoping (svc renamed to grf_svc);
+      curl -f flag for HTTP error detection; break replaced with return
+[Fix] importconf template: 5 missing variables added, 16 hardcoded values
+      changed to $variable expansion, inotify_sleep default corrected,
+      Slack scope updated; issue #439
+[Fix] scan_strlen() quoting and portability: mktemp, xargs -d '\n',
+      while-read loop; checkout() dead code removed, threshold corrected
+[Fix] lmdup() remove dead upstreamhash assignment immediately overridden
+      by get_remote_file() return value
+[Fix] miscellaneous: maldet.sh init script semicolons; replace $RANDOM/$$
+      with mktemp; cleanup_scanlist() hardcoded path; cPanel cpapi2
+      placeholder; sigup() swapped variable assignments; undefined
+      $retry_sleep; ignore_sigs elif to if; inotify_cpulimit reference;
+      $intfunc typo; GPL v2 qualifier; "orginal" typo; missing ;; before
+      esac; quote critical variable expansions; replace which with
+      command -v; compat.conf suppress_cleanhit logic; conf.maldet comment
+      typos; email_subj relocated; maldet.sysconfig MONITOR_MODE default;
+      scan_stage1() quote $clean_check
+[Fix] sigup() guard cp of clean rules with directory existence check to
+      prevent error when upstream maldet-cleanv2.tgz contains no clean/ dir
+
+-- Changes --
+[Change] native scanning engine: eliminate ~500,000 fork/exec operations on
+      a 100k-file scan by replacing external command pipelines (md5sum|awk,
+      echo|awk, echo|cut, echo|grep, echo|sed, cat|tr, wc|awk, basename)
+      with Bash parameter expansion and builtins throughout scan, quarantine,
+      monitor, and ClamAV hit paths; consolidate get_filestat() to single
+      stat call; replace per-file wc|awk hit/clean counting with in-shell
+      counters; replace $[expr] with $((expr)); cleanup_scanlist() cat|for
+      to while-read
+[Change] YARA scan refactored: _yara_scan_rules() helper eliminates ~80
+      lines of duplicated code; --scan-list batch scanning reduces O(N*M) to
+      M+1; _yara_init_cache() caches binary selection; signature count shows
+      "YARA(cav)" qualifier when scan_yara=0
+[Change] maldet.service EnvironmentFile changed from conf.maldet to
+      /etc/sysconfig/maldet or /etc/default/maldet; ExecStart uses
+      ${MONITOR_MODE:-users}; install.sh migrates default_monitor_mode
+[Change] convert 7 remaining $$-tempfile paths to mktemp: view_report(),
+      scan export filelist, ClamAV scan results, inotify paths, gensigs()
+      runtime signatures (3 files)
+[Change] cron.daily prune uses find -delete; issue #430
+[Change] modernize backtick substitutions to $(); unify domain references
+      to rfxn.com; copyright headers updated to 2026
 [Change] rewrite usage_short() and usage_long() with categorized sections,
-      complete option coverage, and consistent formatting
+      complete option coverage, --beta flag for -d
+[Change] legacy plain-text README replaced with pointer to README.md
 [Change] version bump to v2.0.1
-[New] cron.daily Bitrix panel detection (/opt/webdir + /etc/nginx/bx); issue #381
-[New] BATS test infrastructure with Docker CI; 17 test files covering install/CLI,
-      MD5 scanning, HEX scanning, quarantine, ignore files, config options, cron,
-      reporting, signatures, file list generation, string length analysis, logging,
-      purge, compat.conf migrations, hook scanning, resource control, and version
-[New] GitHub Actions CI workflow with 9-target matrix: CentOS 6/7, Rocky 8/9/10,
-      Ubuntu 20.04/24.04, Debian 12, YARA-X
-[New] test coverage for clean operations, ClamAV integration, cron daily, and
-      alerting (4 new test files, ~40 tests)
+
+-- Documentation --
+[Change] maldet.1 man page rewritten following man-pages(7) conventions;
+      hand-crafted NAME, SYNOPSIS, DESCRIPTION, OPTIONS (grouped), EXIT
+      STATUS, FILES, CONFIGURATION, SEE ALSO, BUGS, AUTHORS; section number
+      from 19 to 1
+[Fix] README.md: added 28 missing config variables; corrected md5v2.dat
+      format, cron_prune_days default, variable names and paths; documented
+      ignore_sigs matching, hit prefixes, YARA batch scanning, hookscan
+      YARA config, and compiled.yarc path
+
+-- Test Suite --
+[New] BATS test infrastructure: 26 test files, 320 tests covering scanning
+      (MD5, HEX, string length, YARA), quarantine/restore, clean operations,
+      ignore files, config options, compat.conf, cron, reporting, signatures,
+      file lists, logging, purge, hook scanning, resource control, version,
+      ClamAV integration, alerting, updates, security, importconf, special
+      characters; run-tests.sh parallel mode BATS_ARGS array fix
+[New] GitHub Actions CI: 9-target matrix (CentOS 6/7, Rocky 8/9/10, Ubuntu
+      20.04/24.04, Debian 12, YARA-X); SHA-256 checksum verification for
+      YARA-X binary; Rocky 8/9 curl for get_remote_file() coverage;
+      pull_request trigger adds '2.*' branch pattern
