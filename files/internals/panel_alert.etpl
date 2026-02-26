@@ -58,10 +58,10 @@ if [ ! "$user_tot_hits" == "0" ]; then
  hitlist_file="$tmpdir/.${sys_user}.hits"
  if [ -f "$hitlist_file" ]; then
  	echo "FILE HIT LIST:" >> $tmpf
-        if [ "$coltest" ]; then
-                cat $hitlist_file | column -s ':' -t -o ':' >> $tmpf
+        if [ -n "$coltest" ]; then
+                "$coltest" -s ':' -t -o ':' < "$hitlist_file" >> "$tmpf"
         else
-                cat $hitlist_file >> $tmpf
+                cat "$hitlist_file" >> "$tmpf"
         fi
  fi
 fi

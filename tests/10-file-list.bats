@@ -101,3 +101,22 @@ teardown() {
     assert_scan_completed
     assert_output --partial "malware hits 1"
 }
+
+# F-072: -f background scan log shows file list path
+@test "-f background scan log shows file list path" {
+    local flist="$TEST_SCAN_DIR/bg-scanlist.txt"
+    echo "/tmp/lmd-test-filelist" > "$flist"
+    run maldet -b -f "$flist"
+    assert_output --partial "launching scan of $flist to background"
+}
+
+# F-040: file_list_et initialized in -f mode
+@test "-f scan report shows find elapsed time as 0s" {
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/test-flist.com"
+    echo "$TEST_SCAN_DIR/test-flist.com" > "$TEST_SCAN_DIR/scanlist.txt"
+    maldet -f "$TEST_SCAN_DIR/scanlist.txt" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    run maldet -e "$scanid"
+    assert_output --partial "[find: 0s]"
+}

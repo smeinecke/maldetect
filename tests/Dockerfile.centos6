@@ -9,7 +9,7 @@ RUN yum install -y \
     wget curl ca-certificates gawk sed grep tar gzip which \
     epel-release \
     && yum install -y inotify-tools \
-    && yum install -y yara || true \
+    && (yum install -y yara || true) \
     && yum clean all
 
 # Install BATS + helpers

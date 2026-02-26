@@ -80,3 +80,12 @@ teardown() {
     [ -d "$LMD_INSTALL/sess" ]
     [ -d "$LMD_INSTALL/tmp" ]
 }
+
+# F-044: purge succeeds when inotify_log does not exist
+@test "maldet -p succeeds when inotify_log is missing" {
+    rm -f "$LMD_INSTALL/logs/inotify_log"
+    run maldet -p
+    assert_success
+    assert_output --partial "cleared"
+    refute_output --partial "No such file"
+}

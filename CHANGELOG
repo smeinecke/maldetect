@@ -120,8 +120,48 @@ v2.0.1 | Feb 24 2026:
       scan_stage1() quote $clean_check
 [Fix] sigup() guard cp of clean rules with directory existence check to
       prevent error when upstream maldet-cleanv2.tgz contains no clean/ dir
+[Fix] chown deprecated '.' separator replaced with POSIX ':' in prerun(),
+      clean(), restore_hitlist(), and quarantine(); quote owner:group vars
+[Fix] purge() guard inotify_log existence before wc to prevent errors on
+      systems where monitoring has never run
+[Fix] file_list_et initialized to 0 in -f scan mode so reports show
+      correct elapsed time instead of empty value
+[Fix] sed -r (GNU-only) replaced with sed -E (POSIX-portable) in cPanel
+      contact email extraction and clean() hit name parsing; convert
+      backtick to $() on sh_hitname assignment
+[Fix] CentOS 6/7 Dockerfiles: isolate optional yara install in subshell
+      so required package failures are not swallowed by || true
+[Fix] -q/--quarantine, -n/--clean, -s/--restore reject empty SCANID argument
+      with clear error message instead of confusing internal errors
+[Fix] -f/--file-list background mode: initialize spath/hrspath to file list
+      path; fixes empty path in log message and scan report header
+[Fix] genalert() digest mode: email_subj permanently mutated by appending
+      ": monitor summary", compounding on repeated calls; replaced with
+      local digest_subj variable; F-060
+[Fix] cpulimit comparison: misleading stderr redirect placement
+      `[ "$var" -gt 2> /dev/null "0" ]` repositioned to
+      `[ "$var" -gt 0 ] 2>/dev/null` in prerun() and monitor_init(); F-056
+[Fix] scan.etpl ELK integration: bare curl replaced with $curl; for-in-cat
+      with IFS abuse replaced with while-read loop; ELK posting extracted
+      from column else branch; per-iteration date/hostname forks cached;
+      add elk_host/elk_port non-empty validation
+[Fix] scan.etpl/panel_alert.etpl: [ "$coltest" ] replaced with
+      [ -n "$coltest" ]; UUOC with column replaced with stdin redirect;
+      quote all variable paths
 
 -- Changes --
+[Change] replace egrep with grep -E in clean_hitlist(); update
+      usage_long() help text from "POSIX egrep" to "POSIX extended
+      regular expression (grep -E)" for --include-regex/--exclude-regex
+[Change] convert 22 for-in-cat/backtick anti-patterns to while IFS=
+      read -r with process substitution throughout restore_hitlist(),
+      clean_hitlist(), quar_hitlist(), scan() ClamAV hit parsing,
+      monitor_check() ClamAV/find loops, gen_panel_alerts(), prerun_scan()
+      ignore/user/group iteration, monitor_cycle() config reload,
+      monitor_init() passwd/docroot/file-list/csv/ignore parsing,
+      checkout() FTP upload, and gensigs() custom signature processing;
+      fixes glob expansion bugs with adversarial filenames and space-
+      splitting in unprotected paths
 [Change] native scanning engine: eliminate ~500,000 fork/exec operations on
       a 100k-file scan by replacing external command pipelines (md5sum|awk,
       echo|awk, echo|cut, echo|grep, echo|sed, cat|tr, wc|awk, basename)
@@ -147,6 +187,22 @@ v2.0.1 | Feb 24 2026:
       complete option coverage, --beta flag for -d
 [Change] legacy plain-text README replaced with pointer to README.md
 [Change] version bump to v2.0.1
+[Change] replace 11 bare wc invocations with $wc variable from
+      internals.conf for binary path consistency
+[Change] view_report() replace for-in-$(ls) with direct glob and
+      existence guard; eliminates unnecessary ls subprocess
+[New] internals.conf: column binary discovery ($coltest) with -o flag
+      validation; enables hit list column formatting in email templates;
+      CentOS 6 (util-linux 2.17) gracefully falls back to plain text
+[Change] genalert() digest: convert 4 backtick substitutions to $();
+      eliminate echo fork in inotify_run_time; add path quoting
+[Change] genalert() panel/digest: convert 6 remaining wc|awk pipelines
+      to $wc -l < "file" for consistency with Phase 20 standardization
+[Change] complete backtick → $() modernization (F-062): convert all 75
+      remaining backtick command substitutions to $() across functions,
+      maldet, and uninstall.sh; refactor for-in-cat passwd parsing in
+      --mkpubpaths to while-read (F-066); zero backtick substitutions
+      remain outside of literal regex patterns
 
 -- Documentation --
 [Change] maldet.1 man page rewritten following man-pages(7) conventions;
@@ -159,7 +215,7 @@ v2.0.1 | Feb 24 2026:
       YARA config, and compiled.yarc path
 
 -- Test Suite --
-[New] BATS test infrastructure: 26 test files, 320 tests covering scanning
+[New] BATS test infrastructure: 26 test files, 324 tests covering scanning
       (MD5, HEX, string length, YARA), quarantine/restore, clean operations,
       ignore files, config options, compat.conf, cron, reporting, signatures,
       file lists, logging, purge, hook scanning, resource control, version,

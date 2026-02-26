@@ -151,6 +151,24 @@ _source_lmd_stack() {
     [ ! -f "/tmp/lmd-traversal-test" ]
 }
 
+# F-052: chown uses POSIX ':' separator (not deprecated '.')
+@test "functions uses POSIX chown user:group separator not deprecated dot" {
+    local func_file="$LMD_INSTALL/internals/functions"
+    # grep for chown with '.' separator — should find zero matches
+    # Pattern: chown followed by word.word (not :)
+    # Exclude lines with $quardir/$file_name.$rnd (that dot is filename, not separator)
+    run bash -c "grep -n 'chown.*[a-z}]\.[a-z}]' \"$func_file\" | grep -v 'file_name\.\$rnd' | grep -v '^\s*#'"
+    # No matches means the deprecated separator is gone
+    assert_failure
+}
+
+# F-046: sed uses -E not -r
+@test "functions uses sed -E not deprecated sed -r" {
+    local func_file="$LMD_INSTALL/internals/functions"
+    run grep -n 'sed -r' "$func_file"
+    assert_failure
+}
+
 @test "restore succeeds with valid .info path" {
     lmd_set_config quarantine_hits 1
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/test-restore-valid.txt"

@@ -71,20 +71,30 @@ if [ ! "$tot_hits" == "0" ]; then
 	hitlist_file="$scan_session"
  fi
  if [ -f "$hitlist_file" ]; then
- 	echo "FILE HIT LIST:" >> $tmpf
-        if [ "$coltest" ]; then
-                cat $hitlist_file | column -s ':' -t -o ':' >> $tmpf
-        else
-                cat $hitlist_file >> $tmpf
-                if [ "$enable_statistic" == "1" ]; then
-                        export IFS=$(echo -en "\n\b")
-                        for showhit in `cat $hitlist_file`; do
-                                curl --output  /dev/null --silent --show-error -XPOST "${elk_host}:${elk_port}/$(if [ $elk_index != '' ]; then echo "${elk_index}/message"; fi )" -H 'Content-Type: application/json' -d "$(echo $showhit|awk -v date=$(date +%s) -v hostname=$(hostname) '{print "{\"date\" : \""date"\", \"hit\" : \""$1"\", \"file\" : \""$3"\", \"hostname\" : \""hostname"\"}"}')"
-                        done
-                        export IFS=' '
-                fi
-
-        fi
+ 	echo "FILE HIT LIST:" >> "$tmpf"
+	if [ -n "$coltest" ]; then
+		"$coltest" -s ':' -t -o ':' < "$hitlist_file" >> "$tmpf"
+	else
+		cat "$hitlist_file" >> "$tmpf"
+	fi
+	if [ "$enable_statistic" == "1" ] && [ -n "$elk_host" ] && [ -n "$elk_port" ]; then
+		elk_url="${elk_host}:${elk_port}"
+		if [ -n "$elk_index" ]; then
+			elk_url="${elk_url}/${elk_index}/message"
+		fi
+		elk_date=$(date +%s)
+		elk_hostname=$(hostname)
+		while IFS= read -r showhit; do
+			[ -z "$showhit" ] && continue
+			hit_sig="${showhit%% :*}"
+			hit_file="${showhit#* : }"
+			hit_file="${hit_file%% =>*}"
+			$curl --output /dev/null --silent --show-error \
+				-XPOST "$elk_url" \
+				-H 'Content-Type: application/json' \
+				-d "{\"date\":\"$elk_date\",\"hit\":\"$hit_sig\",\"file\":\"$hit_file\",\"hostname\":\"$elk_hostname\"}"
+		done < "$hitlist_file"
+	fi
  fi
 fi
 

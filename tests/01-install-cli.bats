@@ -150,3 +150,22 @@ setup() {
 @test "uninstall.sh removes man page symlink" {
     grep -q 'maldet.1.gz' "$LMD_INSTALL/uninstall.sh"
 }
+
+# F-073: Empty SCANID validation
+@test "-q without SCANID prints error and exits 1" {
+    run maldet -q
+    assert_failure
+    assert_output --partial "requires a SCANID"
+}
+
+@test "-n without SCANID prints error and exits 1" {
+    run maldet -n
+    assert_failure
+    assert_output --partial "requires a SCANID"
+}
+
+@test "-s without argument prints error and exits 1" {
+    run maldet -s
+    assert_failure
+    assert_output --partial "requires a SCANID"
+}

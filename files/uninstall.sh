@@ -6,7 +6,7 @@ read -p "[y/n] " -n 1 Z
 echo
 if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 	if [ "$(uname -s)" != "FreeBSD" ]; then
-		if test `cat /proc/1/comm` = "systemd"
+		if test $(cat /proc/1/comm) = "systemd"
 		then
 			systemctl disable maldet.service
 			systemctl stop maldet.service

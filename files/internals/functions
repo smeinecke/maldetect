@@ -50,7 +50,7 @@ prerun() {
                 mkdir -p "$quardir" "$sessdir" "$tmpdir" 2> /dev/null
 		chmod 711 "$userbasedir" 2> /dev/null
 		touch "$maldet_log" 2> /dev/null
-		chown -R "${user}.root" "$userbasedir/$user" 2> /dev/null
+		chown -R "${user}:root" "$userbasedir/$user" 2> /dev/null
 		chmod 750 "$userbasedir/$user" "$quardir" "$sessdir" "$tmpdir" 2> /dev/null
 		chmod 640 "$maldet_log" 2> /dev/null
 		cd "$tmpdir"
@@ -134,7 +134,7 @@ prerun() {
 	fi
 
 	if [ "$scan_hexfifo" == "1" ]; then
-		mkfifo=`command -v mkfifo 2> /dev/null`
+		mkfifo=$(command -v mkfifo 2> /dev/null)
 		if [ ! -f "$mkfifo" ]; then
 			scan_hexfifo=0
 		else
@@ -149,7 +149,7 @@ prerun() {
 	fi
 
 	if [ -z "$EDITOR" ]; then
-		defedit=`command -v nano 2> /dev/null`
+		defedit=$(command -v nano 2> /dev/null)
 		if [ -z "$defedit" ]; then
 			EDITOR=vi
 		else
@@ -171,7 +171,7 @@ prerun() {
 	if [ -f "$ionice" ] && [ ! -d "/proc/vz" ]; then
 		nice_command="$nice_command $ionice -c2 -n $scan_ionice"
 	fi
-	if [ -f "$cpulimit" ] && [ "$scan_cpulimit" -gt 2> /dev/null "0" ]; then
+	if [ -f "$cpulimit" ] && [ "$scan_cpulimit" -gt 0 ] 2>/dev/null; then
 		max_cpulimit=$(( $(grep -E -w processor /proc/cpuinfo -c) * 100 ))
 		if [ "$scan_cpulimit" -gt "$max_cpulimit" ]; then
 			scan_cpulimit="0"
@@ -296,7 +296,7 @@ get_panel_contacts() {
 			if [ -f /var/cpanel/users/${user} ]; then
 				contact_emails=$(awk -F '=' '/^CONTACTEMAIL/{print $2}'  /var/cpanel/users/${user} | sed '/^ *$/d' | tr '\n' ',' | sed 's/,$//')
 			else
-				contact_emails=$(cpapi2 --user=${user} --output=xml CustInfo contactemails | grep -o 'value>.*</value' | sed -r 's,(</)?value>?,,g;/^$/d' | tr '\n' ',' | sed 's/,$//')
+				contact_emails=$(cpapi2 --user=${user} --output=xml CustInfo contactemails | grep -o 'value>.*</value' | sed -E 's,(</)?value>?,,g;/^$/d' | tr '\n' ',' | sed 's/,$//')
 			fi
 		;;
 		"interworx")
@@ -568,11 +568,11 @@ SCANNING:
 
 SCAN FILTERS:
     -i, --include-regex REGEX
-       Include paths/files based on POSIX egrep regular expression
+       Include paths/files based on POSIX extended regular expression (grep -E)
        e.g: maldet --include-regex ".*/wp-content/.*|.*.php\$"
 
     -x, --exclude-regex REGEX
-       Exclude paths/files based on POSIX egrep regular expression
+       Exclude paths/files based on POSIX extended regular expression (grep -E)
        e.g: maldet --exclude-regex ".*wp-content/w3tc/.*|.*core.[0-9]+\$"
 
     -co, --config-option VAR=VALUE[,VAR=VALUE,...]
@@ -674,10 +674,10 @@ clean() {
 	file_size="$5"
 	file_md5="$6"
 
-	sh_hitname=`echo $hitname | sed -r -e 's/\{(HEX|MD5|CAV|YARA)\}//' -e 's/\.[0-9]+$//'`
+	sh_hitname=$(echo $hitname | sed -E -e 's/\{(HEX|MD5|CAV|YARA)\}//' -e 's/\.[0-9]+$//')
 	if [ -d "$cldir" ] && [ "$quarantine_clean" == "1" ] && [ "$quarantine_hits" == "1" ] && [ -f "$file" ]; then
 		if { [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ]; } && [ -f "${file}.info" ]; then
-			file_path=`grep -E -v '\#' ${file}.info | cut -d':' -f9`
+			file_path=$(grep -E -v '\#' ${file}.info | cut -d':' -f9)
 			eout "{clean} restoring $file for cleaning attempt" 1
 			restore "$file" >> /dev/null 2>&1
 			if [ -f "$cldir/$sh_hitname" ]; then
@@ -703,7 +703,7 @@ clean() {
 				chattr -ia "$file_path" 2>/dev/null
 				mv -f "$file_path" "$file"
 				chmod 000 "$file"
-				chown root.root "$file"
+				chown root:root "$file"
 				eout "{clean} clean failed on $file_path and returned to quarantine" 1
 			else
 				echo "$file_path" >> $sessdir/clean.$$
@@ -757,15 +757,15 @@ quar_get_filestat() {
 	fstat="$1"
 	if [ -f "$fstat" ]; then
 		# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)
-                file_owner=`grep -E -v '\#' "$fstat" | awk -F':' '{print$1}'`
-                file_group=`grep -E -v '\#' "$fstat" | awk -F':' '{print$2}'`
-                file_mode=`grep -E -v '\#' "$fstat"  | awk -F':' '{print$3}'`
-                file_size=`grep -E -v '\#' "$fstat"  | awk -F':' '{print$4}'`
-                md5_hash=`grep -E -v '\#' "$fstat"   | awk -F':' '{print$5}'`
-		file_atime=`grep -E -v '\#' "$fstat"   | awk -F':' '{print$6}'`
-		file_mtime=`grep -E -v '\#' "$fstat"   | awk -F':' '{print$7}'`
-		file_ctime=`grep -E -v '\#' "$fstat"   | awk -F':' '{print$8}'`
-                file_path=`grep -E -v '\#' "$fstat"  | cut -d':' -f9`
+                file_owner=$(grep -E -v '\#' "$fstat" | awk -F':' '{print$1}')
+                file_group=$(grep -E -v '\#' "$fstat" | awk -F':' '{print$2}')
+                file_mode=$(grep -E -v '\#' "$fstat"  | awk -F':' '{print$3}')
+                file_size=$(grep -E -v '\#' "$fstat"  | awk -F':' '{print$4}')
+                md5_hash=$(grep -E -v '\#' "$fstat"   | awk -F':' '{print$5}')
+		file_atime=$(grep -E -v '\#' "$fstat"   | awk -F':' '{print$6}')
+		file_mtime=$(grep -E -v '\#' "$fstat"   | awk -F':' '{print$7}')
+		file_ctime=$(grep -E -v '\#' "$fstat"   | awk -F':' '{print$8}')
+                file_path=$(grep -E -v '\#' "$fstat"  | cut -d':' -f9)
 	fi
 }
 
@@ -810,7 +810,7 @@ restore() {
 		if ! _validate_restore_path "$file_path"; then
 			return 1
 		fi
-                chown ${file_owner}.${file_group} "$quardir/$file" >> /dev/null 2>&1
+                chown "${file_owner}:${file_group}" "$quardir/$file" >> /dev/null 2>&1
                 chmod $file_mode "$quardir/$file" >> /dev/null 2>&1
                 mv -f "$quardir/$file" "$file_path"
 		touch -m --date=@${file_mtime} "$file_path"
@@ -820,7 +820,7 @@ restore() {
 		if ! _validate_restore_path "$file_path"; then
 			return 1
 		fi
-                chown ${file_owner}.${file_group} "$file" >> /dev/null 2>&1
+                chown "${file_owner}:${file_group}" "$file" >> /dev/null 2>&1
                 chmod $file_mode "$file" >> /dev/null 2>&1
                 mv -f "$file" "$file_path"
 		touch -m --date=@${file_mtime} "$file_path"
@@ -834,18 +834,18 @@ restore_hitlist() {
 	hitlist="$sessdir/session.hits.$1"
 	if [ -f "$hitlist" ]; then
 		lbreakifs set
-		is_autoquar=`tail -n1 $hitlist | awk -F'>' '{print$2}' | grep -E -v '^$' | sed 's/.//'`
+		is_autoquar=$(tail -n1 $hitlist | awk -F'>' '{print$2}' | grep -E -v '^$' | sed 's/.//')
 		if [ "$is_autoquar" ]; then
-			for file in `cat $hitlist | cut -d':' -f2 | cut -d'>' -f2 | sed 's/.//'`; do
+			while IFS= read -r file; do
 				if [ -f "$file" ]; then
 					restore "$file"
 				fi
-			done
+			done < <(cut -d':' -f2 "$hitlist" | cut -d'>' -f2 | sed 's/.//')
 		elif [ ! "$is_autoquar" ]; then
-			for file in `cat $hitlist | cut -d':' -f2 | sed 's/.//'`; do
-				quar_file=`cat $quar_history | grep -E -w "$file" | cut -d':' -f8 | tail -n1`
+			while IFS= read -r file; do
+				quar_file=$(cat $quar_history | grep -E -w "$file" | cut -d':' -f8 | tail -n1)
 				restore "$quar_file"
-			done
+			done < <(cut -d':' -f2 "$hitlist" | sed 's/.//')
 		else
 			eout "{restore} could not find a valid hit list to restore." 1
 		fi
@@ -862,32 +862,32 @@ clean_hitlist() {
         scanid="$1"
         hitlist="$sessdir/session.hits.$scanid"
         if [ -f "$hitlist" ]; then
-                is_quared=`egrep '=>' $hitlist`
+                is_quared=$(grep -E '=>' "$hitlist")
                 if [ ! "$is_quared" ]; then
                         lbreakifs set
-                        for file in `cat $hitlist | cut -d':' -f2 | sed 's/.//'`; do
+                        while IFS= read -r file; do
                                 get_filestat "$file" 1
-                                hitname=`cat $hitlist | grep $file | awk '{print$1}'`
+                                hitname=$(cat $hitlist | grep $file | awk '{print$1}')
                                 if [ ! "$md5_hash" ]; then
                                         local _md5out
                                         _md5out="$($md5sum "$file")"
                                         md5_hash="${_md5out%% *}"
                                 fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
-                        done
+                        done < <(cut -d':' -f2 "$hitlist" | sed 's/.//')
                         lbreakifs unset
                 else
                         lbreakifs set
-                        for file in `cat $hitlist | cut -d'>' -f2 | sed 's/.//'`; do
+                        while IFS= read -r file; do
                                 quar_get_filestat "${file}.info" 1
-                                hitname=`cat $hitlist | grep $file | awk '{print$1}'`
+                                hitname=$(cat $hitlist | grep $file | awk '{print$1}')
                                 if [ ! "$md5_hash" ]; then
                                         local _md5out
                                         _md5out="$($md5sum "$file")"
                                         md5_hash="${_md5out%% *}"
                                 fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
-                        done
+                        done < <(cut -d'>' -f2 "$hitlist" | sed 's/.//')
                         lbreakifs unset
                 fi
         else
@@ -900,7 +900,8 @@ view_report() {
 	rid="$1"
 	if [ "$rid" == "list" ]; then
 		tmpf=$(mktemp "$tmpdir/.areps.XXXXXX")
-		for file in $(ls $sessdir/session.[0-9]* 2> /dev/null); do
+		for file in "$sessdir"/session.[0-9]*; do
+		[ -f "$file" ] || continue
 			SCANID=$(grep "SCAN ID" "$file" | sed 's/SCAN ID/SCANID/')
 			FILES=$(grep "TOTAL FILES" "$file" | sed 's/TOTAL //')
 			HITS=$(grep "TOTAL HITS" "$file" | sed 's/TOTAL //')
@@ -976,17 +977,19 @@ view() {
 
 purge() {
 	:> $maldet_log
-        log_size=$($wc -l "$inotify_log" | awk '{print$1}')
-        if [ "$inotify_trim" ]; then
-                trim=$(($log_size - 1000))
-                log_chars=$(head -n "$trim" "$inotify_log" 2>/dev/null | wc -c)
-                tlog_new=$(( $(cat "$inspath/tmp/inotify") - $log_chars ))
-                echo "$tlog_new" > "$inspath/tmp/inotify"
-                local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
-                tail -n +"$((trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
-                cat "$tmplog" > "$inotify_log" 2>/dev/null
-                rm -f "$tmplog"
-                eout "{mon} inotify log file trimmed"
+	if [ -f "$inotify_log" ]; then
+		log_size=$($wc -l "$inotify_log" | awk '{print$1}')
+		if [ "$inotify_trim" ]; then
+			trim=$(($log_size - 1000))
+			log_chars=$(head -n "$trim" "$inotify_log" 2>/dev/null | $wc -c)
+			tlog_new=$(( $(cat "$inspath/tmp/inotify") - $log_chars ))
+			echo "$tlog_new" > "$inspath/tmp/inotify"
+			local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
+			tail -n +"$((trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
+			cat "$tmplog" > "$inotify_log" 2>/dev/null
+			rm -f "$tmplog"
+			eout "{mon} inotify log file trimmed"
+		fi
 	fi
 	rm -f $tmpdir/* $quardir/* $sessdir/* 2> /dev/null
 	eout "{glob} logs and quarantine data cleared by user request (-p)" 1
@@ -997,7 +1000,7 @@ quarantine_suspend_user() {
 	file="$1"
 	get_filestat "$file"
 	user="$file_owner"
-	user_id=`id -u $user`
+	user_id=$(id -u $user)
 	if [ ! "$user" == "" ] && [ "$user_id" -ge "$quarantine_suspend_user_minuid" ]; then
 		if [ -f "/scripts/suspendacct" ]; then
 			if [ ! -f "/var/cpanel/suspended/$user" ]; then
@@ -1090,7 +1093,7 @@ quarantine() {
 				chmod 400 "$quardir/$file_name.$rnd"
 			else
 				chmod 000 "$quardir/$file_name.$rnd"
-				chown root.root "$quardir/$file_name.$rnd"
+				chown root:root "$quardir/$file_name.$rnd"
 			fi
 			echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$file" > $quardir/$file_name.$rnd.info
 			eout "{quar} malware quarantined from '$file' to '$quardir/$file_name.$rnd'"
@@ -1118,7 +1121,7 @@ quar_hitlist() {
 	hitlist="$sessdir/session.hits.$1"
 	if [ -f "$hitlist" ]; then
 		lbreakifs set
-		for file in `cat $hitlist | cut -d':' -f2 | sed 's/.//'`; do
+		while IFS= read -r file; do
 			if [ -f "$file" ]; then
 				get_filestat "$file" 1
 				file_name="${file##*/}"
@@ -1158,7 +1161,7 @@ quar_hitlist() {
 				fi
 				
 			fi
-		done
+		done < <(cut -d':' -f2 "$hitlist" | sed 's/.//')
 		lbreakifs unset
 	else
 		echo "{quar} invalid quarantine hit list, aborting."
@@ -1182,8 +1185,8 @@ clamselector() {
                         fi
                 done
 
-                isclamd=`pgrep -x clamd 2> /dev/null`
-                isclamd_root=`pgrep -x -u root clamd 2> /dev/null`
+                isclamd=$(pgrep -x clamd 2> /dev/null)
+                isclamd_root=$(pgrep -x -u root clamd 2> /dev/null)
                 if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
 			clamd=1
 			clambin="clamdscan"
@@ -1209,7 +1212,7 @@ clamselector() {
                 if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
                         clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
                 elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
-                        clamscan=`command -v $clambin 2> /dev/null`
+                        clamscan=$(command -v $clambin 2> /dev/null)
                 else
                         scan_clamscan="0"
                 fi
@@ -1218,7 +1221,7 @@ clamselector() {
                         if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
                                 try=0
                                 while [ $try -le $remote_clamd_max_retry ]; do
-                                        clamd_test=`$clamscan $clamopts --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?`
+                                        clamd_test=$($clamscan $clamopts --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?)
                                         if [ "$clamd_test" = "2" ]; then
                                                 ((try++))
                                                 sleep $remote_clamd_retry_sleep
@@ -1227,7 +1230,7 @@ clamselector() {
                                         fi
                                 done
                         else
-                                clamd_test=`$clamscan --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?`
+                                clamd_test=$($clamscan --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?)
                         fi
                         if [ ! -z "$clamd_test" ]; then
                                 if [ "$scan_clamd_remote" == "1" ]; then
@@ -1241,7 +1244,7 @@ clamselector() {
                                 if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
                                         clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
                                 elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
-                                        clamscan=`command -v $clambin 2> /dev/null`
+                                        clamscan=$(command -v $clambin 2> /dev/null)
                                 else
                                         scan_clamscan="0"
                                 fi
@@ -1252,8 +1255,8 @@ clamselector() {
 }
 
 scan() {
-	scan_start_hr=`date +"%b %e %Y %H:%M:%S %z"`
-	scan_start=`date +"%s"`
+	scan_start_hr=$(date +"%b %e %Y %H:%M:%S %z")
+	scan_start=$(date +"%s")
 	spaths_str=$(echo "$1" | tr '?' '*' | tr ',' '\n')
 	spaths=()
 	while IFS= read -r pattern; do
@@ -1294,7 +1297,7 @@ scan() {
 	fi
 		
 	if [ ! "$days" == "all" ] && [ -z "$file_list" ]; then
-		val=`echo $days | grep "[[:alpha:]]"`
+		val=$(echo $days | grep "[[:alpha:]]")
 		if [ ! -z "$val" ]; then
 			eout "{scan} days value must be numeric value in the range of 1 - 90, reverting to default (7)." 1
 			days=7
@@ -1320,8 +1323,8 @@ scan() {
 		clamselector
 	fi
 	
-	hex_sigs=`$wc -l $sig_hex_file | awk '{print$1}'`
-	md5_sigs=`$wc -l $sig_md5_file | awk '{print$1}'`
+	hex_sigs=$($wc -l $sig_hex_file | awk '{print$1}')
+	md5_sigs=$($wc -l $sig_md5_file | awk '{print$1}')
 	yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)
 	user_yara_sigs=0
 	if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
@@ -1332,8 +1335,8 @@ scan() {
 			user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$_yar" 2>/dev/null || true)))
 		fi
 	done
-	user_hex_sigs=`$wc -l $sig_user_hex_file | awk '{print$1}'`
-	user_md5_sigs=`$wc -l $sig_user_md5_file | awk '{print$1}'`
+	user_hex_sigs=$($wc -l $sig_user_hex_file | awk '{print$1}')
+	user_md5_sigs=$($wc -l $sig_user_md5_file | awk '{print$1}')
 	user_sigs=$((user_hex_sigs + user_md5_sigs + user_yara_sigs))
 	tot_sigs=$((md5_sigs + hex_sigs + yara_sigs + user_sigs))
 	if [ -z "$hscan" ]; then
@@ -1344,18 +1347,16 @@ scan() {
 		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
 	fi
 	ignore_fext_args=()
-	if [ -f "$ignore_file_ext" ]; then
-		if [ ! "$(cat $ignore_file_ext)" == "" ]; then
-			for i in `cat $ignore_file_ext`; do
-				ignore_fext_args+=(-not -iname "*$i")
-			done
-		fi
+	if [ -f "$ignore_file_ext" ] && [ -s "$ignore_file_ext" ]; then
+		while IFS= read -r i; do
+			ignore_fext_args+=(-not -iname "*$i")
+		done < "$ignore_file_ext"
 	fi
 	if [ "$scan_ignore_root" == "1" ]; then
 		ignore_root="-not -uid 0 -not -gid 0"
 	fi
 	if [ "$scan_ignore_user" ]; then
-		for i in `echo $scan_ignore_user | tr ', ' ' '`; do
+		while IFS= read -r i; do
 			if id "$i" >/dev/null 2>&1; then
 				if [ "$ignore_user" == "" ]; then
 					ignore_user="-not -user $i"
@@ -1365,10 +1366,10 @@ scan() {
 			else
 				eout "{scan} scan_ignore_user: user '$i' does not exist, skipping" 1
 			fi
-		done
+		done < <(echo "$scan_ignore_user" | tr ', ' '\n' | grep -v '^$')
 	fi
 	if [ "$scan_ignore_group" ]; then
-		for i in `echo $scan_ignore_group | tr ', ' ' '`; do
+		while IFS= read -r i; do
 			if getent group "$i" >/dev/null 2>&1; then
 				if [ "$ignore_group" == "" ]; then
 					ignore_group="-not -group $i"
@@ -1378,13 +1379,14 @@ scan() {
 			else
 				eout "{scan} scan_ignore_group: group '$i' does not exist, skipping" 1
 			fi
-		done
+		done < <(echo "$scan_ignore_group" | tr ', ' '\n' | grep -v '^$')
 	fi
 	if [ "$scan_tmpdir_paths" ] && [ -z "$hscan" ] && [ -z "$single_filescan" ]; then
 		spath_tmpdirs="$scan_tmpdir_paths"
 	fi
 		
 	if [ "$file_list" ]; then
+		file_list_et=0
 		cat $file_list | grep -E -vf $ignore_paths > $find_results
 	else
 		if [ "$days" == "all" ]; then
@@ -1411,7 +1413,7 @@ scan() {
                 if [ -z "$hscan" ]; then
 			eout "{scan} setting nice scheduler priorities for all operations: cpunice $scan_cpunice , ionice $scan_ionice" 1
 		fi
-		file_list_start=`date +"%s"`
+		file_list_start=$(date +"%s")
 		tmpscandir=$(mktemp -d "$tmpdir/scan.XXXXXX")
 		chmod 700 "$tmpscandir" ; cd "$tmpscandir"
 		find_prune_args=()
@@ -1438,7 +1440,7 @@ scan() {
 			cp "$find_results" "$shared_results" 2> /dev/null
 			ln -fs "$shared_results" "$tmpdir/find_results.last" 2> /dev/null
 		fi
-		file_list_end=`date +"%s"`
+		file_list_end=$(date +"%s")
 		file_list_et=$((file_list_end - file_list_start))
 		if [ -f "$tmpdir/.find_killed.$scanid" ]; then
 			rm -f $tmpdir/.find_killed.$scanid
@@ -1463,7 +1465,7 @@ scan() {
 	
 	res_col="1"
 	move_to_col="echo -en \\033[${res_col}G"
-	tot_files=`$wc -l $find_results | awk '{print$1}'`
+	tot_files=$($wc -l $find_results | awk '{print$1}')
 	if [ -z "$hscan" ] && [ -z "$single_filescan" ]; then
 		if [ "$file_list" ]; then
 			eout "{scan} user supplied file list '$file_list', found $tot_files files..." 1
@@ -1528,7 +1530,7 @@ scan() {
 				eout "{scan} clamscan returned an error, check $clamscan_log for details!" 1
 			fi
 		fi
-		clamscan_fatal_error=`grep -m1 'no reply from clamd' $clamscan_results`
+		clamscan_fatal_error=$(grep -m1 'no reply from clamd' $clamscan_results)
 		if [ "$clamscan_fatal_error" ]; then
 			quarantine_hits=0
                         eout "{scan} clamscan returned a fatal error in scan results, check $clamscan_log for details; quarantine has been disabled!" 1
@@ -1536,7 +1538,7 @@ scan() {
 		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> $clamscan_log
 
 		lbreakifs set
-		for hit in `grep -E -v 'ERROR$|lstat()|no reply from clamd' $clamscan_results | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//'`; do
+		while IFS= read -r hit; do
 			file="${hit#*:}"
 			signame="${hit%%:*}"
 			if [[ "$signame" == *YARA* ]]; then
@@ -1544,7 +1546,7 @@ scan() {
 			elif [[ "$signame" != *HEX* ]] && [[ "$signame" != *MD5* ]]; then
 				signame="{CAV}$signame"
 			fi
-			ignore_hit=`echo $signame | grep -E -vf $ignore_sigs`
+			ignore_hit=$(echo $signame | grep -E -vf $ignore_sigs)
 			if [ ! -z "$ignore_hit" ]; then
 			 record_hit "$file" "$signame"
 			 quarantine "$file" "$signame"
@@ -1556,7 +1558,7 @@ scan() {
 			 fi
 			fi
 			unset ignore_hit
-		done
+		done < <(grep -E -v 'ERROR$|lstat()|no reply from clamd' "$clamscan_results" | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//')
 		lbreakifs unset
 		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end"  >> $clamscan_log
 		if [ "$scan_yara" == "1" ]; then
@@ -1598,8 +1600,8 @@ scan() {
 			echo
 		fi
 	fi
-	scan_end_hr=`date +"%b %e %Y %H:%M:%S %z"`
-	scan_end=`date +"%s"`
+	scan_end_hr=$(date +"%b %e %Y %H:%M:%S %z")
+	scan_end=$(date +"%s")
 	scan_et=$((scan_end - scan_start))
 	scan_et_nofl=$((scan_et - file_list_et))
 	tot_hits="$progress_hits"
@@ -1651,7 +1653,7 @@ scan_strlen() {
 	elif [ "$string_length_scan" == "1" ] && [ "$type" == "list" ]; then
 		list=$(mktemp "$tmpdir/.strlen.flist.XXXXXX")
 		cp "$file" "$list"
-		xargs -d '\n' wc -L < "$list" 2> /dev/null | grep -vw total >> "$list.strlen"
+		xargs -d '\n' $wc -L < "$list" 2> /dev/null | grep -vw total >> "$list.strlen"
 		awk "{if (\$1>=$string_length) print\$2}" "$list.strlen" >> "$list.hits"
 		while IFS= read -r i; do
 			if [ -f "$i" ]; then
@@ -1674,7 +1676,7 @@ scan_stage1() {
 		gensigs
 	fi
 	if  [ ! -z "$hash" ]; then
-		val_hash=`grep -m1 $hash $sig_user_md5_file $sig_md5_file`
+		val_hash=$(grep -m1 $hash $sig_user_md5_file $sig_md5_file)
 		if [ ! -z "$val_hash" ]; then
 			md5_hit="$hash"
 			local _tmp="${val_hash#*:}" ; _tmp="${_tmp#*:}" ; _tmp="${_tmp#*:}"
@@ -1710,12 +1712,12 @@ scan_stage2() {
 			else
 				$od -v -w64 -N$scan_hexfifo_depth -tx1 "$file" | cut -c9-256 | tr -d '\n ' > $hex_fifo_path 2>&1 &
 			fi
-			val_hex=`$perl $hex_fifo_script $runtime_hexstrings`
+			val_hex=$($perl $hex_fifo_script $runtime_hexstrings)
 		else
 			if [ "$os_freebsd" == "1" ]; then
-				val_hex=`$perl $hex_string_script $runtime_hexstrings $($od -v -N$scan_hexdepth -tx1 "$file" | cut -c12-256 | tr -d ' \n')`
+				val_hex=$($perl $hex_string_script $runtime_hexstrings $($od -v -N$scan_hexdepth -tx1 "$file" | cut -c12-256 | tr -d ' \n'))
 			else
-				val_hex=`$perl $hex_string_script $runtime_hexstrings $($od -v -w$scan_hexdepth -N$scan_hexdepth -tx1 "$file" | tr -d '\n ')`
+				val_hex=$($perl $hex_string_script $runtime_hexstrings $($od -v -w$scan_hexdepth -N$scan_hexdepth -tx1 "$file" | tr -d '\n '))
 			fi
 		fi
 		if [ ! -z "$val_hex" ]; then
@@ -1970,7 +1972,7 @@ scan_stage_yara() {
 
 gen_report() {
 	if [ -f "$scan_session" ]; then
-		tot_hits=`$wc -l $scan_session | awk '{print$1}'`
+		tot_hits=$($wc -l $scan_session | awk '{print$1}')
 		nsess_hits="$sessdir/session.hits.$datestamp.$$"
 		echo "$datestamp.$$" > $sessdir/session.last
 		nsess="$sessdir/session.$datestamp.$$"
@@ -2055,12 +2057,12 @@ genalert() {
             	done < <(awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag' "$file")
             	# Sort cleaned files too
             	if [ "$quarantine_clean" == "1" ]; then 
-            	    for clean_file in $(cat $sessdir/clean.$$); do
-            	        if [ -f $clean_file ]; then 
-            	            clean_owner=$(stat -c "%U" $clean_file)
-            	        fi   
-            	        echo "$clean_owner : $clean_file" >> $tmpdir/.panel_alert.clean
-            	    done 
+            	    while IFS= read -r clean_file; do
+            	        if [ -f "$clean_file" ]; then
+            	            clean_owner=$(stat -c "%U" "$clean_file")
+            	        fi
+            	        echo "$clean_owner : $clean_file" >> "$tmpdir/.panel_alert.clean"
+            	    done < "$sessdir/clean.$$"
             	fi   
             	# Determine control panel, noop if error or none detected
                 eout "{panel} Detected control panel $control_panel. Will send alerts to control panel account contacts." 1
@@ -2071,10 +2073,10 @@ genalert() {
                 	    get_panel_contacts $control_panel $sys_user
 
                 	    grep "^$sys_user " "$tmpdir/.panel_alert.hits" | awk -F' : ' '{print $2" : "$3}' > "$tmpdir/.${sys_user}.hits"
-                	    user_tot_hits=$($wc -l $tmpdir/.${sys_user}.hits | awk '{print$1}')
+                	    user_tot_hits=$($wc -l < "$tmpdir/.${sys_user}.hits")
                 	    if [ -f $tmpdir/.panel_alert.clean ]; then 
                 	        grep "^$sys_user " $tmpdir/.panel_alert.clean | awk '{print $3}' > $tmpdir/.${sys_user}.clean
-                	        user_tot_cl=$($wc -l $tmpdir/.${sys_user}.clean | awk '{print$1}')
+                	        user_tot_cl=$($wc -l < "$tmpdir/.${sys_user}.clean")
                 	    fi   
 
                 	    tmpf=$tmpdir/.${sys_user}.alert
@@ -2098,25 +2100,25 @@ genalert() {
 		rm -f $tmpdir/.panel_alert.hits $tmpdir/.panel_alert.clean $tmpdir/.${sys_user}.hits $tmpdir/.${sys_user}.clean $tmpf
             fi   
 		elif [ "$type" == "daily" ] || [ "$type" == "digest" ]; then
-			inotify_start_time=`ps -p $(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1) -o lstart= 2> /dev/null`
-			scan_start_hr=`date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z"`
+			inotify_start_time=$(ps -p $(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1) -o lstart= 2> /dev/null)
+			scan_start_hr=$(date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z")
 			scan_start_elapsed=$(($(date +'%s')-$(date -d "$scan_start_hr" +'%s')))
-			inotify_run_time=`echo $(($scan_start_elapsed/86400))d:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))/3600))h:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%3600/60))m:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%60))s`
+			inotify_run_time="$(($scan_start_elapsed/86400))d:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))/3600))h:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%3600/60))m:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%60))s"
 
 			rm -f $tmpdir/.digest.alert.hits $tmpdir/.digest.clean.hits $tmpdir/.digest.monitor.alert $tmpdir/.digest.susp.hits
 
 			scanid="$datestamp.$$"
-			scan_session=`cat $sessdir/session.monitor.current`
+			scan_session=$(cat "$sessdir/session.monitor.current")
 
 			$tlog $scan_session digest.alert > $tmpdir/.digest.alert.hits
 			$tlog $clean_history digest.clean.alert > $tmpdir/.digest.clean.hits
 			$tlog $monitor_scanned_history digest.monitor.alert > $tmpdir/.digest.monitor.alert
 			$tlog $suspend_history digest.susp.alert > $tmpdir/.digest.susp.hits
 
-			tot_hits=`$wc -l $tmpdir/.digest.alert.hits | awk '{print$1}'`
-			tot_cl=`$wc -l $tmpdir/.digest.clean.hits | awk '{print$1}'`
-			tot_files=`$wc -l $tmpdir/.digest.monitor.alert | awk '{print$1}'`
-			tot_susp=`$wc -l $tmpdir/.digest.susp.hits | awk '{print$1}'`
+			tot_hits=$($wc -l < "$tmpdir/.digest.alert.hits")
+			tot_cl=$($wc -l < "$tmpdir/.digest.clean.hits")
+			tot_files=$($wc -l < "$tmpdir/.digest.monitor.alert")
+			tot_susp=$($wc -l < "$tmpdir/.digest.susp.hits")
 
 			trim_log $monitor_scanned_history 50000
 			trim_log $clean_history 50000
@@ -2136,13 +2138,13 @@ genalert() {
 				cp $tmpf $sessdir/session.$scanid
 				grep -E '^{.*}' $sessdir/session.$scanid > $sessdir/session.hits.$scanid
 				echo "$scanid" > $sessdir/session.last
-				email_subj="${email_subj}: monitor summary"
+				local digest_subj="${email_subj}: monitor summary"
 				if [ -f "$mail" ]; then
-					cat $tmpf | $mail -s "$email_subj" $email_addr
+					cat $tmpf | $mail -s "$digest_subj" $email_addr
 					eout "{alert} sent $type alert to $email_addr"
 		                elif [ -f "$sendmail" ]; then
 					if ! grep -q "SUBJECT: " "$tmpf"; then
-						echo -e "SUBJECT: $email_subj\n$(cat $tmpf)" > $tmpf
+						echo -e "SUBJECT: $digest_subj\n$(cat $tmpf)" > $tmpf
 					fi
 					cat $tmpf | $sendmail -t $email_addr
 					eout "{alert} sent $type alert to $email_addr"
@@ -2264,15 +2266,15 @@ monitor_cycle() {
         fi
 	inotify_cycle_runtime=0
 	while [ ! -f "$tmpdir/stop_monitor" ]; do
-		inotify_pid=`pgrep -f inotify.paths.[0-9]+`
+		inotify_pid=$(pgrep -f inotify.paths.[0-9]+)
 		if [ -z "$inotify_pid" ]; then
 			eout "{mon} no inotify process found, exiting (are we a zombie process?)" 1
 			exit 1
 		fi
-		log_size=$(wc -l < "$inotify_log")
+		log_size=$($wc -l < "$inotify_log")
 		if [ "$log_size" -ge "$inotify_trim" ]; then
 			trim=$(($log_size - 1000))
-			log_chars=$(head -n "$trim" "$inotify_log" 2>/dev/null | wc -c)
+			log_chars=$(head -n "$trim" "$inotify_log" 2>/dev/null | $wc -c)
 			tlog_new=$(( $(cat "$inspath/tmp/inotify") - $log_chars ))
 			echo "$tlog_new" > "$inspath/tmp/inotify"
 			local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
@@ -2296,33 +2298,31 @@ monitor_cycle() {
 			fi
 			inotify_cycle_runtime=0
 		        ignore_fext_args=()
-		        if [ -f "$ignore_file_ext" ]; then
-		                if [ ! "$(cat $ignore_file_ext)" == "" ]; then
-		                        for i in `cat $ignore_file_ext`; do
-		                                ignore_fext_args+=(-not -iname "*$i")
-		                        done
-		                fi
+		        if [ -f "$ignore_file_ext" ] && [ -s "$ignore_file_ext" ]; then
+		                while IFS= read -r i; do
+		                        ignore_fext_args+=(-not -iname "*$i")
+		                done < "$ignore_file_ext"
 		        fi
 		        if [ "$scan_ignore_root" == "1" ]; then
 		                ignore_root="-not -uid 0 -not -gid 0"
 		        fi
 		        if [ "$scan_ignore_user" ]; then
-		                for i in `echo $scan_ignore_user | tr ', ' ' '`; do
+		                while IFS= read -r i; do
 		                        if [ "$ignore_user" == "" ]; then
 		                                ignore_user="-not -user $i"
 		                        else
 		                                ignore_user="$ignore_user -not -user $i"
 		                        fi
-		                done
+		                done < <(echo "$scan_ignore_user" | tr ', ' '\n' | grep -v '^$')
 		        fi
 		        if [ "$scan_ignore_group" ]; then
-		                for i in `echo $scan_ignore_group | tr ', ' ' '`; do
+		                while IFS= read -r i; do
 		                        if [ "$ignore_group" == "" ]; then
 		                                ignore_group="-not -group $i"
 		                        else
 		                                ignore_group="$ignore_group -not -group $i"
 		                        fi
-		                done
+		                done < <(echo "$scan_ignore_group" | tr ', ' '\n' | grep -v '^$')
 		        fi
 			_yara_bin="" _yara_type="" _yara_has_scan_list=""
 			eout "{mon} reloaded configuration data" 1
@@ -2373,7 +2373,7 @@ monitor_check() {
                 monitor_scanlist=$(mktemp "$tmpdir/.monitor.scan.XXXXXX")
 		chmod 600 "$monitor_scanlist"
                 $tlog $inotify_log inotify | grep -E " CREATE| MODIFY| MOVED_TO" | awk -F" CREATE| MODIFY| MOVED_TO" '{print $1}' | sort -u | grep -vf $ignore_paths> $monitor_scanlist
-		scanned_count=$(wc -l < "$monitor_scanlist")
+		scanned_count=$($wc -l < "$monitor_scanlist")
 		if [ "$scanned_count" -eq 0 ] 2>/dev/null; then
 			rm -f "$monitor_scanlist"
 			return
@@ -2410,7 +2410,7 @@ monitor_check() {
 				done < "$monitor_scanlist"
 			fi
 			lbreakifs set
-                	for hit in `grep -E -v 'ERROR$|lstat()|no reply from clamd' $clamscan_results | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//'`; do
+			while IFS= read -r hit; do
 	                        file="${hit#*:}"
         	                signame="${hit%%:*}"
 	                        if [[ "$signame" == *YARA* ]]; then
@@ -2418,15 +2418,15 @@ monitor_check() {
                 	        elif [[ "$signame" != *HEX* ]] && [[ "$signame" != *MD5* ]]; then
         	                        signame="{CAV}$signame"
 	                        fi
-	                        ignore_hit=`echo $signame | grep -E -vf $ignore_sigs`
+	                        ignore_hit=$(echo $signame | grep -E -vf $ignore_sigs)
 				if [ -f "$file" ] && [ ! -z "$ignore_hit" ]; then
 	                        	record_hit "$file" "$signame"
 	        	                quarantine "$file" "$signame"
 				fi
 				unset ignore_hit
-                	done
+			done < <(grep -E -v 'ERROR$|lstat()|no reply from clamd' "$clamscan_results" | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//')
 			lbreakifs unset
-			scanned_count=$(wc -l < "$monitor_scanlist")
+			scanned_count=$($wc -l < "$monitor_scanlist")
 			eout "{mon} scanned ${scanned_count} new/changed files with clamav engine"
 			if [ "$scan_yara" == "1" ]; then
 				_yara_filter_filelist "$monitor_scanlist"
@@ -2436,16 +2436,16 @@ monitor_check() {
 		else
 			while IFS= read -r file; do
 				if [ -f "$file" ]; then
-					for fscan in `$nice_command $find "$file" -maxdepth 1 $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize -not -perm 000 "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2> /dev/null`; do
+					while IFS= read -r fscan; do
 						if [ "$inotify_verbose" == "1" ]; then
 							eout "{mon} inotify native file scan on $file"
 						fi
 						echo "$file" >> $monitor_scanned_history
 						scan_stage1 "$fscan" >> /dev/null 2>&1
-					done
+					done < <($nice_command $find "$file" -maxdepth 1 $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize -not -perm 000 "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2> /dev/null)
 				fi
 			done < "$monitor_scanlist"
-			scanned_count=$(wc -l < "$monitor_scanlist")
+			scanned_count=$($wc -l < "$monitor_scanlist")
 			eout "{mon} scanned ${scanned_count} new/changed files with native engine"
 			if [ "$scan_yara" == "1" ]; then
 				_yara_filter_filelist "$monitor_scanlist"
@@ -2473,17 +2473,17 @@ monitor_init() {
 
 	ksup=0
 	if [ -f "/boot/System.map-$(uname -r)" ]; then
-		ksup=`grep inotify_ /boot/System.map-$(uname -r)`
+		ksup=$(grep inotify_ /boot/System.map-$(uname -r))
 	fi
 	if [ -f "/boot/config-$(uname -r)" ]; then
-		ksup=`grep -m1 CONFIG_INOTIFY /boot/config-$(uname -r)`
+		ksup=$(grep -m1 CONFIG_INOTIFY /boot/config-$(uname -r))
 	fi
 	if [ -z "$ksup" ]; then
 		eout "{mon} kernel does not support inotify(), aborting." 1
 		exit 1
 	fi
 	
-	inotify_pid=`pgrep -f inotify.paths.[0-9]+`
+	inotify_pid=$(pgrep -f inotify.paths.[0-9]+)
 	if [ ! -z "$inotify_pid" ]; then
 		eout "{mon} existing inotify process detected (try -k): $inotify_pid" 1
 		exit 1
@@ -2492,13 +2492,13 @@ monitor_init() {
 	rm -f $tmpdir/stop_monitor $tmpdir/inotifywait.pid
 	
 	if [ -f "/proc/sys/fs/inotify/max_user_instances" ] && [ -f "/proc/sys/fs/inotify/max_user_watches" ]; then
-		cur_user_watches=`cat /proc/sys/fs/inotify/max_user_watches`
-		cur_user_instances=`cat /proc/sys/fs/inotify/max_user_instances`
+		cur_user_watches=$(cat /proc/sys/fs/inotify/max_user_watches)
+		cur_user_instances=$(cat /proc/sys/fs/inotify/max_user_instances)
 	else
 		eout "{mon} could not find fs.inotify.max_user_instances|watches tunable files, aborting." 1
 		exit 1
 	fi
-	users_tot=`cat /etc/passwd | grep -ic home`
+	users_tot=$(cat /etc/passwd | grep -ic home)
 	inotify_user_watches=$((inotify_base_watches * users_tot))
 	
 	if [ "$cur_user_instances" -lt "$inotify_user_instances" ]; then
@@ -2516,21 +2516,16 @@ monitor_init() {
 	chmod 640 $inotify_log
 	
 	if [ "$(echo $inopt | grep -iE 'user(s?)')" ]; then
-		for i in `cat /etc/passwd | cut -d':' -f1,3,6 | sort`; do
-			user=`echo $i | cut -d':' -f1`
-			user_id=`echo $i | cut -d':' -f2`
-			user_home=`echo $i | cut -d':' -f3`
+		while IFS=':' read -r user user_id user_home; do
 			icnt=$((icnt + 1))
 			if [ "$user_id" -ge "$inotify_minuid" ]; then
 				if [ ! -z "$inotify_docroot" ] && [ -d "$user_home" ]; then
-				 lbreakifs set
-				 for docroot in `echo $inotify_docroot | tr ', ' '\n'`; do
+				 while IFS= read -r docroot; do
 					if [ -d "$user_home/$docroot" ]; then
 						echo "$user_home/$docroot" >> $inotify_fpaths
 						eout "{mon} added $user_home/$docroot to inotify monitoring array" 1
 					fi
-				 done
-				 lbreakifs unset
+				 done < <(echo "$inotify_docroot" | tr ', ' '\n' | grep -v '^$')
 				elif [ -d "$user_home" ]; then
 					echo "$user_home" >> $inotify_fpaths
 					eout "{mon} added $user_home to inotify monitoring array" 1
@@ -2538,7 +2533,7 @@ monitor_init() {
 					eout "{mon} could not find any suitable user home paths"
 				fi
 			fi
-		done
+		done < <(cut -d':' -f1,3,6 /etc/passwd | sort)
 		
 		if [ -d "/dev/shm" ]; then
 			echo "/dev/shm" >> $inotify_fpaths
@@ -2553,49 +2548,49 @@ monitor_init() {
 			eout "{mon} added /tmp to inotify monitoring array" 1
 		fi
 	elif [ -f "$inopt" ]; then
-		tot_paths=$(wc -l < "$inopt")
+		tot_paths=$($wc -l < "$inopt")
 		if [ "$tot_paths" == "0" ]; then
 			eout "{mon} no paths specified in $inopt, aborting." 1
 			exit 1
 		fi
-		for i in `cat $inopt`; do
+		while IFS= read -r i; do
 			if [ -d "$i" ]; then
 				eout "{mon} added $i to inotify monitoring array" 1
 				echo "$i" >> $inotify_fpaths
 			else
 				eout "{mon} ignored invalid path $i" 1
 			fi
-		done
-		
+		done < "$inopt"
+
 	elif [ -d "$inopt" ] || [ "$(echo $inopt | grep -E ".*,.*")" ]; then
-		for i in `echo $inopt | tr ',' '\n'`; do
+		while IFS= read -r i; do
 			if [ -d "$i" ]; then
 				eout "{mon} added $i to inotify monitoring array" 1
 				echo "$i" >> $inotify_fpaths
 			else
 				eout "{mon} invalid path $i specified, ignoring." 1
 			fi
-		done
+		done < <(echo "$inopt" | tr ',' '\n')
 	else
 		eout "{mon} no valid option or invalid file/path provided, aborting." 1
 		exit 1
 	fi
 	
 	if [ -f "$ignore_inotify" ] && [ -s "$ignore_inotify" ]; then
-		for igfile in `cat $ignore_inotify | grep -vE '^$'`; do
+		while IFS= read -r igfile; do
 			if [ "$igregexp" ]; then
 				igregexp="$igregexp|$igfile"
 			else
 				igregexp="($igfile"
 			fi
-		done
+		done < <(grep -vE '^$' "$ignore_inotify")
 		if [ "$igregexp" ]; then
 			igregexp="$igregexp)"
 			exclude="--exclude $igregexp"
 		fi
 	fi
 	
-	tot_paths=$(wc -l < "$inotify_fpaths")
+	tot_paths=$($wc -l < "$inotify_fpaths")
 	eout "{mon} starting inotify process on $tot_paths paths, this might take awhile..." 1
 
         if [ ! "$inotify_cpunice" ]; then
@@ -2611,7 +2606,7 @@ monitor_init() {
         if [ -f "$ionice" ]; then
                 nice_command="$nice_command $ionice -c2 -n $inotify_ionice"
         fi
-        if [ -f "$cpulimit" ] && [ "$inotify_cpulimit" -gt 2> /dev/null "0" ]; then
+        if [ -f "$cpulimit" ] && [ "$inotify_cpulimit" -gt 0 ] 2>/dev/null; then
                 max_cpulimit=$(( $(grep -E -w processor /proc/cpuinfo -c) * 100 ))
                 if [ "$inotify_cpulimit" -gt "$max_cpulimit" ]; then
                         inotify_cpulimit="0"
@@ -2622,7 +2617,7 @@ monitor_init() {
 
 	$nice_command $inotify -r --fromfile $inotify_fpaths $exclude --timefmt "%d %b %H:%M:%S" --format "%w%f %e %T" -m -e create,move,modify >> $inotify_log 2>&1 &
 	sleep 2
-	inotify_pid=`pgrep -f inotify.paths.[0-9]+`
+	inotify_pid=$(pgrep -f inotify.paths.[0-9]+)
 	if [ -z "$inotify_pid" ]; then
 		eout "{mon} no inotify process found, check $inotify_log for errors." 1
 		exit 1
@@ -2648,7 +2643,7 @@ checkout() {
 	
 	if [ -f "$file" ]; then
 		
-		filename=`basename "$file" | tr -d '[:cntrl:]' | tr -d '[:space:]'`
+		filename=$(basename "$file" | tr -d '[:cntrl:]' | tr -d '[:space:]')
 		if [ -z "$filename" ]; then
 			storename="$storename_prefix"
 		else
@@ -2677,8 +2672,9 @@ EOT
 			rm -f "$tmpf"
 			return 1
 		fi
-		for i in `cat $tmpf`; do
-			filename=`basename "$i" | tr -d '[:cntrl:]' | tr -d '[:space:]'`
+		while IFS= read -r i; do
+			filename="${i##*/}"
+			filename=$(echo "$filename" | tr -d '[:cntrl:]' | tr -d '[:space:]')
 			if [ -z "$filename" ]; then
 				storename="$storename_prefix"
 			else
@@ -2694,7 +2690,7 @@ ascii
 put "$i" "$storename.ascii"
 bye
 EOT
-		done
+		done < "$tmpf"
 	fi
 	
 	
@@ -2725,13 +2721,13 @@ gensigs() {
 	
 	if [ "$scan_clamscan" == "1" ]; then
 		if [ -s "$sig_user_hex_file" ]; then
-			for i in `cat $sig_user_hex_file | sed 's/{HEX}//' | tr ':' '%' | grep -vE "^\s*$"`; do
-				name=`echo $i | tr '%' ' ' | awk '{print$2}'`
-				hex=`echo $i | tr '%' ' ' | awk '{print$1}'`
+			while IFS= read -r i; do
+				name=$(echo "$i" | tr '%' ' ' | awk '{print$2}')
+				hex=$(echo "$i" | tr '%' ' ' | awk '{print$1}')
 				if [ ! -z "$name" ] && [ ! -z "$hex" ]; then
 					echo "{HEX}$name:0:*:$hex" >> $runtime_ndb
 				fi
-			done
+			done < <(sed 's/{HEX}//' "$sig_user_hex_file" | tr ':' '%' | grep -vE "^\s*$")
 			cat $sig_cav_hex_file >> $runtime_ndb
 		else
 			cp $sig_cav_hex_file $runtime_ndb
@@ -2746,7 +2742,7 @@ gensigs() {
 
 sigignore() {
 	sil="$1"
-	chk=`$wc -l $ignore_sigs | awk '{print$1}'`
+	chk=$($wc -l $ignore_sigs | awk '{print$1}')
 	if [ ! "$chk" == "0" ]; then
 		cat $sig_hex_file | grep -E -vf $ignore_sigs > $sig_hex_file.new
 		mv $sig_hex_file.new $sig_hex_file
@@ -2777,13 +2773,13 @@ lmdup() {
         get_remote_file "$lmd_version_url" "update" "1"
 	upstreamver="$return_file"	
 	if [ -s "$upstreamver" ]; then
-		installedver=`echo $ver | tr -d '.'`
-		if [ "$(echo $installedver | wc -L)" -eq "2" ]; then
+		installedver=$(echo $ver | tr -d '.')
+		if [ "$(echo $installedver | $wc -L)" -eq "2" ]; then
 			installedver="${installedver}0"
 		fi
-		upstreamver_readable=`cat $upstreamver`
-		upstreamver=`cat $upstreamver | tr -d '.'`
-		if [ "$(echo $upstreamver | wc -L)" -eq "2" ]; then
+		upstreamver_readable=$(cat $upstreamver)
+		upstreamver=$(cat $upstreamver | tr -d '.')
+		if [ "$(echo $upstreamver | $wc -L)" -eq "2" ]; then
 			upstreamver="${upstreamver}0"
 		fi
 		if [ "$upstreamver" -gt "$installedver" ]; then
@@ -2798,8 +2794,8 @@ lmdup() {
 		        get_remote_file "$lmd_hash_url" "update" "1"
 			upstreamhash="$return_file"
 			if [ -s "$upstreamhash" ]; then
-				installed_hash=`cat $lmd_hash_file`
-				current_hash=`cat $upstreamhash`
+				installed_hash=$(cat $lmd_hash_file)
+				current_hash=$(cat $upstreamhash)
 				if [ ! "$installed_hash" == "$current_hash" ]; then
 					eout "{update} version check shows latest but hash check failed, forcing update..." 1
 					doupdate=1
@@ -2828,8 +2824,8 @@ lmdup() {
                 get_remote_file "${lmd_current_tgzbase_url}/${lmd_current_tgzfile}.md5" "update" "1" "$tmpwd/${lmd_current_tgzfile}.md5"
 
 		if [ -s "$tmpwd/${lmd_current_tgzfile}.md5" ] && [ -s "$tmpwd/${lmd_current_tgzfile}" ]; then
-			upstream_md5=`cat $tmpwd/${lmd_current_tgzfile}.md5 | awk '{print$1}'`
-			local_md5=`$md5sum "$tmpwd/${lmd_current_tgzfile}" | awk '{print$1}'`
+			upstream_md5=$(cat $tmpwd/${lmd_current_tgzfile}.md5 | awk '{print$1}')
+			local_md5=$($md5sum "$tmpwd/${lmd_current_tgzfile}" | awk '{print$1}')
 			if [ ! "$upstream_md5" == "$local_md5" ]; then
 				eout "{update} unable to verify md5sum of ${lmd_current_tgzfile}, update failed!" 1
 				cd $inspath ; rm -rf $tmpwd
@@ -2888,16 +2884,16 @@ sigup() {
 		clean_exit
 		exit 1
 	else
-		nver=`cat $upstream_sigver`
+		nver=$(cat $upstream_sigver)
 	fi
 	
 	if [ -f "$sig_md5_file" ]; then
-		lines_md5=`$wc -l $sig_md5_file | awk '{print$1}'`
+		lines_md5=$($wc -l $sig_md5_file | awk '{print$1}')
 	else
 		lines_md5=0
 	fi
 	if [ -f "$sig_hex_file" ]; then
-		lines_hex=`$wc -l $sig_hex_file | awk '{print$1}'`
+		lines_hex=$($wc -l $sig_hex_file | awk '{print$1}')
 	else
 		lines_hex="0"
 	fi
@@ -2915,7 +2911,7 @@ sigup() {
 	
 	if [ "$nver" != "$sig_version" ]; then
 		cd $tmpwd/
-		tar=`command -v tar 2> /dev/null`
+		tar=$(command -v tar 2> /dev/null)
 		eout "{sigup} new signature set $nver available" 1
 		
 		eout "{sigup} downloading $sig_sigpack_url" 1
@@ -2928,8 +2924,8 @@ sigup() {
 		get_remote_file "${sig_clpack_url}.md5" "sigup" "1" "$tmpwd/maldet-clean.tgz.md5"
 		
 		if [ -f "$tmpwd/maldet-sigpack.tgz.md5" ]; then
-			sigpack_md5=`$md5sum maldet-sigpack.tgz | awk '{print$1}'`
-			sigpack_goodmd5=`cat maldet-sigpack.tgz.md5 | awk '{print$1}'`
+			sigpack_md5=$($md5sum maldet-sigpack.tgz | awk '{print$1}')
+			sigpack_goodmd5=$(cat maldet-sigpack.tgz.md5 | awk '{print$1}')
 			if [ ! "$sigpack_md5" == "$sigpack_goodmd5" ]; then
 				eout "{sigup} unable to verify md5sum of maldet-sigpack.tgz, please try again or contact proj@rfxn.com" 1
 				sigpackfail=1
@@ -2962,8 +2958,8 @@ sigup() {
 		fi
 		
 		if [ -f "$tmpwd/maldet-clean.tgz.md5" ]; then
-			clpack_md5=`$md5sum maldet-clean.tgz | awk '{print$1}'`
-			clpack_goodmd5=`cat maldet-clean.tgz.md5 | awk '{print$1}'`
+			clpack_md5=$($md5sum maldet-clean.tgz | awk '{print$1}')
+			clpack_goodmd5=$(cat maldet-clean.tgz.md5 | awk '{print$1}')
 			if [ ! "$clpack_md5" == "$clpack_goodmd5" ]; then
 				eout "{sigup} unable to verify md5sum of maldet-clean.tgz, please try again or contact proj@rfxn.com" 1
 				clpackfail=1
@@ -2996,8 +2992,8 @@ sigup() {
 			eout "{sigup} signature set update completed" 1
 			sigignore
 			
-			hex_sigs=`$wc -l $sig_hex_file | awk '{print$1}'`
-			md5_sigs=`$wc -l $sig_md5_file | awk '{print$1}'`
+			hex_sigs=$($wc -l $sig_hex_file | awk '{print$1}')
+			md5_sigs=$($wc -l $sig_md5_file | awk '{print$1}')
 			yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)
 			user_yara_sigs=0
 			if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
@@ -3011,12 +3007,12 @@ sigup() {
 			if [ ! -f "$sig_user_md5_file" ]; then
 				user_md5_sigs=0
 			else
-				user_md5_sigs=`$wc -l $sig_user_md5_file | awk '{print$1}'`
+				user_md5_sigs=$($wc -l $sig_user_md5_file | awk '{print$1}')
 			fi
 			if [ ! -f "$sig_user_hex_file" ]; then
 				user_hex_sigs=0
 			else
-				user_hex_sigs=`$wc -l $sig_user_hex_file | awk '{print$1}'`
+				user_hex_sigs=$($wc -l $sig_user_hex_file | awk '{print$1}')
 			fi
 			user_sigs=$((user_hex_sigs + user_md5_sigs + user_yara_sigs))
 			tot_sigs=$((md5_sigs + hex_sigs + yara_sigs + user_sigs))
