@@ -29,7 +29,9 @@ scan_tmpdir_paths=''
 scan_yara=0
 hscan=1
 
-isclamd=$(pidof clamd 2> /dev/null)
+if [ -n "$pidof" ]; then
+	isclamd=$($pidof clamd 2> /dev/null)
+fi
 if [ "$isclamd" ] && [ -f "$clamdscan" ]; then
 	clamd_scan=1
 else

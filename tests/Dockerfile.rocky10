@@ -1,23 +1,11 @@
-FROM rockylinux/rockylinux:10
-RUN dnf install -y --allowerasing \
-    bash coreutils findutils diffutils procps-ng \
-    perl file ed hostname util-linux \
-    wget curl ca-certificates gawk sed grep tar gzip \
+ARG BASE_IMAGE=lmd-base-rocky10
+FROM ${BASE_IMAGE}
+
+RUN dnf install -y \
+    perl file ed \
     && (dnf install -y inotify-tools || true) \
     && (dnf install -y --enablerepo=crb yara || true) \
     && dnf clean all
-
-# Install BATS + helpers
-RUN mkdir -p /opt/bats && \
-    wget -qO- https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz | \
-      tar xz -C /opt/bats --strip-components=1 && \
-    /opt/bats/install.sh /usr/local && \
-    mkdir -p /usr/local/lib/bats/bats-support && \
-    wget -qO- https://github.com/bats-core/bats-support/archive/refs/tags/v0.3.0.tar.gz | \
-      tar xz -C /usr/local/lib/bats/bats-support --strip-components=1 && \
-    mkdir -p /usr/local/lib/bats/bats-assert && \
-    wget -qO- https://github.com/bats-core/bats-assert/archive/refs/tags/v2.1.0.tar.gz | \
-      tar xz -C /usr/local/lib/bats/bats-assert --strip-components=1
 
 COPY . /opt/lmd-src
 COPY tests/ /opt/tests/

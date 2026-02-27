@@ -21,6 +21,9 @@ intcnf="$inspath/internals/internals.conf"
 if [ -f "$intcnf" ]; then
 	source "$intcnf"
 	source "$cnf"
+	if [ -f "$compatcnf" ]; then
+		source "$compatcnf"
+	fi
 else
 	echo "$intcnf not found."
 	exit 1

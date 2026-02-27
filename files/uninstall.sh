@@ -26,13 +26,16 @@ if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 				rm -f /etc/rc.d/rc4.d/S70maldet
 				rm -f /etc/rc.d/rc5.d/S70maldet
 			else
-				/sbin/chkconfig maldet off
-				/sbin/chkconfig maldet --del
+				if [ -x /sbin/chkconfig ]; then
+					/sbin/chkconfig maldet off
+					/sbin/chkconfig maldet --del
+				fi
 			fi
 			rm -f /etc/init.d/maldet
 		fi
 	fi
 	rm -rf /usr/local/maldetect* /etc/cron.d/maldet_pub /etc/cron.daily/maldet /etc/cron.weekly/maldet-watchdog /usr/local/sbin/maldet /usr/local/sbin/lmd /usr/local/share/man/man1/maldet.1.gz
+	rm -f /etc/sysconfig/maldet /etc/default/maldet
 	clamav_paths="/usr/local/cpanel/3rdparty/share/clamav/ /var/lib/clamav/ /var/clamav/ /usr/share/clamav/ /usr/local/share/clamav"
 	for cpath in $clamav_paths; do
 		rm -f $cpath/rfxn.* $cpath/lmd.user.*

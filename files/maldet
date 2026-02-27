@@ -33,6 +33,14 @@ else
 	exit 1
 fi
 
+if [ -f "$tlog_lib" ]; then
+	source "$tlog_lib"
+else
+	header
+	echo "maldet($$): {glob} \$tlog_lib not found, aborting."
+	exit 1
+fi
+
 if [ -f "$cnf" ]; then
 	source "$cnf"
 else

@@ -32,7 +32,9 @@ if [ ! -d "$inspath" ] && [ -d "files" ]; then
 	chmod 640 "$inspath/conf.maldet"
 	test -f "$inspath/conf.maldet.hookscan" && chmod 640 "$inspath/conf.maldet.hookscan"
 	mkdir -p "$inspath/clean" "$inspath/pub" "$inspath/quarantine" "$inspath/sess" "$inspath/sigs" "$inspath/tmp" 2> /dev/null
-	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/internals/tlog" 2> /dev/null
+	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/internals/tlog" "$inspath/internals/tlog_lib.sh" 2> /dev/null
+	# tlog: replace default BASERUN for cursor storage security
+	sed -i "s|BASERUN=\"\${BASERUN:-/tmp}\"|BASERUN=\"\${BASERUN:-$inspath/tmp}\"|" "$inspath/internals/tlog"
 	ln -fs "$inspath/maldet" /usr/local/sbin/maldet
 	ln -fs "$inspath/maldet" /usr/local/sbin/lmd
 	cp -f CHANGELOG COPYING.GPL README "$inspath/"
@@ -81,7 +83,11 @@ else
 	cp -pf "$inspath.bk$$"/clean/custom.* "$inspath/clean/" >> /dev/null 2>&1
 	cp -f CHANGELOG COPYING.GPL README "$inspath/"
 	mkdir -p "$inspath/clean" "$inspath/pub" "$inspath/quarantine" "$inspath/sess" "$inspath/sigs" "$inspath/tmp" 2> /dev/null
-	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/internals/tlog" 2> /dev/null
+	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/internals/tlog" "$inspath/internals/tlog_lib.sh" 2> /dev/null
+	# tlog: replace default BASERUN for cursor storage security
+	sed -i "s|BASERUN=\"\${BASERUN:-/tmp}\"|BASERUN=\"\${BASERUN:-$inspath/tmp}\"|" "$inspath/internals/tlog"
+	# tlog cursor migration: inotify switching from line-count to byte-offset
+	rm -f "$inspath/tmp/inotify" 2>/dev/null
 	clamav_paths="/usr/local/cpanel/3rdparty/share/clamav/ /var/lib/clamav/ /var/clamav/ /usr/share/clamav/ /usr/local/share/clamav"
 	for lp in $clamav_paths; do
 		clamav_linksigs "$lp"
@@ -116,7 +122,9 @@ if [ "$(uname -s)" != "FreeBSD" ]; then
 	else
                 cp -af ./files/service/maldet.sh /etc/init.d/maldet
                 chmod 755 /etc/init.d/maldet
-		chkconfig --level 2345 maldet on
+		if command -v chkconfig >/dev/null 2>&1; then
+			chkconfig --level 2345 maldet on
+		fi
 	fi
 	# Migrate default_monitor_mode to MONITOR_MODE in sysconfig for systemd
 	if [ -f "$inspath.bk$$/conf.maldet" ]; then
@@ -154,7 +162,9 @@ if [ "$(uname -s)" != "FreeBSD" ]; then
 		if [ ! -f "/etc/sysconfig/maldet" ]; then
 			cp -f ./files/service/maldet.sysconfig /etc/sysconfig/maldet 2> /dev/null
 		fi
-		/sbin/chkconfig maldet on
+		if [ -x /sbin/chkconfig ]; then
+			/sbin/chkconfig maldet on
+		fi
 	fi
 fi
 

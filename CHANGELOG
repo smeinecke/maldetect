@@ -16,6 +16,14 @@ v2.0.1 | Feb 24 2026:
       issue #268
 [New] cron.daily Bitrix panel detection (/opt/webdir + /etc/nginx/bx);
       issue #381
+[New] tlog_lib.sh shared library: multi-mode tracking (bytes/lines),
+      atomic cursor writes (mktemp+mv), optional flock-based cursor
+      locking, cursor validation with auto-reset, structured error
+      codes (0-4), stale cursor protection; in-process library calls
+      eliminate 9 subprocess forks per monitor/digest cycle
+[New] tlog_adjust_cursor() for mode-aware in-place log trim; fixes
+      unit-mismatch class of bugs by ensuring cursor and delta use
+      consistent units
 
 -- Bug Fixes --
 [Fix] Slack alerting: migrate from deprecated files.upload API to
@@ -90,8 +98,23 @@ v2.0.1 | Feb 24 2026:
 [Fix] panel alerts include signature name; rewrite hit parsing to while-read
       with BASH_REMATCH for paths with spaces; InterWorx guard against empty
       master_domain; issue #426
-[Fix] tlog line truncation: switch from byte-based to line-based tracking
-      to prevent mid-line truncation in monitor digest emails; issue #227
+[Fix] tlog trim cursor unit mismatch: purge() and monitor_cycle()
+      subtracted byte count (wc -c) from line-count cursor, producing
+      garbage cursor values; replaced with tlog_adjust_cursor() using
+      mode-consistent units; issue #227
+[Fix] tlog BASERUN: install.sh replaces default /tmp with $inspath/tmp at
+      install time; prevents cursor files from defaulting to world-writable
+      /tmp; source tree keeps canonical /tmp for cross-project hash parity
+[Change] tlog_lib.sh: update to canonical 2.0.1 with multi-format compressed
+      rotation (.xz, .bz2, .zst, .lz4), copytruncate rotation handling, mode
+      validation in tlog_read(), and generic decompression dispatch
+[Change] tlog: update to canonical 2.0.1 CLI with option parsing (-m/--mode,
+      -b/--baserun, -f/--flock, --first-run), subcommands (--full, --status,
+      --reset, --adjust), help system (-v/-h/--help), path traversal rejection,
+      and library security validation; backward-compatible positional interface
+[Fix] tlog destructive .gz rotation: old tlog called gunzip/gzip on
+      rotated files, modifying filesystem; replaced with zcat pipe
+      (read-only, race-free) via tlog_lib.sh
 [Fix] find_recentopts incorrectly escaping find options; issue #440, pr#442
 [Fix] ignore_file_ext, --exclude-regex, --include-regex, and ignore_paths
       prune: convert to bash arrays for correct find argument passing; empty
@@ -148,8 +171,28 @@ v2.0.1 | Feb 24 2026:
 [Fix] scan.etpl/panel_alert.etpl: [ "$coltest" ] replaced with
       [ -n "$coltest" ]; UUOC with column replaced with stdin redirect;
       quote all variable paths
+[Fix] clamselector(): remove invalid --fdpass from remote clamd TCP path;
+      remove redundant --fdpass from remote clamd connectivity test
+[Fix] genalert(): add --connect-timeout and --max-time to Slack and Telegram
+      curl calls to prevent indefinite hangs on network issues
+[Fix] get_remote_file(): remove hardcoded /usr/bin/curl and /usr/bin/wget
+      fallbacks; use command-v-discovered variables exclusively
+[Fix] hookscan.sh: replace bare pidof with $pidof variable from internals.conf;
+      guard for missing pidof binary
+[Fix] uninstall.sh: add /etc/sysconfig/maldet and /etc/default/maldet cleanup;
+      guard catch-all chkconfig calls with existence check
+[Fix] install.sh: guard chkconfig calls with existence check to prevent errors
+      on non-RHEL SysV systems
+[Fix] maldet.sh: add compat.conf sourcing to SysV init script to match standard
+      config loading order
 
 -- Changes --
+[Change] tlog rewritten: shared tlog_lib.sh sourced as in-process
+      library; monitor_check() uses byte-mode tracking (optimal for
+      grep/awk pipeline); genalert() digest uses line-mode tracking
+      (guaranteed complete lines in email); 9 $tlog subprocess forks
+      replaced with direct tlog_read() function calls; flock-based
+      cursor locking enabled in monitor_cycle()
 [Change] replace egrep with grep -E in clean_hitlist(); update
       usage_long() help text from "POSIX egrep" to "POSIX extended
       regular expression (grep -E)" for --include-regex/--exclude-regex
@@ -225,6 +268,14 @@ v2.0.1 | Feb 24 2026:
       20.04/24.04, Debian 12, YARA-X); SHA-256 checksum verification for
       YARA-X binary; Rocky 8/9 curl for get_remote_file() coverage;
       pull_request trigger adds '2.*' branch pattern
+[Change] test infrastructure: migrate to batsman shared BATS framework via
+      git submodule at tests/infra; 9 project Dockerfiles FROM batsman base
+      images, 24-line run-tests.sh wrapper replaces 244-line standalone runner,
+      Makefile.tests include replaces hand-written Makefile; gained named
+      container cleanup, --filter in parallel mode; yara-x variant uses
+      BATSMAN_BASE_OS_MAP for debian12 base reuse
+[Fix] batsman submodule: Rocky 10 base image rockylinux:10 →
+      rockylinux/rockylinux:10 (not in Docker Hub library)
 
 v1.6.6.1 | Feb 25 2025:
 [Fix] find_recentopts incorrectly escaping find options to the right of ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442

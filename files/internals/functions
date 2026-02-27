@@ -330,20 +330,12 @@ get_remote_file() {
 		grf_svc="$service"
 	fi
 
-	if [ -f "$curl" ] || [ -f "/usr/bin/curl" ]; then
+	if [ -n "$curl" ]; then
 		get_type="curl"
-		if [ -z "$curl" ]; then
-			get_bin="/usr/bin/curl"
-		else
-			get_bin="$curl"
-		fi
-	elif [ -f "$wget" ] || [ -f "/usr/bin/wget" ]; then
+		get_bin="$curl"
+	elif [ -n "$wget" ]; then
 		get_type="wget"
-		if [ -z "$wget" ]; then
-			get_bin="/usr/bin/wget"
-		else
-			get_bin="$wget"
-		fi
+		get_bin="$wget"
 	else
 		eout "{internal} could not find curl or wget binaries for remote file downloads, fatal error!"
 		exit 1
@@ -981,9 +973,9 @@ purge() {
 		log_size=$($wc -l "$inotify_log" | awk '{print$1}')
 		if [ "$inotify_trim" ]; then
 			trim=$(($log_size - 1000))
-			log_chars=$(head -n "$trim" "$inotify_log" 2>/dev/null | $wc -c)
-			tlog_new=$(( $(cat "$inspath/tmp/inotify") - $log_chars ))
-			echo "$tlog_new" > "$inspath/tmp/inotify"
+			local bytes_removed
+			bytes_removed=$(head -n "$trim" "$inotify_log" 2>/dev/null | $wc -c)
+			tlog_adjust_cursor "inotify" "$tmpdir" "$bytes_removed"
 			local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
 			tail -n +"$((trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
 			cat "$tmplog" > "$inotify_log" 2>/dev/null
@@ -1190,7 +1182,7 @@ clamselector() {
                 if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
 			clamd=1
 			clambin="clamdscan"
-			clamopts="--fdpass -c $remote_clamd_config"
+			clamopts="-c $remote_clamd_config"
                 elif [ "$isclamd" ] && [ "$isclamd_root" ]; then
                         clamd=1
                         clambin="clamdscan"
@@ -1221,7 +1213,7 @@ clamselector() {
                         if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
                                 try=0
                                 while [ $try -le $remote_clamd_max_retry ]; do
-                                        clamd_test=$($clamscan $clamopts --fdpass --quiet --no-summary /etc/passwd 2> /dev/null || echo $?)
+                                        clamd_test=$($clamscan $clamopts --quiet --no-summary /etc/passwd 2> /dev/null || echo $?)
                                         if [ "$clamd_test" = "2" ]; then
                                                 ((try++))
                                                 sleep $remote_clamd_retry_sleep
@@ -2110,10 +2102,10 @@ genalert() {
 			scanid="$datestamp.$$"
 			scan_session=$(cat "$sessdir/session.monitor.current")
 
-			$tlog $scan_session digest.alert > $tmpdir/.digest.alert.hits
-			$tlog $clean_history digest.clean.alert > $tmpdir/.digest.clean.hits
-			$tlog $monitor_scanned_history digest.monitor.alert > $tmpdir/.digest.monitor.alert
-			$tlog $suspend_history digest.susp.alert > $tmpdir/.digest.susp.hits
+			tlog_read "$scan_session" "digest.alert" "$tmpdir" "lines" > "$tmpdir/.digest.alert.hits"
+			tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" > "$tmpdir/.digest.clean.hits"
+			tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" > "$tmpdir/.digest.monitor.alert"
+			tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" > "$tmpdir/.digest.susp.hits"
 
 			tot_hits=$($wc -l < "$tmpdir/.digest.alert.hits")
 			tot_cl=$($wc -l < "$tmpdir/.digest.clean.hits")
@@ -2124,10 +2116,10 @@ genalert() {
 			trim_log $clean_history 50000
 			trim_log $suspend_history 50000
 
-			$tlog $sessdir/session.hits.$datestamp.$$ digest.alert >> /dev/null 2>&1
-			$tlog $clean_history digest.clean.alert >> /dev/null 2>&1
-			$tlog $monitor_scanned_history digest.monitor.alert >> /dev/null 2>&1
-			$tlog $suspend_history digest.susp.alert >> /dev/null 2>&1
+			tlog_read "$sessdir/session.hits.$datestamp.$$" "digest.alert" "$tmpdir" "lines" >> /dev/null 2>&1
+			tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" >> /dev/null 2>&1
+			tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" >> /dev/null 2>&1
+			tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" >> /dev/null 2>&1
 
 			if [ ! -z "$(cat $tmpdir/.digest.alert.hits)" ]; then
 				tmpf=$(mktemp "$tmpdir/.alert.XXXXXX")
@@ -2168,7 +2160,7 @@ genalert() {
 			local upload_url upload_file_id
 			local curl_rc=0
 			local url_response
-			url_response=$($curl -s -X POST "https://slack.com/api/files.getUploadURLExternal" \
+			url_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -X POST "https://slack.com/api/files.getUploadURLExternal" \
 				-H "Authorization: Bearer $slack_token" \
 				-d "filename=$slack_subj" \
 				-d "length=$fsize") || curl_rc=$?
@@ -2183,13 +2175,13 @@ genalert() {
 				upload_file_id=$(echo "$url_response" | $sed -n 's/.*"file_id" *: *"\([^"]*\)".*/\1/p')
 				if [ "$upload_url" ] && [ "$upload_file_id" ]; then
 					local upload_rc=0
-					$curl -s -X POST "$upload_url" -F "file=@$file" > /dev/null 2>&1 || upload_rc=$?
+					$curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -X POST "$upload_url" -F "file=@$file" > /dev/null 2>&1 || upload_rc=$?
 					if [ "$upload_rc" -ne 0 ]; then
 						eout "{alert} slack file upload curl failed (exit $upload_rc), alert discarded" 1
 					else
 						local complete_rc=0
 						local complete_response
-						complete_response=$($curl -s -X POST "https://slack.com/api/files.completeUploadExternal" \
+						complete_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -X POST "https://slack.com/api/files.completeUploadExternal" \
 							-H "Authorization: Bearer $slack_token" \
 							-H "Content-Type: application/json" \
 							-d "{\"files\":[{\"id\":\"$upload_file_id\",\"title\":\"$slack_subj\"}],\"channels\":\"$slack_channels\"}") || complete_rc=$?
@@ -2216,7 +2208,7 @@ genalert() {
 		if [ -f "$file" ]; then
 			local tg_curl_rc=0
 			local telegram_response
-			telegram_response=$($curl -s -F "document=@$file" -F "caption=$telegram_file_caption" "https://api.telegram.org/bot$telegram_bot_token/sendDocument?chat_id=$telegram_channel_id" 2>/dev/null) || tg_curl_rc=$?
+			telegram_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -F "document=@$file" -F "caption=$telegram_file_caption" "https://api.telegram.org/bot$telegram_bot_token/sendDocument?chat_id=$telegram_channel_id" 2>/dev/null) || tg_curl_rc=$?
 			if [ "$tg_curl_rc" -ne 0 ]; then
 				eout "{alert} telegram sendDocument curl failed (exit $tg_curl_rc), alert discarded" 1
 			elif echo "$telegram_response" | grep -q '"ok":true'; then
@@ -2259,6 +2251,7 @@ monitor_kill() {
 }
 
 monitor_cycle() {
+	TLOG_FLOCK=1
         if [ "$BASHPID" ]; then
                 echo "$BASHPID" > $tmpdir/monitor.pid
         else
@@ -2274,9 +2267,9 @@ monitor_cycle() {
 		log_size=$($wc -l < "$inotify_log")
 		if [ "$log_size" -ge "$inotify_trim" ]; then
 			trim=$(($log_size - 1000))
-			log_chars=$(head -n "$trim" "$inotify_log" 2>/dev/null | $wc -c)
-			tlog_new=$(( $(cat "$inspath/tmp/inotify") - $log_chars ))
-			echo "$tlog_new" > "$inspath/tmp/inotify"
+			local bytes_removed
+			bytes_removed=$(head -n "$trim" "$inotify_log" 2>/dev/null | $wc -c)
+			tlog_adjust_cursor "inotify" "$tmpdir" "$bytes_removed"
 			local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
 			tail -n +"$((trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
 			cat "$tmplog" > "$inotify_log" 2>/dev/null
@@ -2372,7 +2365,7 @@ cleanup_scanlist() {
 monitor_check() {
                 monitor_scanlist=$(mktemp "$tmpdir/.monitor.scan.XXXXXX")
 		chmod 600 "$monitor_scanlist"
-                $tlog $inotify_log inotify | grep -E " CREATE| MODIFY| MOVED_TO" | awk -F" CREATE| MODIFY| MOVED_TO" '{print $1}' | sort -u | grep -vf $ignore_paths> $monitor_scanlist
+                tlog_read "$inotify_log" "inotify" "$tmpdir" "bytes" | grep -E " CREATE| MODIFY| MOVED_TO" | awk -F" CREATE| MODIFY| MOVED_TO" '{print $1}' | sort -u | grep -vf $ignore_paths> $monitor_scanlist
 		scanned_count=$($wc -l < "$monitor_scanlist")
 		if [ "$scanned_count" -eq 0 ] 2>/dev/null; then
 			rm -f "$monitor_scanlist"
