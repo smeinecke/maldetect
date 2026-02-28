@@ -208,14 +208,15 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `scan_hexdepth` | Byte depth for HEX signature matching | `65536` |
 | `scan_hexfifo` | Use FIFO-based HEX scanner (faster) | `1` |
 | `scan_hexfifo_depth` | Byte depth for FIFO HEX scanner | `524288` |
-| `scan_cpunice` | Nice priority for scan process (0-19) | `19` |
+| `scan_cpunice` | Nice priority for scan process (-19 to 19) | `19` |
 | `scan_ionice` | IO scheduling class priority (0-7) | `6` |
 | `scan_cpulimit` | Hard CPU limit percentage (0=disabled) | `0` |
 | `scan_ignore_root` | Skip root-owned files in scans | `1` |
 | `scan_ignore_user` | Skip files owned by specific users | — |
 | `scan_ignore_group` | Skip files owned by specific groups | — |
 | `scan_user_access` | Allow non-root users to run scans | `0` |
-| `scan_find_timeout` | Timeout for find file list generation (0=disabled) | `0` |
+| `scan_user_access_minuid` | Minimum UID for --mkpubpaths user directory creation | `100` |
+| `scan_find_timeout` | Timeout for find file list generation (0=disabled, min 60s) | `0` |
 | `scan_export_filelist` | Save find results to tmp/find_results.last | `0` |
 | `scan_tmpdir_paths` | World-writable temp paths included in -a/-r scans | `/tmp /var/tmp /dev/shm /var/fcgi_ipc` |
 | `string_length_scan` | Enable statistical string-length analysis | `0` |
@@ -345,6 +346,7 @@ QUARANTINE & RESTORE:
 REPORTING:
   -e, --report [SCANID] [email] view or email scan report
   -E, --dump-report SCANID      dump report to stdout
+  --alert-daily                 generate inotify monitor digest alert
   -l, --log                     view event log
 
 UPDATES:
@@ -599,7 +601,7 @@ LMD integrates with ModSecurity2's `inspectFile` hook for real-time HTTP upload 
 
 3. Restart Apache.
 
-Malicious uploads are rejected with a 406 status code and logged to the ModSecurity audit log. The default scan options prioritize performance over accuracy (native engine only, no ClamAV, quarantine enabled). Edit `hookscan.sh` to customize. To enable YARA scanning for uploads, set `scan_yara=1` in `conf.maldet.hookscan` (separate from the main `conf.maldet`).
+Malicious uploads are rejected with a 406 status code and logged to the ModSecurity audit log. The default scan options enable quarantine and auto-detect ClamAV (if the `clamd` daemon is running, ClamAV is used; otherwise the native engine is used). YARA scanning is disabled by default. To customize scan options, create `conf.maldet.hookscan` in the install directory — it is sourced after the defaults and can override any scan variable.
 
 Run `maldet --mkpubpaths` after enabling to create per-user data directories for non-root scan operations.
 

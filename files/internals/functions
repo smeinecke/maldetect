@@ -8,10 +8,10 @@
 
 lbreakifs() {
 	if [ "$1" == "set" ]; then
-                IFS=$(echo -en "\n\b")
+		IFS=$'\n'
 	else
 		unset IFS
-	fi		
+	fi
 }
 
 prerun() {
@@ -21,7 +21,7 @@ prerun() {
 	if [ ! "$(whoami)" == "root" ]; then
 		if [ -z "$scan_user_access" ] || [ "$scan_user_access" == "0" ]; then
 			args="$@"
-			if [[ "$args" =~ "modsec" ]]; then
+			if [[ "$args" == *"modsec"* ]]; then
 				echo "1 maldet: OK"
 				exit 0
 			fi
@@ -148,15 +148,6 @@ prerun() {
 		$sed -i -e '/^$/d' $ignore_paths $ignore_sigs $ignore_inotify $ignore_file_ext
 	fi
 
-	if [ -z "$EDITOR" ]; then
-		defedit=$(command -v nano 2> /dev/null)
-		if [ -z "$defedit" ]; then
-			EDITOR=vi
-		else
-			EDITOR=nano
-		fi
-	fi
-
 	if [ ! "$scan_cpunice" ]; then
 		scan_cpunice=19
 	fi
@@ -186,9 +177,10 @@ prerun() {
 }
 
 eout() {
-	msg="$1"
-	stdout="$2"
-	appn=maldet
+	local msg="$1"
+	local stdout="$2"
+	local appn=maldet
+	local log_size trim
 	if [ ! -d "$logdir" ]; then
 		mkdir -p $logdir ; chmod 700 $logdir
 	fi
@@ -522,11 +514,12 @@ usage: maldet [OPTION] [ARGUMENT]
   reporting:
     -e|--report [SCANID] [email]  view scan report
     -E|--dump-report SCANID     dump report to stdout
+    --alert-daily               generate inotify monitor digest alert
     -l|--log                    view event log
 
   updates:
     -u|--update-sigs [--force]  update malware signatures
-    -d|--update-ver [--force]   update maldet version
+    -d|--update-ver [--force|--beta]  update maldet version
 
   other:
     -p|--purge                  clear logs, quarantine, temp data
@@ -616,6 +609,10 @@ REPORTING:
     -E, --dump-report SCANID
        Dump scan report to stdout for a specific SCANID
        e.g: maldet --dump-report 050910-1534.21135
+
+    --alert-daily (also: --monitor-report)
+       Generate a digest alert summarizing inotify monitor activity.
+       Requires monitor mode to be running.
 
     -l, --log
        View maldet event log
@@ -795,8 +792,8 @@ _validate_restore_path() {
 }
 
 restore() {
-        file="$1"
-        fname="${file##*/}"
+        local file="$1"
+        local fname="${file##*/}"
         if [ -f "$quardir/$file" ] && [ -f "$quardir/${file}.info" ]; then
 		quar_get_filestat "$quardir/${file}.info"
 		if ! _validate_restore_path "$file_path"; then
@@ -823,7 +820,8 @@ restore() {
 }
 
 restore_hitlist() {
-	hitlist="$sessdir/session.hits.$1"
+	local hitlist="$sessdir/session.hits.$1"
+	local is_autoquar quar_file
 	if [ -f "$hitlist" ]; then
 		lbreakifs set
 		is_autoquar=$(tail -n1 $hitlist | awk -F'>' '{print$2}' | grep -E -v '^$' | sed 's/.//')
@@ -846,6 +844,7 @@ restore_hitlist() {
 }
 
 clean_hitlist() {
+        local scanid hitlist is_quared
         if [ "$quarantine_clean" == "0" ] || [ "$quarantine_hits" == "0" ]; then
                 eout "{clean} quarantine_clean and/or quarantine_hits are disabled, nothing to do here." 1
                 exit 0
@@ -1001,9 +1000,9 @@ quarantine_suspend_user() {
 				echo "$user" >> $sessdir/suspend.users.$$
 				echo "$user" >> $suspend_history
 			fi
-		else
-			if [ "$(grep $user /etc/passwd | cut -d':' -f7 | grep /bin/false)" == "" ]; then
-				/usr/sbin/usermod -s /bin/false $user >> /dev/null 2>&1
+		elif [ -n "$usermod" ]; then
+			if [ "$(grep "$user" /etc/passwd | cut -d':' -f7 | grep /bin/false)" == "" ]; then
+				$usermod -s /bin/false "$user" >> /dev/null 2>&1
 				eout "{quar} account $user suspended; set 'usermod -s /bin/false'"
 				echo "$user" >> $sessdir/suspend.users.$$
 				echo "$user" >> $suspend_history
@@ -1991,6 +1990,8 @@ trim_log() {
 }
 
 genalert() {
+	local hit_pat_quar='^(.*)[[:space:]]:[[:space:]](.*)[[:space:]]=>[[:space:]](.*)$'
+	local hit_pat_plain='^(.*)[[:space:]]:[[:space:]](.*)$'
 	type="$1"
 	file="$2"
         if [ "$email_alert" == "1" ] || [ "$type" == "digest" ] || [ "$type" == "daily" ]; then
@@ -2027,11 +2028,11 @@ genalert() {
             	# Sort malware hits from $file and map the detected files to their system user owner
             	while IFS= read -r hit_line; do
             	    [ -z "$hit_line" ] && continue
-            	    if [[ "$hit_line" =~ ^(.*)[[:space:]]:[[:space:]](.*)[[:space:]]=\>[[:space:]](.*)$ ]]; then
+            	    if [[ "$hit_line" =~ $hit_pat_quar ]]; then
             	        hit_sig="${BASH_REMATCH[1]}"
             	        hit_file="${BASH_REMATCH[2]}"
             	        quarantined_file="${BASH_REMATCH[3]}"
-            	    elif [[ "$hit_line" =~ ^(.*)[[:space:]]:[[:space:]](.*)$ ]]; then
+            	    elif [[ "$hit_line" =~ $hit_pat_plain ]]; then
             	        hit_sig="${BASH_REMATCH[1]}"
             	        hit_file="${BASH_REMATCH[2]}"
             	        quarantined_file=""
@@ -2058,7 +2059,7 @@ genalert() {
             	fi   
             	# Determine control panel, noop if error or none detected
                 eout "{panel} Detected control panel $control_panel. Will send alerts to control panel account contacts." 1
-                user_list=$(awk '{print $1}' $tmpdir/.panel_alert.hits | sort | uniq)
+                user_list=$(awk '{print $1}' "$tmpdir/.panel_alert.hits" | sort | uniq)
 		if [ -n "$user_list" ]; then
                 	for sys_user in $user_list; do
                 	    contact_emails=""
@@ -2066,30 +2067,33 @@ genalert() {
 
                 	    grep "^$sys_user " "$tmpdir/.panel_alert.hits" | awk -F' : ' '{print $2" : "$3}' > "$tmpdir/.${sys_user}.hits"
                 	    user_tot_hits=$($wc -l < "$tmpdir/.${sys_user}.hits")
-                	    if [ -f $tmpdir/.panel_alert.clean ]; then 
-                	        grep "^$sys_user " $tmpdir/.panel_alert.clean | awk '{print $3}' > $tmpdir/.${sys_user}.clean
+                	    if [ -f "$tmpdir/.panel_alert.clean" ]; then
+                	        grep "^$sys_user " "$tmpdir/.panel_alert.clean" | awk '{print $3}' > "$tmpdir/.${sys_user}.clean"
                 	        user_tot_cl=$($wc -l < "$tmpdir/.${sys_user}.clean")
                 	    fi   
 
-                	    tmpf=$tmpdir/.${sys_user}.alert
+                	    tmpf="$tmpdir/.${sys_user}.alert"
 
-                	    if [ -f "$sendmail" ]; then 
-							echo "TO: $contact_emails" > $tmpf
-                	        echo "FROM: $email_panel_from" >> $tmpf
-                	        echo "REPLY-TO: $email_panel_replyto" >> $tmpf
-							echo -e "SUBJECT: $email_panel_alert_subj\n" >> $tmpf
-                	        . $email_panel_alert_etpl
+                	    if [ -f "$sendmail" ]; then
+							echo "TO: $contact_emails" > "$tmpf"
+                	        echo "FROM: $email_panel_from" >> "$tmpf"
+                	        echo "REPLY-TO: $email_panel_replyto" >> "$tmpf"
+							echo -e "SUBJECT: $email_panel_alert_subj\n" >> "$tmpf"
+                	        . "$email_panel_alert_etpl"
 
-                	        cat $tmpf | $sendmail -t
-                	    elif [ -f "$mail" ] && [ "$control_panel" == "cpanel" ]; then 
-                	        . $email_panel_alert_etpl
-                	    	cat $tmpf | $mail -r $email_panel_from -s $email_panel_alert_subj $contact_emails
+                	        cat "$tmpf" | $sendmail -t
+                	    elif [ -f "$mail" ] && [ "$control_panel" == "cpanel" ]; then
+                	        . "$email_panel_alert_etpl"
+                	    	cat "$tmpf" | $mail -r $email_panel_from -s $email_panel_alert_subj $contact_emails
                 	    else 
                 	        eout "{panel} No compatible \$sendmail or \$mail binaries found, control panel account alerts disabled."
                 	    fi   
                 	done 
 		fi
-		rm -f $tmpdir/.panel_alert.hits $tmpdir/.panel_alert.clean $tmpdir/.${sys_user}.hits $tmpdir/.${sys_user}.clean $tmpf
+		rm -f "$tmpdir/.panel_alert.hits" "$tmpdir/.panel_alert.clean"
+		for sys_user in $user_list; do
+			rm -f "$tmpdir/.${sys_user}.hits" "$tmpdir/.${sys_user}.clean" "$tmpdir/.${sys_user}.alert"
+		done
             fi   
 		elif [ "$type" == "daily" ] || [ "$type" == "digest" ]; then
 			inotify_start_time=$(ps -p $(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1) -o lstart= 2> /dev/null)
@@ -2422,8 +2426,10 @@ monitor_check() {
 			scanned_count=$($wc -l < "$monitor_scanlist")
 			eout "{mon} scanned ${scanned_count} new/changed files with clamav engine"
 			if [ "$scan_yara" == "1" ]; then
-				_yara_filter_filelist "$monitor_scanlist"
-				scan_stage_yara "$monitor_scanlist"
+				local yara_filelist
+				yara_filelist=$(_yara_filter_filelist "$monitor_scanlist")
+				scan_stage_yara "$yara_filelist"
+				rm -f "$yara_filelist"
 			fi
 			rm -f $clamscan_results $monitor_scanlist
 		else
@@ -2441,8 +2447,10 @@ monitor_check() {
 			scanned_count=$($wc -l < "$monitor_scanlist")
 			eout "{mon} scanned ${scanned_count} new/changed files with native engine"
 			if [ "$scan_yara" == "1" ]; then
-				_yara_filter_filelist "$monitor_scanlist"
-				scan_stage_yara "$monitor_scanlist"
+				local yara_filelist
+				yara_filelist=$(_yara_filter_filelist "$monitor_scanlist")
+				scan_stage_yara "$yara_filelist"
+				rm -f "$yara_filelist"
 			fi
 			rm -f $clamscan_results $monitor_scanlist
 		fi
@@ -2838,9 +2846,24 @@ lmdup() {
 			rm -f ${lmd_current_tgzfile} ${lmd_current_tgzfile}.md5
 			cd maldetect-${upstreamver_readable}
 			chmod 750 install.sh
-			sh -c './install.sh' >> /dev/null 2>&1
-			cp -f $inspath.last/sigs/custom.* $sigdir/ 2> /dev/null
-			cp -f $inspath.last/clean/custom.* $inspath/clean/ 2> /dev/null
+			local install_log
+			install_log=$(mktemp "$tmpdir/.lmdup_install.XXXXXX")
+			local install_rc
+			sh -c './install.sh' > "$install_log" 2>&1
+			install_rc=$?
+			if [ "$install_rc" -ne 0 ]; then
+				eout "{update} install.sh failed with exit code $install_rc" 1
+				if [ -s "$install_log" ]; then
+					eout "{update} install.sh output: $(cat "$install_log")" 0
+				fi
+				rm -f "$install_log"
+				cd "$inspath" ; rm -rf "$tmpwd"
+				clean_exit
+				exit 1
+			fi
+			rm -f "$install_log"
+			cp -f "$inspath.last/sigs/custom."* "$sigdir/" 2> /dev/null
+			cp -f "$inspath.last/clean/custom."* "$inspath/clean/" 2> /dev/null
 			eout "{update} completed update v$ver ${installed_hash:0:6} => v$upstreamver_readable ${upstream_md5:0:6}, running signature updates..." 1
 			$inspath/maldet --update 1
 			eout "{update} update and config import completed" 1

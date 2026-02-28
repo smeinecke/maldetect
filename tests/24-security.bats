@@ -45,19 +45,19 @@ teardown() {
     # Test by running just the validation portion
     local hookscan="$LMD_INSTALL/hookscan.sh"
     # A filename with $() should be rejected
-    run bash -c 'file="/tmp/test\$(whoami).php"; eval "$(head -17 "'"$hookscan"'")"'
+    run bash -c 'file="/tmp/test\$(whoami).php"; eval "$(head -26 "'"$hookscan"'")"'
     [ "$status" -eq 1 ]
 }
 
 @test "hookscan rejects filenames with backticks" {
     local hookscan="$LMD_INSTALL/hookscan.sh"
-    run bash -c 'file="/tmp/test\`id\`.php"; eval "$(head -17 "'"$hookscan"'")"'
+    run bash -c 'file="/tmp/test\`id\`.php"; eval "$(head -26 "'"$hookscan"'")"'
     [ "$status" -eq 1 ]
 }
 
 @test "hookscan rejects non-existent files" {
     local hookscan="$LMD_INSTALL/hookscan.sh"
-    run bash -c 'file="/tmp/nonexistent_file_xyz.php"; eval "$(head -17 "'"$hookscan"'")"'
+    run bash -c 'file="/tmp/nonexistent_file_xyz.php"; eval "$(head -26 "'"$hookscan"'")"'
     [ "$status" -eq 1 ]
 }
 

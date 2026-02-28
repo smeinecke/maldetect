@@ -162,8 +162,8 @@ if [ "$(uname -s)" != "FreeBSD" ]; then
 		if [ ! -f "/etc/sysconfig/maldet" ]; then
 			cp -f ./files/service/maldet.sysconfig /etc/sysconfig/maldet 2> /dev/null
 		fi
-		if [ -x /sbin/chkconfig ]; then
-			/sbin/chkconfig maldet on
+		if command -v chkconfig >/dev/null 2>&1; then
+			chkconfig maldet on
 		fi
 	fi
 fi

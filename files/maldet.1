@@ -64,6 +64,10 @@ Append an email address to send the report.
 \fB\-E\fR, \fB\-\-dump\-report\fR [\fISCANID\fR]
 Dump a scan report to stdout.
 .TP
+\fB\-\-alert\-daily\fR (also: \fB\-\-monitor\-report\fR)
+Generate a digest alert summarizing inotify monitor activity.
+Requires monitor mode to be running.
+.TP
 \fB\-l\fR, \fB\-\-log\fR
 Display the event log.
 .SS Updates
@@ -146,8 +150,17 @@ Notable variables include
 .BR scan_clamscan ,
 .BR scan_yara ,
 .BR scan_hexdepth ,
+.BR scan_find_timeout ,
 and
 .BR string_length_scan .
+.PP
+.B scan_find_timeout
+sets the maximum execution time in seconds for the
+.BR find (1)
+file list generation phase.
+A value of 0 disables the timeout.
+Values between 1 and 59 are silently ignored (minimum is 60).
+Default: 0.
 See
 .I conf.maldet
 for the full list with descriptions.

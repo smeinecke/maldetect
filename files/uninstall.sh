@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+#
+##
+# Linux Malware Detect v2.0.1
+#             (C) 2002-2026, R-fx Networks <proj@rfxn.com>
+#             (C) 2026, Ryan MacDonald <ryan@rfxn.com>
+# This program may be freely redistributed under the terms of the GNU GPL v2
+##
+#
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:$PATH
 echo "This will completely remove Linux Malware Detect from your server including all quarantine data!"
 echo -n "Would you like to proceed? "
@@ -6,7 +14,7 @@ read -p "[y/n] " -n 1 Z
 echo
 if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 	if [ "$(uname -s)" != "FreeBSD" ]; then
-		if test $(cat /proc/1/comm) = "systemd"
+		if test "$(cat /proc/1/comm 2>/dev/null)" = "systemd"
 		then
 			systemctl disable maldet.service
 			systemctl stop maldet.service
@@ -15,8 +23,10 @@ if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 		else
 			maldet -k
 			if [ -f /etc/redhat-release ]; then
-				/sbin/chkconfig maldet off
-				/sbin/chkconfig maldet --del
+				if command -v chkconfig >/dev/null 2>&1; then
+					chkconfig maldet off
+					chkconfig maldet --del
+				fi
 			elif [ -f /etc/debian_version ] || [ -f /etc/lsb-release ]; then
 				update-rc.d -f maldet remove
 			elif [ -f /etc/gentoo-release ]; then
@@ -26,9 +36,9 @@ if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 				rm -f /etc/rc.d/rc4.d/S70maldet
 				rm -f /etc/rc.d/rc5.d/S70maldet
 			else
-				if [ -x /sbin/chkconfig ]; then
-					/sbin/chkconfig maldet off
-					/sbin/chkconfig maldet --del
+				if command -v chkconfig >/dev/null 2>&1; then
+					chkconfig maldet off
+					chkconfig maldet --del
 				fi
 			fi
 			rm -f /etc/init.d/maldet

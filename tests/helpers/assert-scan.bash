@@ -13,35 +13,6 @@ assert_scan_completed() {
     fi
 }
 
-# Assert that a scan detected a specific signature
-# Usage: assert_scan_detected SCANID SIGNATURE
-assert_scan_detected() {
-    local scanid="$1"
-    local signature="$2"
-    local hitfile="$LMD_INSTALL/sess/session.hits.${scanid}"
-    if [ ! -f "$hitfile" ]; then
-        echo "# Hit file not found: $hitfile" >&2
-        return 1
-    fi
-    if ! grep -q "$signature" "$hitfile"; then
-        echo "# Signature '$signature' not found in scan $scanid" >&2
-        echo "# Contents: $(cat "$hitfile")" >&2
-        return 1
-    fi
-}
-
-# Assert that a scan produced no hits
-# Usage: assert_scan_clean SCANID
-assert_scan_clean() {
-    local scanid="$1"
-    local hitfile="$LMD_INSTALL/sess/session.hits.${scanid}"
-    if [ -f "$hitfile" ] && [ -s "$hitfile" ]; then
-        echo "# Expected clean scan but found hits:" >&2
-        echo "# $(cat "$hitfile")" >&2
-        return 1
-    fi
-}
-
 # Assert that a file has been quarantined
 # Usage: assert_quarantined FILE
 assert_quarantined() {
@@ -52,26 +23,6 @@ assert_quarantined() {
     fi
     if ! grep -q "$file" "$LMD_INSTALL/sess/quarantine.hist" 2>/dev/null; then
         echo "# File not found in quarantine history: $file" >&2
-        return 1
-    fi
-}
-
-# Assert that a file has NOT been quarantined
-# Usage: assert_not_quarantined FILE
-assert_not_quarantined() {
-    local file="$1"
-    if [ ! -f "$file" ]; then
-        echo "# File does not exist: $file" >&2
-        return 1
-    fi
-}
-
-# Assert that a file has been restored from quarantine
-# Usage: assert_file_restored FILE
-assert_file_restored() {
-    local file="$1"
-    if [ ! -f "$file" ]; then
-        echo "# File not restored: $file" >&2
         return 1
     fi
 }

@@ -1,3 +1,10 @@
+##
+# Linux Malware Detect v2.0.1
+#             (C) 2002-2026, R-fx Networks <proj@rfxn.com>
+#             (C) 2026, Ryan MacDonald <ryan@rfxn.com>
+# This program may be freely redistributed under the terms of the GNU GPL v2
+##
+#
 cat > /usr/local/maldetect/conf.maldet <<EOF
 #
 ##
@@ -193,6 +200,11 @@ scan_tmpdir_paths="$scan_tmpdir_paths"
 # [ 0 = disabled, 1 = enabled, disabled by default ]
 scan_user_access="$scan_user_access"
 
+# The minimum UID for users when creating per-user scan directories
+# with --mkpubpaths. Users with UID below this value are skipped.
+# [ default = 100 ]
+scan_user_access_minuid="$scan_user_access_minuid"
+
 ##
 # [ YARA OPTIONS ]
 ##
@@ -247,7 +259,7 @@ scan_ignore_group="$scan_ignore_group"
 # this feature can be disabled/modified on a per-scan basis using the
 # '-co|--config-option' CLI option, such as:
 # "maldet -co scan_find_timeout=0 -a /home/?/public_html".
-# [ 0 = disabled, 14400 = 4hr recommended timeout ]
+# [ 0 = disabled, minimum 60, 14400 = 4hr recommended timeout ]
 scan_find_timeout="$scan_find_timeout"
 
 # The daily cron 'find' operation performed by LMD detects recently created/modifed
@@ -298,9 +310,9 @@ quarantine_on_error="$quarantine_on_error"
 # value is ignored when '/etc/sysconfig/maldet' or '/etc/default/maldet' is
 # present with a defined value for $MONITOR_MODE.
 #
-# This option is REQUIRED for the systemd maldet.service script. That script
-# only checks for the value of $default_monitor_mode. The service will fail to
-# start if a value is not provided.
+# This option is REQUIRED for the systemd maldet.service script. The service
+# reads $MONITOR_MODE from the EnvironmentFile (/etc/sysconfig/maldet or
+# /etc/default/maldet); install.sh seeds that file from $default_monitor_mode.
 # default_monitor_mode="users"
 # default_monitor_mode="/usr/local/maldetect/monitor_paths"
 default_monitor_mode="$default_monitor_mode"

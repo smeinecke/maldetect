@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+#
+##
+# Linux Malware Detect v2.0.1
+#             (C) 2002-2026, R-fx Networks <proj@rfxn.com>
+#             (C) 2026, Ryan MacDonald <ryan@rfxn.com>
+# This program may be freely redistributed under the terms of the GNU GPL v2
+##
+#
 file="$1"
 
 # Reject filenames with shell metacharacters, newlines, or null bytes
@@ -8,7 +16,8 @@ case "$file" in
 		exit 1
 		;;
 esac
-if [[ "$file" =~ [\;\|\&\$\(\)\`\{\}] ]]; then
+metachar_pat='[;|&$(){}`]'
+if [[ "$file" =~ $metachar_pat ]]; then
 	logger -t maldet-hookscan "rejected filename with shell metacharacters"
 	exit 1
 fi

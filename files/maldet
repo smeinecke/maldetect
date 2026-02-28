@@ -83,7 +83,7 @@ else
 							uid=9
 						fi
 						if [ -z "$scan_user_access_minuid" ]; then
-							scan_user_access_minuid=10
+							scan_user_access_minuid=100
 						fi
 						if [ "$uid" -ge "$scan_user_access_minuid" ] && [ ! -d "$userbasedir/$user" ]; then
 							mkdir -p "$userbasedir/$user/quar" "$userbasedir/$user/sess" "$userbasedir/$user/tmp"

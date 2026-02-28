@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 #
+##
+# Linux Malware Detect v2.0.1
+#             (C) 2002-2026, R-fx Networks <proj@rfxn.com>
+#             (C) 2026, Ryan MacDonald <ryan@rfxn.com>
+# This program may be freely redistributed under the terms of the GNU GPL v2
+##
+#
 # maldet    Linux Malware Detect monitoring
 #
 # chkconfig: 345 70 30

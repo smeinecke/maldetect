@@ -185,6 +185,41 @@ v2.0.1 | Feb 24 2026:
       on non-RHEL SysV systems
 [Fix] maldet.sh: add compat.conf sourcing to SysV init script to match standard
       config loading order
+[Fix] genalert() panel alerts: temp file cleanup only removed last user's files
+      ($sys_user retains final iteration value); replaced with per-user
+      cleanup loop; quote all $tmpdir path references in panel alert body
+[Fix] storename_prefix: replace $RANDOM (15-bit PRNG) with 32-bit unsigned
+      integer from /dev/urandom via od; fallback to epoch timestamp
+[Fix] README: scan_cpunice range corrected from (0-19) to (-19 to 19);
+      usage_short() add missing --beta to -d|--update-ver display
+[Fix] lmdup(): capture install.sh exit code and log output on failure;
+      previously discarded all output and continued unconditionally
+[Fix] lbreakifs(): remove spurious backspace character from IFS; replace
+      echo -en "\n\b" subshell with IFS=$'\n' assignment
+[Fix] quarantine_suspend_user(): replace hardcoded /usr/sbin/usermod with
+      $usermod variable discovered via command -v; guard for missing binary
+[Fix] install.sh/uninstall.sh: replace hardcoded /sbin/chkconfig with
+      command -v discovery matching standard binary path conventions
+[Fix] scan_user_access_minuid: --mkpubpaths fallback default 10 → 100 to
+      match internals.conf; add ${:-} guard so conf.maldet value is
+      honored; expose variable in conf.maldet and importconf; F-079
+[Change] internals.conf: remove orphaned variables — logger (discovered
+      but never referenced as $logger), dig, nslookup, remote_ip
+      (computed but never used), lmd_verprehook_url, lmd_sigprehook_url
+      (URLs defined but never fetched); F-080
+[Change] document scan_find_timeout minimum 60-second threshold in
+      conf.maldet, importconf, README, and man page; values 1-59 are
+      silently treated as disabled; F-077
+[Fix] README hookscan section incorrectly stated "native engine only,
+      no ClamAV"; hookscan.sh auto-enables ClamAV when clamd is running;
+      updated to describe actual auto-detection behavior; F-078
+[Fix] monitor_check() YARA filtering: capture _yara_filter_filelist()
+      return value in both ClamAV and native engine branches; previously
+      passed unfiltered file list to scan_stage_yara() causing errors on
+      quarantined files (perms 000) and temp file leak per monitor cycle;
+      R-1
+[Fix] uninstall.sh: quote $(cat /proc/1/comm) and add 2>/dev/null for
+      containers without /proc/1/comm; align with install.sh pattern; R-2
 
 -- Changes --
 [Change] tlog rewritten: shared tlog_lib.sh sourced as in-process
@@ -199,7 +234,7 @@ v2.0.1 | Feb 24 2026:
 [Change] convert 22 for-in-cat/backtick anti-patterns to while IFS=
       read -r with process substitution throughout restore_hitlist(),
       clean_hitlist(), quar_hitlist(), scan() ClamAV hit parsing,
-      monitor_check() ClamAV/find loops, gen_panel_alerts(), prerun_scan()
+      monitor_check() ClamAV/find loops, genalert() panel alerts, prerun_scan()
       ignore/user/group iteration, monitor_cycle() config reload,
       monitor_init() passwd/docroot/file-list/csv/ignore parsing,
       checkout() FTP upload, and gensigs() custom signature processing;
@@ -246,6 +281,18 @@ v2.0.1 | Feb 24 2026:
       maldet, and uninstall.sh; refactor for-in-cat passwd parsing in
       --mkpubpaths to while-read (F-066); zero backtick substitutions
       remain outside of literal regex patterns
+[Change] store regex patterns in variables for [[ =~ ]] matching:
+      genalert() hit parsing patterns, prerun() modsec check to glob,
+      hookscan.sh metacharacter pattern; per coding conventions
+[Change] add local declarations to eout(), restore(), restore_hitlist(),
+      clean_hitlist() to prevent global namespace pollution
+[Change] internals.conf: add usermod binary discovery via command -v
+[Change] add version/copyright headers to hookscan.sh, compat.conf,
+      maldet.sh (SysV init), uninstall.sh, importconf, cron.daily
+[Change] remove dead $EDITOR discovery block in prerun(); nano/vi
+      lookup unused since view_report() switched to cat; R-3
+[Change] remove unused test helper install-lmd.sh and 4 uncalled
+      assertion functions from assert-scan.bash; R-4, R-5
 
 -- Documentation --
 [Change] maldet.1 man page rewritten following man-pages(7) conventions;
@@ -256,9 +303,11 @@ v2.0.1 | Feb 24 2026:
       format, cron_prune_days default, variable names and paths; documented
       ignore_sigs matching, hit prefixes, YARA batch scanning, hookscan
       YARA config, and compiled.yarc path
+[Change] document --alert-daily (also --monitor-report) in man page,
+      usage_short(), usage_long(), and README CLI table
 
 -- Test Suite --
-[New] BATS test infrastructure: 26 test files, 324 tests covering scanning
+[New] BATS test infrastructure: 26 test files, 328 tests covering scanning
       (MD5, HEX, string length, YARA), quarantine/restore, clean operations,
       ignore files, config options, compat.conf, cron, reporting, signatures,
       file lists, logging, purge, hook scanning, resource control, version,
