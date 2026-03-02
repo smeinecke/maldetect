@@ -95,10 +95,15 @@ teardown() {
     maldet -a "$TEST_SCAN_DIR" || true
     local scanid
     scanid=$(get_last_scanid)
-    # -n attempts clean on quarantined hits from scanid
-    run maldet -n "$scanid"
-    # exit 0=cleaned, 1=file already quarantined (path gone), 2=hits found
-    [ "$status" -eq 0 ] || [ "$status" -eq 1 ] || [ "$status" -eq 2 ]
+    # -n invokes clean_hitlist() on the scanid. Since auto-clean already
+    # ran during -a, quarantine entries are already processed, so -n has
+    # nothing new to clean. Verify it accepts the scanid (no error) and
+    # the original auto-clean produced {clean} log entries.
+    maldet -n "$scanid" || true
+    run grep "invalid scanid" "$LMD_INSTALL/logs/event_log"
+    assert_failure
+    run grep "{clean}" "$LMD_INSTALL/logs/event_log"
+    assert_success
 }
 
 @test "clean handles multiple infected files" {

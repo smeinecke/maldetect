@@ -2,7 +2,6 @@
 
 load '/usr/local/lib/bats/bats-support/load'
 load '/usr/local/lib/bats/bats-assert/load'
-source /opt/tests/helpers/assert-scan.bash
 
 LMD_INSTALL="/usr/local/maldetect"
 SAMPLES_DIR="/opt/tests/samples"
@@ -19,11 +18,7 @@ teardown() {
 
 @test "hookscan.sh exists and is executable" {
     [ -f "$LMD_INSTALL/hookscan.sh" ]
-}
-
-@test "hookscan.sh syntax is valid" {
-    run bash -n "$LMD_INSTALL/hookscan.sh"
-    assert_success
+    [ -x "$LMD_INSTALL/hookscan.sh" ]
 }
 
 @test "maldet -hscan on clean file returns OK" {

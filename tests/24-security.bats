@@ -17,6 +17,7 @@ setup() {
 teardown() {
     rm -rf "$TEST_SCAN_DIR"
     rm -f /tmp/pwned
+    rm -f /tmp/hookscan-val.*
 }
 
 # F-037: hex FIFO permissions
@@ -25,11 +26,11 @@ teardown() {
     lmd_set_config scan_hexfifo 1
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"
-    if [ -p "$LMD_INSTALL/internals/hexfifo" ]; then
-        local perms
-        perms=$(stat -c '%a' "$LMD_INSTALL/internals/hexfifo")
-        [ "$perms" = "600" ]
-    fi
+    # FIFO must exist after a hex scan — fail explicitly if missing
+    [ -p "$LMD_INSTALL/internals/hexfifo" ]
+    local perms
+    perms=$(stat -c '%a' "$LMD_INSTALL/internals/hexfifo")
+    [ "$perms" = "600" ]
 }
 
 # F-022: conf.maldet permissions
@@ -40,24 +41,42 @@ teardown() {
 }
 
 # F-004: hookscan filename validation
+# Extract the validation block from hookscan.sh by pattern (not line count)
+# so the test survives preamble changes. Spans from 'file="$1"' to the line
+# before 'inspath=' — covers case, metachar_pat, [[ =~ ]], and -f checks.
+_hookscan_validation_script() {
+    local tmpscript
+    tmpscript=$(mktemp /tmp/hookscan-val.XXXXXX)
+    printf '#!/usr/bin/env bash\n' > "$tmpscript"
+    sed -n '/^file="\$1"/,/^inspath=/{/^inspath=/d;/^file="\$1"/d;p}' \
+        "$LMD_INSTALL/hookscan.sh" >> "$tmpscript"
+    chmod 755 "$tmpscript"
+    echo "$tmpscript"
+}
+
 @test "hookscan rejects filenames with shell metacharacters" {
-    # The validation is at the top of hookscan.sh before any sourcing
-    # Test by running just the validation portion
-    local hookscan="$LMD_INSTALL/hookscan.sh"
+    local script
+    script=$(_hookscan_validation_script)
+    [ -s "$script" ]
     # A filename with $() should be rejected
-    run bash -c 'file="/tmp/test\$(whoami).php"; eval "$(head -26 "'"$hookscan"'")"'
+    run bash -c 'file="/tmp/test\$(whoami).php"; source "'"$script"'"'
+    rm -f "$script"
     [ "$status" -eq 1 ]
 }
 
 @test "hookscan rejects filenames with backticks" {
-    local hookscan="$LMD_INSTALL/hookscan.sh"
-    run bash -c 'file="/tmp/test\`id\`.php"; eval "$(head -26 "'"$hookscan"'")"'
+    local script
+    script=$(_hookscan_validation_script)
+    run bash -c 'file="/tmp/test\`id\`.php"; source "'"$script"'"'
+    rm -f "$script"
     [ "$status" -eq 1 ]
 }
 
 @test "hookscan rejects non-existent files" {
-    local hookscan="$LMD_INSTALL/hookscan.sh"
-    run bash -c 'file="/tmp/nonexistent_file_xyz.php"; eval "$(head -26 "'"$hookscan"'")"'
+    local script
+    script=$(_hookscan_validation_script)
+    run bash -c 'file="/tmp/nonexistent_file_xyz.php"; source "'"$script"'"'
+    rm -f "$script"
     [ "$status" -eq 1 ]
 }
 

@@ -220,6 +220,12 @@ v2.0.1 | Feb 24 2026:
       R-1
 [Fix] uninstall.sh: quote $(cat /proc/1/comm) and add 2>/dev/null for
       containers without /proc/1/comm; align with install.sh pattern; R-2
+[Fix] install.sh: guard Debian update-rc.d, Gentoo rc-update, Slackware SysV
+      symlinks, and fallback chkconfig with systemd check to prevent SysV
+      registration on systemd systems; F-086
+[Fix] uninstall.sh: clean stale SysV artifacts (init script, rc.d symlinks)
+      in systemd uninstall path for backward compatibility with older installs;
+      F-086
 
 -- Changes --
 [Change] tlog rewritten: shared tlog_lib.sh sourced as in-process
@@ -325,6 +331,13 @@ v2.0.1 | Feb 24 2026:
       BATSMAN_BASE_OS_MAP for debian12 base reuse
 [Fix] batsman submodule: Rocky 10 base image rockylinux:10 →
       rockylinux/rockylinux:10 (not in Docker Hub library)
+[Fix] test robustness: hex FIFO test no longer passes vacuously when
+      FIFO missing (R-9); wget fallback test restores curl in teardown
+      (R-10); hookscan validation tests use pattern-based extraction
+      instead of fragile head -26 line count (R-11); hookscan exists
+      test checks -x (R-12); batch clean test verifies log entries
+      instead of accepting all exit codes (R-13); cron custom config
+      test cleans up marker and directory in teardown (R-14)
 
 v1.6.6.1 | Feb 25 2025:
 [Fix] find_recentopts incorrectly escaping find options to the right of ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442

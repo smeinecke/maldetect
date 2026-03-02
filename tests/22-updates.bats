@@ -3,6 +3,7 @@
 load '/usr/local/lib/bats/bats-support/load'
 load '/usr/local/lib/bats/bats-assert/load'
 source /opt/tests/helpers/lmd-config.sh
+source /opt/tests/helpers/cron-helpers.sh
 
 LMD_INSTALL="/usr/local/maldetect"
 CRON_MALDET_LOG="/tmp/cron-maldet.log"
@@ -23,34 +24,16 @@ teardown() {
     if [ -f "$LMD_INSTALL/maldet.real" ]; then
         mv "$LMD_INSTALL/maldet.real" "$LMD_INSTALL/maldet"
     fi
+    # Restore curl if hidden by wget fallback test (R-10 safety net)
+    if [ -f /usr/bin/curl.hidden ]; then
+        mv /usr/bin/curl.hidden /usr/bin/curl
+    fi
     rm -f "$CRON_MALDET_LOG"
     rm -f /tmp/lmd-mock-install-ran
     rm -f "$LMD_INSTALL/tmp/.cron.lock"
     source /opt/tests/helpers/mock-update-server.sh
     cleanup_mock_update_server
     export PATH="$ORIG_PATH_BACKUP"
-}
-
-# Helper: install mock maldet that logs args
-install_mock_maldet() {
-    cp "$LMD_INSTALL/maldet" "$LMD_INSTALL/maldet.real"
-    cat > "$LMD_INSTALL/maldet" <<'MOCK'
-#!/usr/bin/env bash
-echo "MALDET_CALL: $@" >> /tmp/cron-maldet.log
-MOCK
-    chmod 755 "$LMD_INSTALL/maldet"
-}
-
-# Helper: run cron.daily with sleep disabled to avoid random delay
-run_cron_daily() {
-    local tmpscript
-    tmpscript=$(mktemp /tmp/cron-daily-nosleep.XXXXXX)
-    sed 's/sleep $(echo $RANDOM/sleep 0 #/' /etc/cron.daily/maldet > "$tmpscript"
-    chmod 755 "$tmpscript"
-    bash "$tmpscript"
-    local rc=$?
-    rm -f "$tmpscript"
-    return $rc
 }
 
 

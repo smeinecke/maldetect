@@ -111,7 +111,8 @@ if [ -d "/etc/cron.d" ]; then
 fi
 
 if [ "$(uname -s)" != "FreeBSD" ]; then
-        if test "$(cat /proc/1/comm 2> /dev/null)" == "systemd"
+        _init_system=$(cat /proc/1/comm 2> /dev/null)
+        if test "$_init_system" == "systemd"
         then
                 mkdir -p /etc/systemd/system/
                 mkdir -p /usr/lib/systemd/system/
@@ -150,22 +151,29 @@ if [ "$(uname -s)" != "FreeBSD" ]; then
 		if [ ! -f "/etc/default/maldet" ]; then
 			cp -f ./files/service/maldet.sysconfig /etc/default/maldet
 		fi
-		update-rc.d -f maldet remove
-		update-rc.d maldet defaults 70 30
+		if [ "$_init_system" != "systemd" ]; then
+			update-rc.d -f maldet remove
+			update-rc.d maldet defaults 70 30
+		fi
 	elif [ -f /etc/gentoo-release ]; then
-		rc-update add maldet default
+		if [ "$_init_system" != "systemd" ]; then
+			rc-update add maldet default
+		fi
 	elif [ -f /etc/slackware-version ]; then
-		ln -sf /etc/init.d/maldet /etc/rc.d/rc3.d/S70maldet
-		ln -sf /etc/init.d/maldet /etc/rc.d/rc4.d/S70maldet
-		ln -sf /etc/init.d/maldet /etc/rc.d/rc5.d/S70maldet
+		if [ "$_init_system" != "systemd" ]; then
+			ln -sf /etc/init.d/maldet /etc/rc.d/rc3.d/S70maldet
+			ln -sf /etc/init.d/maldet /etc/rc.d/rc4.d/S70maldet
+			ln -sf /etc/init.d/maldet /etc/rc.d/rc5.d/S70maldet
+		fi
 	else
 		if [ ! -f "/etc/sysconfig/maldet" ]; then
 			cp -f ./files/service/maldet.sysconfig /etc/sysconfig/maldet 2> /dev/null
 		fi
-		if command -v chkconfig >/dev/null 2>&1; then
+		if [ "$_init_system" != "systemd" ] && command -v chkconfig >/dev/null 2>&1; then
 			chkconfig maldet on
 		fi
 	fi
+	unset _init_system
 fi
 
 mkdir -p "$inspath/logs" && touch "$logf"

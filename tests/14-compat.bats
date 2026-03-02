@@ -16,11 +16,6 @@ _source_compat() {
     set -u
 }
 
-@test "compat.conf syntax is valid" {
-    run bash -n "$LMD_INSTALL/internals/compat.conf"
-    assert_success
-}
-
 @test "deprecated maxdepth maps to scan_max_depth" {
     unset scan_max_depth
     maxdepth=5

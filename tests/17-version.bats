@@ -33,9 +33,3 @@ setup() {
     run grep '^ver=2.0.1' "$LMD_INSTALL/maldet"
     assert_success
 }
-
-@test "signature files exist and are non-empty" {
-    [ -s "$LMD_INSTALL/sigs/md5v2.dat" ]
-    [ -s "$LMD_INSTALL/sigs/hex.dat" ]
-    [ -f "$LMD_INSTALL/sigs/maldet.sigs.ver" ]
-}

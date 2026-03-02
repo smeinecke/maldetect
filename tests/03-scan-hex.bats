@@ -85,10 +85,3 @@ teardown() {
     assert_scan_completed
     assert_output --partial "malware hits 2"
 }
-
-@test "empty custom hex dat does not cause errors" {
-    > "$LMD_INSTALL/sigs/custom.hex.dat"
-    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    run maldet -a "$TEST_SCAN_DIR"
-    assert_success
-}

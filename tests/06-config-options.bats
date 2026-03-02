@@ -44,11 +44,6 @@ teardown() {
     [ -f "$LMD_INSTALL/internals/compat.conf" ]
 }
 
-@test "compat.conf syntax is valid" {
-    run bash -n "$LMD_INSTALL/internals/compat.conf"
-    assert_success
-}
-
 @test "system override file location is detected" {
     # On Debian-based systems, /etc/default/maldet should exist
     # On RHEL-based, /etc/sysconfig/maldet

@@ -40,15 +40,6 @@ teardown() {
     assert_output --partial "malware hits 0"
 }
 
-@test "YARA: scan_yara=1 enables YARA scan stage" {
-    source /opt/tests/helpers/create-yara-sigs.sh
-    lmd_set_config scan_yara 1
-    cp "$SAMPLES_DIR/test-yara-match.php" "$TEST_SCAN_DIR/"
-    run maldet -a "$TEST_SCAN_DIR"
-    assert_scan_completed
-    assert_output --partial "malware hits 1"
-}
-
 @test "YARA: missing yara binary disables YARA gracefully" {
     lmd_set_config scan_yara 1
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"

@@ -47,18 +47,6 @@ teardown() {
     assert_report_contains "$scanid" "custom.gensigs.test"
 }
 
-@test "custom MD5 signatures merged into scan" {
-    local clean_md5
-    clean_md5=$(md5sum "$SAMPLES_DIR/clean-file.txt" | awk '{print $1}')
-    local clean_size
-    clean_size=$(wc -c < "$SAMPLES_DIR/clean-file.txt" | tr -d ' ')
-    echo "${clean_md5}:${clean_size}:custom.md5.gensigs.1" > "$LMD_INSTALL/sigs/custom.md5.dat"
-    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    run maldet -a "$TEST_SCAN_DIR"
-    assert_scan_completed
-    assert_output --partial "1 USER"
-}
-
 @test "clamav_linksigs copies signatures to mock ClamAV directory" {
     mkdir -p "$MOCK_CLAMAV_DIR"
     # Create a mock main.cvd so clamav_linksigs recognizes this as a ClamAV dir

@@ -3,6 +3,7 @@
 load '/usr/local/lib/bats/bats-support/load'
 load '/usr/local/lib/bats/bats-assert/load'
 source /opt/tests/helpers/lmd-config.sh
+source /opt/tests/helpers/cron-helpers.sh
 
 LMD_INSTALL="/usr/local/maldetect"
 CRON_MALDET_LOG="/tmp/cron-maldet.log"
@@ -35,16 +36,9 @@ teardown() {
            /var/customers/webs /usr/local/vesta /usr/local/hestia \
            /usr/share/dtc /home/virtual /usr/lib/opcenter
     rm -f "$LMD_INSTALL/tmp/.cron.lock"
-}
-
-# Helper: install mock maldet that logs args
-install_mock_maldet() {
-    cp "$LMD_INSTALL/maldet" "$LMD_INSTALL/maldet.real"
-    cat > "$LMD_INSTALL/maldet" <<'MOCK'
-#!/usr/bin/env bash
-echo "MALDET_CALL: $@" >> /tmp/cron-maldet.log
-MOCK
-    chmod 755 "$LMD_INSTALL/maldet"
+    # Clean up custom cron config test artifacts (R-14)
+    rm -f /tmp/cron-custom-marker
+    rm -rf "$LMD_INSTALL/cron"
 }
 
 @test "cron prunes quarantine files older than cron_prune_days" {
@@ -162,18 +156,6 @@ MOCK
     assert_failure
 }
 
-# Helper: run cron.daily with sleep disabled to avoid random delay
-run_cron_daily() {
-    local tmpscript
-    tmpscript=$(mktemp /tmp/cron-daily-nosleep.XXXXXX)
-    sed 's/sleep $(echo $RANDOM/sleep 0 #/' /etc/cron.daily/maldet > "$tmpscript"
-    chmod 755 "$tmpscript"
-    bash "$tmpscript"
-    local rc=$?
-    rm -f "$tmpscript"
-    return $rc
-}
-
 # Helper: install mock maldet that logs args and exits with failure
 install_failing_mock_maldet() {
     cp "$LMD_INSTALL/maldet" "$LMD_INSTALL/maldet.real"
@@ -214,5 +196,4 @@ fi
 EOF
     bash /etc/cron.daily/maldet
     [ -f /tmp/cron-custom-marker ]
-    rm -f /tmp/cron-custom-marker
 }

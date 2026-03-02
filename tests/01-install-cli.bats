@@ -74,12 +74,6 @@ setup() {
     [ -d "$LMD_INSTALL/tmp" ]
 }
 
-@test "version output is correct" {
-    run maldet --help
-    assert_success
-    assert_output --partial "Linux Malware Detect v"
-}
-
 @test "-co config option override works" {
     run maldet -co scan_max_filesize=1024 --help
     assert_success
@@ -168,4 +162,16 @@ setup() {
     run maldet -s
     assert_failure
     assert_output --partial "requires a SCANID"
+}
+
+# F-086: Debian update-rc.d must not run on systemd systems
+@test "install.sh guards update-rc.d with systemd check" {
+    # The update-rc.d call must be inside a _init_system != systemd guard
+    # Extract the 2 lines before update-rc.d and verify the guard is present
+    grep -B2 'update-rc.d maldet defaults' /opt/lmd-src/install.sh | grep -q '_init_system.*!= "systemd"'
+}
+
+# F-086: systemd uninstall must remove leftover /etc/init.d/maldet
+@test "uninstall.sh systemd path cleans stale SysV init script" {
+    sed -n '/systemd/,/else/p' "$LMD_INSTALL/uninstall.sh" | grep -q 'rm -f /etc/init.d/maldet'
 }

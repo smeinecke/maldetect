@@ -20,6 +20,15 @@ if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 			systemctl stop maldet.service
 			rm -f /usr/lib/systemd/system/maldet.service
 			systemctl daemon-reload
+			# Clean stale SysV artifacts from pre-fix installs
+			rm -f /etc/init.d/maldet
+			if [ -f /etc/debian_version ] || [ -f /etc/lsb-release ]; then
+				update-rc.d -f maldet remove 2>/dev/null
+			elif [ -f /etc/gentoo-release ]; then
+				rc-update del maldet default 2>/dev/null
+			elif [ -f /etc/slackware-version ]; then
+				rm -f /etc/rc.d/rc3.d/S70maldet /etc/rc.d/rc4.d/S70maldet /etc/rc.d/rc5.d/S70maldet
+			fi
 		else
 			maldet -k
 			if [ -f /etc/redhat-release ]; then
