@@ -29,7 +29,7 @@ if [ -f "$intcnf" ]; then
 	source "$intcnf"
 else
 	header
-	echo "maldet($$): {glob} \$intcnf not found, aborting."
+	echo "maldet($$): {glob} \$intcnf not found, aborting." >&2
 	exit 1
 fi
 
@@ -37,7 +37,7 @@ if [ -f "$tlog_lib" ]; then
 	source "$tlog_lib"
 else
 	header
-	echo "maldet($$): {glob} \$tlog_lib not found, aborting."
+	echo "maldet($$): {glob} \$tlog_lib not found, aborting." >&2
 	exit 1
 fi
 
@@ -45,7 +45,7 @@ if [ -f "$cnf" ]; then
 	source "$cnf"
 else
 	header
-	echo "maldet($$): {glob} \$cnf not found, aborting."
+	echo "maldet($$): {glob} \$cnf not found, aborting." >&2
 	exit 1
 fi
 
@@ -53,7 +53,7 @@ if [ -f "$intfunc" ]; then
 	source "$intfunc"
 else
 	header
-	echo "maldet($$): {glob} \$intfunc not found, aborting."
+	echo "maldet($$): {glob} \$intfunc not found, aborting." >&2
 	exit 1
 fi
 

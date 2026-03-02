@@ -151,6 +151,7 @@ Notable variables include
 .BR scan_yara ,
 .BR scan_hexdepth ,
 .BR scan_find_timeout ,
+.BR scan_days ,
 and
 .BR string_length_scan .
 .PP
@@ -161,6 +162,14 @@ file list generation phase.
 A value of 0 disables the timeout.
 Values between 1 and 59 are silently ignored (minimum is 60).
 Default: 0.
+.PP
+.B scan_days
+sets the number of days to look back for recently modified files during
+daily cron scans.
+This value is passed as the \fIDAYS\fR argument to
+.BR "maldet \-r" .
+Default: 1.
+.PP
 See
 .I conf.maldet
 for the full list with descriptions.

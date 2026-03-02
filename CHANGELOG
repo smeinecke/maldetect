@@ -226,8 +226,121 @@ v2.0.1 | Feb 24 2026:
 [Fix] uninstall.sh: clean stale SysV artifacts (init script, rc.d symlinks)
       in systemd uninstall path for backward compatibility with older installs;
       F-086
+[Fix] grep without -F on literal file paths in restore_hitlist() and
+      clean_hitlist() interpreting regex metacharacters (., *, +, [) as
+      pattern syntax; drop useless cat and quote $file; F-003
+[Fix] monitor_cycle() config reload accumulated ignore_user and
+      ignore_group find-filter strings unboundedly without resetting;
+      extract shared _build_scan_filters() helper from duplicated code
+      in scan() and monitor_cycle(); F-001, C-001
+[Fix] quarantine metadata colon truncation: cut -d: -f9 truncates file
+      paths containing colons in .info files and quarantine.hist; changed
+      to cut -f9- and awk '{print $NF}' for last-field extraction; also
+      fix cut -d: -f2 in quar_hitlist(), restore_hitlist(), clean_hitlist()
+      session.hits parsing (4 locations); quote ${file}.info; F-002
+[Fix] sigignore() permanently deletes lines from on-disk hex.dat and md5v2.dat
+      on every scan; signatures irrecoverably lost until next maldet -u; moved
+      ignore filtering into gensigs() runtime copies; added runtime_md5 for
+      merged MD5 sigs; scan_stage1() reads from runtime_md5; F-004
+[Fix] view_report() and genalert() type="file" sendmail path prepends SUBJECT:
+      header directly into canonical session files, corrupting reports for
+      subsequent views; use mktemp staging file instead; F-015
+[Fix] quote unquoted variable expansions in genalert() ($file, $email_addr,
+      $email_panel_from, $email_panel_alert_subj, $contact_emails, $tmpf,
+      $email_template, $sessdir paths) and clean() ($cldir command paths);
+      prevents word splitting on user-configurable values; F-012
+[Fix] importconf hardcoded /usr/local/maldetect path replaced with $inspath
+      variable; F-017
+[Fix] hexfifo.pl hardcoded FIFO path: accept optional second CLI argument
+      for pipe path with backward-compatible default; pass $hex_fifo_path
+      from scan_stage2(); F-018
+[Fix] scan_days config variable undocumented: add to conf.maldet, importconf,
+      man page, and README; used by cron.daily for recent-file scan window; F-019
+[Fix] uninstall.sh: stop inotify monitor unconditionally before cleanup to
+      prevent race between systemctl stop and rm -rf; remove redundant
+      SysV-path maldet -k; F-025
+[Fix] JSON injection in ELK and Slack payloads: add _json_escape() helper;
+      escape hit_sig and hit_file in scan.etpl ELK curl; escape slack_subj
+      in completeUploadExternal JSON body; F-027
+[Fix] restore_hitlist(): remove unreachable dead-code else branch; collapse
+      exhaustive elif to else; move error message to reachable outer
+      file-existence check; quote $hitlist on tail; F-066
+[Fix] scan() days validation: reject zero and negative values with lower-bound
+      check; replace subshell grep alpha test with bash [[ =~ ]]; F-070
+[Fix] escape literal parentheses in ClamAV lstat() ERE filter; unescaped ()
+      created empty capture group instead of matching literal parens (2
+      locations in _scan_run_clamav and monitor_check); F-068
+[Fix] get_remote_file(): remove dead get_return variable (declared, assigned,
+      never read); replace || get_return=$? with || true; F-069
+[Change] replace 17 wc -l FILE | awk '{print$1}' with wc -l < FILE (redirect
+      form outputs count only, no filename); quote file variables; aligns with
+      12 existing locations already using redirect form; F-035
+[Change] replace 4 subshell grep calls with bash builtins: email @ check
+      uses glob match, monitor_init user/comma tests use [[ =~ ]] and glob;
+      eliminates 4 subprocess forks; F-036
+[Fix] maldet CLI: redirect 4 fatal startup errors (missing config/library
+      files) to stderr; F-042
+[Fix] monitor_check() non-remote clamscan: capture exit code unconditionally
+      instead of || clamscan_return=$? which left stale value on success
+[Fix] monitor_init() ionice guard missing /proc/vz check present in prerun();
+      ionice fails inside OpenVZ containers
+[Fix] quar_hitlist() missing chown root:root on quarantined files in non-pub
+      branch; quarantine() has the call but quar_hitlist() did not
+[Fix] compat.conf: add missing quar_hits → quarantine_hits mapping documented
+      in CHANGELOG.VARIABLES; pre-1.5 configs silently lost quarantine_hits value
+[Change] remove sigignore() no-op stub (zero callers; ignore filtering moved to
+      gensigs() in F-004)
+[Change] remove redundant _scan_cleanup() call from postrun(); all scan exit
+      paths already call it (clean_exit, trap_exit, scan completion)
+[Change] extract _run_yara_scan() helper: replaces 4 identical YARA scan blocks
+      in _scan_run_clamav(), _scan_run_native(), and monitor_check() (2 branches)
+[Change] extract _send_email() helper: replaces 3 duplicated mail/sendmail blocks
+      in view_report() and genalert() (file and digest types); helper creates temp
+      file for sendmail path, eliminating in-place mutation of digest reports
+[Change] extract _clamscan_fallback() helper: replaces 2 identical clamscan binary
+      discovery blocks in clamselector() (no-clamd and test-failure paths)
+[Change] quar_get_filestat() single-pass parser: replace 9 separate grep|awk/cut
+      pipelines with single IFS=: read; file_path correctly captures remainder
+      including colons; local variable scoping for fstat
+[Change] extract _build_nice_command() helper: replaces duplicated nice/ionice/
+      cpulimit setup in prerun() and monitor_init(); /proc/vz check uniform
+[Change] extract _count_signatures() helper: replaces duplicated signature
+      counting in scan() and sigup(); parameterized on md5/hex source files
+[Change] extract _clamd_retry_scan() helper: replaces duplicated remote clamd
+      retry loop in _scan_run_clamav() and monitor_check(); fixes missing log
+      redirect in scan retry echo; adds cleanup_scanlist param for monitor
+[Change] extract _process_clamav_hits() helper: replaces duplicated ClamAV hit
+      parsing in _scan_run_clamav() and monitor_check(); adds [ -f "$file" ]
+      guard unconditionally; optional progress display param
+[Change] extract _quarantine_file() helper: shared quarantine core from
+      quarantine() and quar_hitlist(); handles chattr, mv, chmod, chown,
+      .info write, and quar_history; callers retain session and clean logic
+[Change] extract _clean_rescan() helper: replaces 2 identical scan_stage1 +
+      scan_stage_yara rescan blocks in clean() quarantine and direct branches
+[Change] extract _inotify_trim_log() helper: replaces identical inotify log
+      trim + tlog_adjust_cursor blocks in purge() and monitor_cycle()
+[Fix] hexfifo.pl and hexstring.pl: remove trailing space before \n in print
+      output; remove scan_stage2() workaround (hex_hitname trim)
+[Change] get_remote_file(): add inline comment on || true explaining download
+      failure is non-fatal (file existence check follows)
+
+[Change] scan() temp-file cleanup centralized into _scan_cleanup(); replaces
+      6 inline rm -f blocks (clean_exit, trap_exit, 2 empty-list paths, normal
+      completion, postrun) with single canonical function; fixes missing .tmpf*
+      cleanup on days=N empty-list and normal-completion paths; removes stale
+      $list, $tmpf, and literal "0" artifacts from clean_exit(); F-007, C-004
+[Change] scan() file list generation extracted into _scan_build_filelist();
+      reduces scan() by 68 lines; no behavioral change; F-006, C-004
+[Change] scan() ClamAV scanning branch extracted into _scan_run_clamav();
+      reduces scan() by 79 lines; no behavioral change; F-006, C-004
+[Change] scan() native LMD scanning branch extracted into _scan_run_native();
+      scan() reduced from 351 to ~155 lines total; F-006, C-004
 
 -- Changes --
+[Change] tlog_lib.sh: update to canonical 2.0.2 — rotation refactored into
+      _tlog_handle_rotation() with pipe fallback for disk-full; journal flock
+      support; baserun/cursor validation hardening; CLI version cross-check;
+      67 new BATS tests (196 total)
 [Change] tlog rewritten: shared tlog_lib.sh sourced as in-process
       library; monitor_check() uses byte-mode tracking (optimal for
       grep/awk pipeline); genalert() digest uses line-mode tracking

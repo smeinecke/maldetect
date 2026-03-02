@@ -13,7 +13,7 @@ if [ -f "$LMD_INSTALL/internals/internals.conf.bak" ]; then
     rm -f "$LMD_INSTALL/internals/internals.conf.bak"
 fi
 
-# Restore clean signature files (sigignore modifies sigs in place)
+# Restore clean signature files for test isolation
 if [ -d "$LMD_INSTALL/sigs.clean" ]; then
     rm -rf "$LMD_INSTALL/sigs"
     cp -a "$LMD_INSTALL/sigs.clean" "$LMD_INSTALL/sigs"

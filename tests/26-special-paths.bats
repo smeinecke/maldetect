@@ -193,3 +193,64 @@ teardown() {
     assert_scan_completed
     assert_output --partial "malware hits 1"
 }
+
+# ── Category 5: Regex metacharacters in filenames (F-003) ────────────
+
+@test "quarantine and restore file with regex metacharacters in name" {
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/file+copy[1].php"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    maldet -q "$scanid"
+    [ ! -f "$TEST_SCAN_DIR/file+copy[1].php" ]
+    run maldet -s "$scanid"
+    assert_success
+    [ -f "$TEST_SCAN_DIR/file+copy[1].php" ]
+}
+
+@test "quarantine and clean file with regex metacharacters in name" {
+    lmd_set_config quarantine_clean 1
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/data.bak+test[2].php"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    run maldet -n "$scanid"
+    assert_success
+}
+
+# ── Category 6: Colon-containing paths (F-002) ──────────────────────
+
+@test "quarantine file with colon in directory name" {
+    mkdir -p "$TEST_SCAN_DIR/dir:name"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/dir:name/"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    run maldet -q "$scanid"
+    assert_success
+    [ ! -f "$TEST_SCAN_DIR/dir:name/eicar.com" ]
+}
+
+@test "restore file with colon in path" {
+    mkdir -p "$TEST_SCAN_DIR/dir:name"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/dir:name/"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    maldet -q "$scanid"
+    [ ! -f "$TEST_SCAN_DIR/dir:name/eicar.com" ]
+    run maldet -s "$scanid"
+    assert_success
+    [ -f "$TEST_SCAN_DIR/dir:name/eicar.com" ]
+}
+
+@test "quarantine.hist records full colon-containing path" {
+    mkdir -p "$TEST_SCAN_DIR/dir:name"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/dir:name/"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    maldet -q "$scanid"
+    run grep "dir:name/eicar.com" "$LMD_INSTALL/sess/quarantine.hist"
+    assert_success
+}

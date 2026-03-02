@@ -13,6 +13,10 @@ echo -n "Would you like to proceed? "
 read -p "[y/n] " -n 1 Z
 echo
 if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
+	# Stop any running monitor before cleanup
+	if [ "$(ps -A --user root -o "command" 2>/dev/null | grep maldetect | grep inotifywait)" ]; then
+		/usr/local/sbin/maldet -k >>/dev/null 2>&1
+	fi
 	if [ "$(uname -s)" != "FreeBSD" ]; then
 		if test "$(cat /proc/1/comm 2>/dev/null)" = "systemd"
 		then
@@ -30,7 +34,6 @@ if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 				rm -f /etc/rc.d/rc3.d/S70maldet /etc/rc.d/rc4.d/S70maldet /etc/rc.d/rc5.d/S70maldet
 			fi
 		else
-			maldet -k
 			if [ -f /etc/redhat-release ]; then
 				if command -v chkconfig >/dev/null 2>&1; then
 					chkconfig maldet off

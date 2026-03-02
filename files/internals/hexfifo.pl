@@ -8,14 +8,14 @@
 ##
 #
 
-if ($#ARGV != "0") {
- print "usage: hexfile\n";
+if ($#ARGV < 0) {
+ print "usage: hexfile [fifo_path]\n";
  exit;
 }
 
 $hexfile = $ARGV[0];
 
-$named_pipe_name = "/usr/local/maldetect/internals/hexfifo";
+$named_pipe_name = defined($ARGV[1]) ? $ARGV[1] : "/usr/local/maldetect/internals/hexfifo";
 $timeout = "1";
 
 if (-p $named_pipe_name) {
@@ -55,7 +55,7 @@ foreach $hexptr (@raw_data) {
  chomp($hexptr);
  ($ptr,$name)=split(/:/,$hexptr);
  if ( grep(/$ptr/, $instr) ) {
- 	print "$ptr $name \n";
+ 	print "$ptr $name\n";
 	exit;
  }
 }

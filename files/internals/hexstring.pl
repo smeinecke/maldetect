@@ -27,7 +27,7 @@ foreach $hexptr (@raw_data) {
  chomp($hexptr);
  ($ptr,$name)=split(/:/,$hexptr);
  if ( grep(/$ptr/, $instr) ) {
- 	print "$ptr $name \n";
+ 	print "$ptr $name\n";
 	exit;
  }
 }

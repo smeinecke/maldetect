@@ -37,6 +37,20 @@ teardown() {
     assert_output --partial "malware hits 0"
 }
 
+@test "ignore_sigs does not modify on-disk signature files" {
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    local hex_before md5_before hex_after md5_after
+    hex_before=$(md5sum "$LMD_INSTALL/sigs/hex.dat" | awk '{print $1}')
+    md5_before=$(md5sum "$LMD_INSTALL/sigs/md5v2.dat" | awk '{print $1}')
+    echo "EICAR.TEST" > "$LMD_INSTALL/ignore_sigs"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_success
+    hex_after=$(md5sum "$LMD_INSTALL/sigs/hex.dat" | awk '{print $1}')
+    md5_after=$(md5sum "$LMD_INSTALL/sigs/md5v2.dat" | awk '{print $1}')
+    [ "$hex_before" = "$hex_after" ]
+    [ "$md5_before" = "$md5_after" ]
+}
+
 @test "ignore_paths does not affect unrelated paths" {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     echo "/some/other/path" > "$LMD_INSTALL/ignore_paths"

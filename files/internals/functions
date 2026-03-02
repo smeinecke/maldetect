@@ -14,6 +14,24 @@ lbreakifs() {
 	fi
 }
 
+_build_nice_command() {
+	local _cpunice="$1" _ionice_val="$2" _cpulimit_val="$3"
+	nice_command=""
+	if [ -f "$nice" ]; then
+		nice_command="$nice -n $_cpunice"
+	fi
+	if [ -f "$ionice" ] && [ ! -d "/proc/vz" ]; then
+		nice_command="$nice_command $ionice -c2 -n $_ionice_val"
+	fi
+	if [ -f "$cpulimit" ] && [ "$_cpulimit_val" -gt 0 ] 2>/dev/null; then
+		local max_cpulimit
+		max_cpulimit=$(( $(grep -E -w processor /proc/cpuinfo -c) * 100 ))
+		if [ "$_cpulimit_val" -le "$max_cpulimit" ]; then
+			nice_command="$cpulimit -l $_cpulimit_val -- $nice_command"
+		fi
+	fi
+}
+
 prerun() {
     
     startdir=$(pwd);
@@ -155,21 +173,8 @@ prerun() {
 	if [ ! "$scan_ionice" ]; then
 		scan_ionice=6
 	fi
-	
-	if [ -f "$nice" ]; then
-		nice_command="$nice -n $scan_cpunice"
-	fi
-	if [ -f "$ionice" ] && [ ! -d "/proc/vz" ]; then
-		nice_command="$nice_command $ionice -c2 -n $scan_ionice"
-	fi
-	if [ -f "$cpulimit" ] && [ "$scan_cpulimit" -gt 0 ] 2>/dev/null; then
-		max_cpulimit=$(( $(grep -E -w processor /proc/cpuinfo -c) * 100 ))
-		if [ "$scan_cpulimit" -gt "$max_cpulimit" ]; then
-			scan_cpulimit="0"
-		else
-			nice_command="$cpulimit -l $scan_cpulimit -- $nice_command"
-		fi
-	fi
+
+	_build_nice_command "$scan_cpunice" "$scan_ionice" "$scan_cpulimit"
 
 	if [ -z "$cron_daily_scan" ]; then
 		cron_daily_scan=1
@@ -188,7 +193,7 @@ eout() {
 		touch $maldet_log
 	fi
 	if [ "$maldet_log_truncate" == "1" ]; then
-		log_size=$($wc -l "$maldet_log" | awk '{print$1}')
+		log_size=$($wc -l < "$maldet_log")
 		if [ "$log_size" -ge "20000" ]; then
 			trim=1000
 			local tmplog=$(mktemp "${maldet_log}.trim.XXXXXX")
@@ -221,8 +226,9 @@ trap_exit() {
 				genalert file $nsess
 			fi
 		fi
-		mv $scan_session $nsess_hits 2> /dev/null
-		rm -f $clamscan_results $find_results $runtime_hdb $runtime_hexstrings $runtime_ndb $scan_session $tmpdir/.find_killed.$scanid $tmpdir/.tmp* $tmpdir/.tmpf* $tmpdir/.yara_* $tmpf 2> /dev/null
+		mv "$scan_session" "$nsess_hits" 2>/dev/null
+		_scan_cleanup
+		rm -f "$tmpf" 2>/dev/null
 		eout "{glob} scan interrupt by user, aborting scan..." 1
 		eout "{scan} scan report saved, to view run: maldet --report $datestamp.$$" 1
 		if [ "$quarantine_hits" == "0" ] && [ ! "$tot_hits" == "0" ]; then
@@ -233,8 +239,8 @@ trap_exit() {
 }
 
 clean_exit() {
-	mv -f $scan_session $nsess_hits 2> /dev/null
-	rm -f $clamscan_results $find_results $list $runtime_hdb $runtime_hexstrings $runtime_ndb $scan_session $tmpdir/.find_killed.$scanid $tmpdir/.tmp* $tmpdir/.tmpf* $tmpdir/.yara_* $tmpf 0 2> /dev/null
+	mv -f "$scan_session" "$nsess_hits" 2>/dev/null
+	_scan_cleanup
 }
 
 detect_control_panel() {
@@ -307,7 +313,7 @@ get_remote_file() {
 	local verbose="$3"
 	local save_path="$4"
 	local grf_svc get_type get_bin get_opts get_output_arg get_proxy_arg
-	local get_file get_return id tmpf
+	local get_file id tmpf
 	unset return_file
 	if [ "$hscan" ]; then
 		unset verbose
@@ -361,7 +367,8 @@ get_remote_file() {
 		get_file=$(echo "$get_uri" | tr '/' '\n' | tail -n1)
 	fi
 
-	$get_bin $get_opts "$get_uri" $get_output_arg "$tmpf" || get_return=$?
+	# Download failure is non-fatal; file existence check below handles it
+	$get_bin $get_opts "$get_uri" $get_output_arg "$tmpf" || true
 
 	if [ ! -f "$tmpf" ] || [ ! -s "$tmpf" ]; then
 		eout "{$grf_svc} could not download $get_uri, please try again later." $verbose
@@ -655,6 +662,21 @@ OTHER:
 EOF
 }
 
+_clean_rescan() {
+	local _fpath="$1"
+	clean_state="1"
+	unset clean_failed
+	scan_stage1 "$_fpath" 1 >> /dev/null 2>&1
+	if [ -f "$_fpath" ] && [ "$scan_yara" == "1" ]; then
+		local clean_yara_list
+		clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
+		echo "$_fpath" > "$clean_yara_list"
+		scan_stage_yara "$clean_yara_list" 1 >> /dev/null 2>&1
+		rm -f "$clean_yara_list"
+	fi
+	unset clean_state
+}
+
 clean() {
 	file="$1"
 	file_signame="$2"
@@ -666,28 +688,19 @@ clean() {
 	sh_hitname=$(echo $hitname | sed -E -e 's/\{(HEX|MD5|CAV|YARA)\}//' -e 's/\.[0-9]+$//')
 	if [ -d "$cldir" ] && [ "$quarantine_clean" == "1" ] && [ "$quarantine_hits" == "1" ] && [ -f "$file" ]; then
 		if { [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ]; } && [ -f "${file}.info" ]; then
-			file_path=$(grep -E -v '\#' ${file}.info | cut -d':' -f9)
+			file_path=$(grep -E -v '\#' "${file}.info" | cut -d':' -f9-)
 			eout "{clean} restoring $file for cleaning attempt" 1
 			restore "$file" >> /dev/null 2>&1
 			if [ -f "$cldir/$sh_hitname" ]; then
 				eout "{clean} attempting to clean $file_path with $sh_hitname rule" 1
-				$cldir/$sh_hitname "$file_path" "$file_signame" "$file_owner" "$file_chmod" "$file_size" "$file_md5"
+				"$cldir/$sh_hitname" "$file_path" "$file_signame" "$file_owner" "$file_chmod" "$file_size" "$file_md5"
 			fi
 			if [ -f "$cldir/custom.$sh_hitname" ]; then
 				eout "{clean} attempting to clean $file_path with custom.$sh_hitname rule" 1
-				$cldir/custom.$sh_hitname "$file_path" "$file_signame" "$file_owner" "$file_chmod" "$file_size" "$file_md5"
+				"$cldir/custom.$sh_hitname" "$file_path" "$file_signame" "$file_owner" "$file_chmod" "$file_size" "$file_md5"
 			fi
 			eout "{clean} rescanning $file_path for malware hits" 1
-			clean_state="1"
-			unset clean_failed
-			scan_stage1 "$file_path" 1 >> /dev/null 2>&1
-			if [ -f "$file_path" ] && [ "$scan_yara" == "1" ]; then
-				local clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
-				echo "$file_path" > "$clean_yara_list"
-				scan_stage_yara "$clean_yara_list" 1 >> /dev/null 2>&1
-				rm -f "$clean_yara_list"
-			fi
-			unset clean_state
+			_clean_rescan "$file_path"
 			if [ "$clean_failed" == "1" ]; then
 				chattr -ia "$file_path" 2>/dev/null
 				mv -f "$file_path" "$file"
@@ -704,23 +717,14 @@ clean() {
 			file_path="$file"
 			if [ -f "$cldir/$sh_hitname" ]; then
 				eout "{clean} attempting to clean $file with $sh_hitname rule" 1
-				$cldir/$sh_hitname "$file_path"
+				"$cldir/$sh_hitname" "$file_path"
 			fi
 			if [ -f "$cldir/custom.$sh_hitname" ]; then
 				eout "{clean} attempting to clean $file with custom.$sh_hitname rule" 1
-				$cldir/custom.$sh_hitname "$file_path"
+				"$cldir/custom.$sh_hitname" "$file_path"
 			fi
 			eout "{clean} scanning $file for malware hits"
-			clean_state="1"
-			unset clean_failed
-			scan_stage1 "$file_path" 1 >> /dev/null 2>&1
-			if [ -f "$file_path" ] && [ "$scan_yara" == "1" ]; then
-				local clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
-				echo "$file_path" > "$clean_yara_list"
-				scan_stage_yara "$clean_yara_list" 1 >> /dev/null 2>&1
-				rm -f "$clean_yara_list"
-			fi
-			unset clean_state
+			_clean_rescan "$file_path"
 			if [ "$clean_failed" == "1" ]; then
 				eout "{clean} clean failed on $file" 1
 			else
@@ -743,18 +747,14 @@ clean() {
 }
 
 quar_get_filestat() {
-	fstat="$1"
+	local fstat="$1"
 	if [ -f "$fstat" ]; then
+		local _line
 		# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)
-                file_owner=$(grep -E -v '\#' "$fstat" | awk -F':' '{print$1}')
-                file_group=$(grep -E -v '\#' "$fstat" | awk -F':' '{print$2}')
-                file_mode=$(grep -E -v '\#' "$fstat"  | awk -F':' '{print$3}')
-                file_size=$(grep -E -v '\#' "$fstat"  | awk -F':' '{print$4}')
-                md5_hash=$(grep -E -v '\#' "$fstat"   | awk -F':' '{print$5}')
-		file_atime=$(grep -E -v '\#' "$fstat"   | awk -F':' '{print$6}')
-		file_mtime=$(grep -E -v '\#' "$fstat"   | awk -F':' '{print$7}')
-		file_ctime=$(grep -E -v '\#' "$fstat"   | awk -F':' '{print$8}')
-                file_path=$(grep -E -v '\#' "$fstat"  | cut -d':' -f9)
+		_line=$(grep -E -v '\#' "$fstat")
+		# file_path is last field and may contain colons; read -r captures remainder
+		IFS=':' read -r file_owner file_group file_mode file_size md5_hash \
+			file_atime file_mtime file_ctime file_path <<< "$_line"
 	fi
 }
 
@@ -824,22 +824,22 @@ restore_hitlist() {
 	local is_autoquar quar_file
 	if [ -f "$hitlist" ]; then
 		lbreakifs set
-		is_autoquar=$(tail -n1 $hitlist | awk -F'>' '{print$2}' | grep -E -v '^$' | sed 's/.//')
+		is_autoquar=$(tail -n1 "$hitlist" | awk -F'>' '{print$2}' | grep -E -v '^$' | sed 's/.//')
 		if [ "$is_autoquar" ]; then
 			while IFS= read -r file; do
 				if [ -f "$file" ]; then
 					restore "$file"
 				fi
-			done < <(cut -d':' -f2 "$hitlist" | cut -d'>' -f2 | sed 's/.//')
-		elif [ ! "$is_autoquar" ]; then
-			while IFS= read -r file; do
-				quar_file=$(cat $quar_history | grep -E -w "$file" | cut -d':' -f8 | tail -n1)
-				restore "$quar_file"
-			done < <(cut -d':' -f2 "$hitlist" | sed 's/.//')
+			done < <(cut -d':' -f2- "$hitlist" | cut -d'>' -f2 | sed 's/.//')
 		else
-			eout "{restore} could not find a valid hit list to restore." 1
+			while IFS= read -r file; do
+				quar_file=$(grep -F "$file" "$quar_history" | awk -F':' '{print $NF}' | tail -n1)
+				restore "$quar_file"
+			done < <(cut -d':' -f2- "$hitlist" | sed 's/.//')
 		fi
 		lbreakifs unset
+	else
+		eout "{restore} could not find a valid hit list to restore." 1
 	fi
 }
 
@@ -858,20 +858,20 @@ clean_hitlist() {
                         lbreakifs set
                         while IFS= read -r file; do
                                 get_filestat "$file" 1
-                                hitname=$(cat $hitlist | grep $file | awk '{print$1}')
+                                hitname=$(grep -F "$file" "$hitlist" | awk '{print$1}')
                                 if [ ! "$md5_hash" ]; then
                                         local _md5out
                                         _md5out="$($md5sum "$file")"
                                         md5_hash="${_md5out%% *}"
                                 fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
-                        done < <(cut -d':' -f2 "$hitlist" | sed 's/.//')
+                        done < <(cut -d':' -f2- "$hitlist" | sed 's/.//')
                         lbreakifs unset
                 else
                         lbreakifs set
                         while IFS= read -r file; do
                                 quar_get_filestat "${file}.info" 1
-                                hitname=$(cat $hitlist | grep $file | awk '{print$1}')
+                                hitname=$(grep -F "$file" "$hitlist" | awk '{print$1}')
                                 if [ ! "$md5_hash" ]; then
                                         local _md5out
                                         _md5out="$($md5sum "$file")"
@@ -885,6 +885,22 @@ clean_hitlist() {
                 eout "{clean} invalid scanid $scanid or unknown error, aborting." 1
                 exit 1
         fi
+}
+
+_send_email() {
+	local _file="$1" _subj="$2" _addr="$3"
+	if [ -f "$mail" ]; then
+		$mail -s "$_subj" "$_addr" < "$_file"
+	elif [ -f "$sendmail" ]; then
+		local _tmpmail
+		_tmpmail=$(mktemp "$tmpdir/.mail.XXXXXX")
+		echo "SUBJECT: $_subj" > "$_tmpmail"
+		cat "$_file" >> "$_tmpmail"
+		$sendmail -t "$_addr" < "$_tmpmail"
+		rm -f "$_tmpmail"
+	else
+		return 1
+	fi
 }
 
 view_report() {
@@ -938,15 +954,8 @@ view_report() {
 		exit 1
 	fi
 	# Email report if second argument contains @
-	if [ ! -z "$(echo $2 | grep '\@')" ]; then
-		if [ -f "$mail" ]; then
-			cat "$sessdir/session.$rid" | $mail -s "$email_subj" "$2"
-		elif [ -f "$sendmail" ]; then
-			if ! grep -q "SUBJECT: " "$sessdir/session.$rid"; then
-				echo -e "SUBJECT: $email_subj\n$(cat "$sessdir/session.$rid")" > "$sessdir/session.$rid"
-			fi
-			cat "$sessdir/session.$rid" | $sendmail -t "$2"
-		else
+	if [[ "$2" == *@* ]]; then
+		if ! _send_email "$sessdir/session.$rid" "$email_subj" "$2"; then
 			eout "{report} no \$mail or \$sendmail binaries found, e-mail alerts disabled." 1
 			exit 1
 		fi
@@ -966,20 +975,25 @@ view() {
 	tail -n 50 $maldet_log
 }
 
+_inotify_trim_log() {
+	local _trim="$1"
+	local bytes_removed
+	bytes_removed=$(head -n "$_trim" "$inotify_log" 2>/dev/null | $wc -c)
+	tlog_adjust_cursor "inotify" "$tmpdir" "$bytes_removed"
+	local tmplog
+	tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
+	tail -n +"$((_trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
+	cat "$tmplog" > "$inotify_log" 2>/dev/null
+	rm -f "$tmplog"
+	eout "{mon} inotify log file trimmed"
+}
+
 purge() {
 	:> $maldet_log
 	if [ -f "$inotify_log" ]; then
-		log_size=$($wc -l "$inotify_log" | awk '{print$1}')
+		log_size=$($wc -l < "$inotify_log")
 		if [ "$inotify_trim" ]; then
-			trim=$(($log_size - 1000))
-			local bytes_removed
-			bytes_removed=$(head -n "$trim" "$inotify_log" 2>/dev/null | $wc -c)
-			tlog_adjust_cursor "inotify" "$tmpdir" "$bytes_removed"
-			local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
-			tail -n +"$((trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
-			cat "$tmplog" > "$inotify_log" 2>/dev/null
-			rm -f "$tmplog"
-			eout "{mon} inotify log file trimmed"
+			_inotify_trim_log "$(($log_size - 1000))"
 		fi
 	fi
 	rm -f $tmpdir/* $quardir/* $sessdir/* 2> /dev/null
@@ -1063,39 +1077,45 @@ record_hit() {
 	fi
 }
 
+_quarantine_file() {
+	local _file="$1" _hitname="$2" _verbose="${3:-}"
+	local file_name="${_file##*/}"
+	local rnd
+	rnd=$($stat -c %i "$_file" 2>/dev/null || echo "$$")
+	chattr -ia "$_file" 2>/dev/null
+	if ! mv "$_file" "$quardir/$file_name.$rnd" 2>/dev/null; then
+		eout "{quar} file disappeared before quarantine: '$_file'" $_verbose
+		return 1
+	fi
+	touch --no-create "$quardir/$file_name.$rnd"
+	if [ "$pub" == "1" ]; then
+		chmod 400 "$quardir/$file_name.$rnd"
+	else
+		chmod 000 "$quardir/$file_name.$rnd"
+		chown root:root "$quardir/$file_name.$rnd"
+	fi
+	echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$_file" > "$quardir/$file_name.$rnd.info"
+	eout "{quar} malware quarantined from '$_file' to '$quardir/$file_name.$rnd'" $_verbose
+	echo "$utime:$_hitname:$_file:$file_owner:$file_group:$md5_hash:$file_size:$quardir/$file_name.$rnd" >> $quar_history
+	_quar_dest="$quardir/$file_name.$rnd"
+}
+
 quarantine() {
 	file="$1"
 	hitname="$2"
-	file_name="${file##*/}"
 	if [ -d "$quardir" ]; then
 		if [ "$quarantine_hits" == "1" ]; then
-			file_namewc=$(echo $file_name | $wc -m)
-			rnd=$($stat -c %i "$file" 2>/dev/null || echo "$$")
 			if [ "$quarantine_suspend_user" == "1" ]; then
 				quarantine_suspend_user "$file"
 			fi
-			chattr -ia "$file" 2>/dev/null
-			if ! mv "$file" "$quardir/$file_name.$rnd" 2>/dev/null; then
-				eout "{quar} file disappeared before quarantine: '$file'"
-				return 1
-			fi
-			touch --no-create "$quardir/$file_name.$rnd"
-			if [ "$pub" == "1" ]; then
-				chmod 400 "$quardir/$file_name.$rnd"
-			else
-				chmod 000 "$quardir/$file_name.$rnd"
-				chown root:root "$quardir/$file_name.$rnd"
-			fi
-			echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$file" > $quardir/$file_name.$rnd.info
-			eout "{quar} malware quarantined from '$file' to '$quardir/$file_name.$rnd'"
-			echo "$utime:$hitname:$file:$file_owner:$file_group:$md5_hash:$file_size:$quardir/$file_name.$rnd" >> $quar_history
+			_quarantine_file "$file" "$hitname" || return 1
 			if [ ! -z "$scan_session" ]; then
-				echo "$hitname : $file => $quardir/$file_name.$rnd" >> $scan_session
+				echo "$hitname : $file => $_quar_dest" >> $scan_session
 				progress_hits=$((${progress_hits:-0} + 1))
 			fi
 			if [ "$quarantine_clean" == "1" ] && [ ! "$clean_state" == "1" ]; then
 				unset clean_state
-				clean "$quardir/$file_name.$rnd" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
+				clean "$_quar_dest" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
 			fi
 		else
 			if [ ! -z "$scan_session" ]; then
@@ -1115,8 +1135,6 @@ quar_hitlist() {
 		while IFS= read -r file; do
 			if [ -f "$file" ]; then
 				get_filestat "$file" 1
-				file_name="${file##*/}"
-				file_namewc=$(echo "$file_name" | $wc -m)
 				file_hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
 				if [ -z "$file_hitname" ]; then
 					file_hitname="unknown"
@@ -1129,34 +1147,30 @@ quar_hitlist() {
 				if [ "$quarantine_suspend_user" == "1" ]; then
 					quarantine_suspend_user "$file"
 				fi
-				if [ "$pub" == "1" ]; then
-					chattr -ia "$file" >> /dev/null 2>&1
-					chmod 400 "$file"
-				else
-					chattr -ia "$file"
-					chmod 000 "$file"
-				fi
-				rnd=$($stat -c %i "$file" 2>/dev/null || echo "$$")
-				if ! mv "$file" "$quardir/$file_name.$rnd" 2>/dev/null; then
-					eout "{quar} file disappeared before quarantine: '$file'" 1
-					continue
-				fi
-				touch --no-create "$quardir/$file_name.$rnd"
-				echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$file" > $quardir/$file_name.$rnd.info
-				eout "{quar} malware quarantined from '$file' to '$quardir/$file_name.$rnd'" 1
-				echo "$utime:$file_hitname:$file:$file_owner:$file_group:$md5_hash:$file_size:$quardir/$file_name.$rnd" >> $quar_history
+				_quarantine_file "$file" "$file_hitname" 1 || continue
 				if [ "$quarantine_clean" == "1" ] && [ ! "$clean_state" == "1" ]; then
 					unset clean_state
 					hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
-					clean "$quardir/$file_name.$rnd" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
+					clean "$_quar_dest" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
 				fi
-				
 			fi
-		done < <(cut -d':' -f2 "$hitlist" | sed 's/.//')
+		done < <(cut -d':' -f2- "$hitlist" | sed 's/.//')
 		lbreakifs unset
 	else
 		echo "{quar} invalid quarantine hit list, aborting."
 		exit 1
+	fi
+}
+
+_clamscan_fallback() {
+	clambin="clamscan"
+	clamopts="$clamscan_extraopts --max-filesize=$clamscan_max_filesize --max-scansize=$((clamscan_max_filesize * 2)) -d $runtime_hdb -d $runtime_ndb $clamav_db -r"
+	if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
+		clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
+	elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
+		clamscan=$(command -v $clambin 2> /dev/null)
+	else
+		scan_clamscan="0"
 	fi
 }
 
@@ -1191,8 +1205,7 @@ clamselector() {
                         clambin="clamdscan"
                         clamopts="--fdpass $clamdscan_extraopts"
                 else
-                        clambin="clamscan"
-                        clamopts="$clamscan_extraopts --max-filesize=$clamscan_max_filesize --max-scansize=$((clamscan_max_filesize * 2)) -d $runtime_hdb -d $runtime_ndb $clamav_db -r"
+                        _clamscan_fallback
                         if [ "$monitor_mode" ]; then
                                 inotify_sleep="120"
                                 eout "{mon} warning clamd service not running; force-set monitor mode file scanning to every 120s"
@@ -1200,12 +1213,14 @@ clamselector() {
 
                 fi
 
-                if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
-                        clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
-                elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
-                        clamscan=$(command -v $clambin 2> /dev/null)
-                else
-                        scan_clamscan="0"
+                if [ "$clamd" ]; then
+                        if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
+                                clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
+                        elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
+                                clamscan=$(command -v $clambin 2> /dev/null)
+                        else
+                                scan_clamscan="0"
+                        fi
                 fi
                 if [ "$clamd" ] && [ "$scan_clamscan" == "1" ]; then
                         ## test clamdscan for errors as not all 'running' instances of clamd are indicative of working setup
@@ -1230,122 +1245,33 @@ clamselector() {
                                         eout "{scan} warning: local clamd test failed (rc=$clamd_test), falling back to clamscan" 1
                                 fi
                                 clamd=0
-                                clambin="clamscan"
-                                clamopts="$clamscan_extraopts --max-filesize=$clamscan_max_filesize --max-scansize=$((clamscan_max_filesize * 2)) -d $runtime_hdb -d $runtime_ndb $clamav_db -r"
-                                if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
-                                        clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
-                                elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
-                                        clamscan=$(command -v $clambin 2> /dev/null)
-                                else
-                                        scan_clamscan="0"
-                                fi
+                                _clamscan_fallback
                         fi
                 fi
         fi
 
 }
 
-scan() {
-	scan_start_hr=$(date +"%b %e %Y %H:%M:%S %z")
-	scan_start=$(date +"%s")
-	spaths_str=$(echo "$1" | tr '?' '*' | tr ',' '\n')
-	spaths=()
-	while IFS= read -r pattern; do
-	  [ -z "$pattern" ] && continue
-	  expanded=( $pattern )
-	  spaths+=( "${expanded[@]}" )
-	done <<< "$spaths_str"
-	days="$2"
-	scanid="$datestamp.$$"
-	if [ "$file_list" ]; then
-		spath="\"$file_list\""
-	elif [ ! -f "$find" ]; then
-		eout "{scan} could not locate find command" 1
-		clean_exit
-		exit 1
-	fi
-	if [ -f "$spath" ] && [ -z "$file_list" ]; then
-		single_filescan=1
-	fi
-	
-	if [ ! -f "$sig_md5_file" ]; then
-		eout "{scan} required signature file not found ($sig_md5_file), try running -u|--update, aborting!" 1
-		clean_exit
-		exit 1
-	fi
-	if [ ! -f "$sig_hex_file" ]; then
-		eout "{scan} required signature file not found ($sig_hex_file), try running -u|--update, aborting!" 1
-		clean_exit
-		exit 1
-	fi
-	if [ ! -f "$ignore_paths" ]; then
-		touch $ignore_paths
-		chmod 640 $ignore_paths
-	fi
-	if [ ! -f "$ignore_sigs" ]; then
-		touch $ignore_sigs
-		chmod 640 $ignore_sigs
-	fi
-		
-	if [ ! "$days" == "all" ] && [ -z "$file_list" ]; then
-		val=$(echo $days | grep "[[:alpha:]]")
-		if [ ! -z "$val" ]; then
-			eout "{scan} days value must be numeric value in the range of 1 - 90, reverting to default (7)." 1
-			days=7
-		elif [ "$days" -gt "90" ]; then
-			eout "{scan} days value must be numeric value in the range of 1 - 90, reverting to default (7)." 1
-			days=7
-		fi
-	fi
-	
-	for p in "${spaths[@]}"; do
-	  if [ "${p:0:1}" != "/" ]; then
-	    eout "{scan} must use absolute path, provided relative path '$p'" 1
-	    exit 1
-	  fi
-	done
-
-	scan_session=$(mktemp "$tmpdir/.sess.XXXXXX")
-	find_results=$(mktemp "$tmpdir/.find.XXXXXX")
-	
-	sigignore
-	gensigs
-	if [ "$scan_clamscan" == "1" ]; then
-		clamselector
-	fi
-	
-	hex_sigs=$($wc -l $sig_hex_file | awk '{print$1}')
-	md5_sigs=$($wc -l $sig_md5_file | awk '{print$1}')
-	yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)
-	user_yara_sigs=0
-	if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
-		user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$sig_user_yara_file" 2>/dev/null || true)))
-	fi
-	for _yar in "$sig_user_yara_dir"/*.yar "$sig_user_yara_dir"/*.yara; do
-		if [ -f "$_yar" ] && [ -s "$_yar" ]; then
-			user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$_yar" 2>/dev/null || true)))
-		fi
-	done
-	user_hex_sigs=$($wc -l $sig_user_hex_file | awk '{print$1}')
-	user_md5_sigs=$($wc -l $sig_user_md5_file | awk '{print$1}')
-	user_sigs=$((user_hex_sigs + user_md5_sigs + user_yara_sigs))
-	tot_sigs=$((md5_sigs + hex_sigs + yara_sigs + user_sigs))
-	if [ -z "$hscan" ]; then
-		local yara_label="YARA"
-		if [ "$scan_yara" != "1" ]; then
-			yara_label="YARA(cav)"
-		fi
-		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
-	fi
+_build_scan_filters() {
+	# Reset all find-filter variables before rebuilding
 	ignore_fext_args=()
+	ignore_root=""
+	ignore_user=""
+	ignore_group=""
+
+	# File extension ignores
 	if [ -f "$ignore_file_ext" ] && [ -s "$ignore_file_ext" ]; then
 		while IFS= read -r i; do
 			ignore_fext_args+=(-not -iname "*$i")
 		done < "$ignore_file_ext"
 	fi
+
+	# Root-owned file ignores
 	if [ "$scan_ignore_root" == "1" ]; then
 		ignore_root="-not -uid 0 -not -gid 0"
 	fi
+
+	# Per-user ignores
 	if [ "$scan_ignore_user" ]; then
 		while IFS= read -r i; do
 			if id "$i" >/dev/null 2>&1; then
@@ -1359,6 +1285,8 @@ scan() {
 			fi
 		done < <(echo "$scan_ignore_user" | tr ', ' '\n' | grep -v '^$')
 	fi
+
+	# Per-group ignores
 	if [ "$scan_ignore_group" ]; then
 		while IFS= read -r i; do
 			if getent group "$i" >/dev/null 2>&1; then
@@ -1372,10 +1300,21 @@ scan() {
 			fi
 		done < <(echo "$scan_ignore_group" | tr ', ' '\n' | grep -v '^$')
 	fi
+}
+
+_scan_cleanup() {
+	rm -f "$find_results" "$scan_session" "$runtime_ndb" "$runtime_hdb" \
+		"$runtime_hexstrings" "$runtime_md5" "$clamscan_results" \
+		"$tmpdir"/.find_killed."$scanid" \
+		"$tmpdir"/.tmp* "$tmpdir"/.tmpf* "$tmpdir"/.yara_* 2>/dev/null
+}
+
+# shellcheck disable=SC2154
+_scan_build_filelist() {
 	if [ "$scan_tmpdir_paths" ] && [ -z "$hscan" ] && [ -z "$single_filescan" ]; then
 		spath_tmpdirs="$scan_tmpdir_paths"
 	fi
-		
+
 	if [ "$file_list" ]; then
 		file_list_et=0
 		cat $file_list | grep -E -vf $ignore_paths > $find_results
@@ -1390,7 +1329,7 @@ scan() {
 				eout "{scan} building file list for $hrspath of new/modified files from last $days days, this might take awhile..." 1
 			fi
 		fi
-		
+
 		if [ -z "$scan_find_timeout" ];then
 			scan_find_timeout=0
 		fi
@@ -1440,15 +1379,243 @@ scan() {
 			pkill -f lmd_find_sleep >> /dev/null 2>&1
 		fi
 	fi
+}
+
+_run_yara_scan() {
+	if [ "$scan_yara" == "1" ]; then
+		local yara_filelist
+		yara_filelist=$(_yara_filter_filelist "$1")
+		scan_stage_yara "$yara_filelist"
+		rm -f "$yara_filelist"
+	fi
+}
+
+_clamd_retry_scan() {
+	local _filelist="$1" _cleanup="$2"
+	if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
+		local try=0
+		while [ $try -le $remote_clamd_max_retry ]; do
+			[ "$_cleanup" == "1" ] && cleanup_scanlist "$_filelist"
+			$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$clamscan_results" 2>> "$clamscan_log"
+			clamscan_return=$?
+			if [ "$clamscan_return" == "2" ]; then
+				((try++))
+				echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $remote_clamd_retry_sleep seconds ($try)" >> "$clamscan_log"
+				sleep "$remote_clamd_retry_sleep"
+			else
+				break
+			fi
+		done
+	else
+		$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$clamscan_results" 2>> "$clamscan_log"
+		clamscan_return=$?
+	fi
+}
+
+# shellcheck disable=SC2154
+_process_clamav_hits() {
+	local _results="$1" _progress="$2"
+	lbreakifs set
+	while IFS= read -r hit; do
+		file="${hit#*:}"
+		signame="${hit%%:*}"
+		if [[ "$signame" == *YARA* ]]; then
+			signame="${signame/YARA./{YARA\}}"
+		elif [[ "$signame" != *HEX* ]] && [[ "$signame" != *MD5* ]]; then
+			signame="{CAV}$signame"
+		fi
+		ignore_hit=$(echo $signame | grep -E -vf $ignore_sigs)
+		if [ -f "$file" ] && [ ! -z "$ignore_hit" ]; then
+			record_hit "$file" "$signame"
+			quarantine "$file" "$signame"
+			if [ "$_progress" == "1" ] && [ ! "$set_background" == "1" ]; then
+				if [ -z "$hscan" ]; then
+					echo -en "\\033[${res_col}G" && echo -n "maldet($$): {scan} processing scan results for hits: $progress_hits hits $progress_cleaned cleaned"
+				fi
+				cnt="$tot_files"
+			fi
+		fi
+		unset ignore_hit
+	done < <(grep -E -v 'ERROR$|lstat\(\)|no reply from clamd' "$_results" | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//')
+	lbreakifs unset
+}
+
+# shellcheck disable=SC2154
+_scan_run_clamav() {
+	if [ -z "$hscan" ]; then
+		eout "{scan} found clamav binary at $clamscan, using clamav scanner engine..." 1
+	fi
+	if [ "$string_length_scan" == "1" ]; then
+		if [ -z "$hscan" ]; then
+			eout "{scan} preprocessing file list for string length hits..." 1
+			scan_strlen list "$find_results" >> /dev/null 2>&1
+		fi
+	fi
+	if [ -z "$hscan" ]; then
+		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
+	fi
+
+	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan start"  >> $clamscan_log
+	clamscan_results=$(mktemp "$tmpdir/.clamscan.XXXXXX")
+	chmod 600 "$clamscan_results"
+	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) executed: $nice_command $clamscan $clamopts --infected --no-summary -f $find_results" >> $clamscan_log
+	_clamd_retry_scan "$find_results"
+	if [ "$clamscan_return" == "2" ]; then
+		if [ "$quarantine_on_error" == "0" ] || [ -z "$quarantine_on_error" ]; then
+			quarantine_hits=0
+			eout "{scan} clamscan returned an error, check $clamscan_log for details; quarantine_on_error=0 or unset, quarantine has been disabled!" 1
+		else
+			eout "{scan} clamscan returned an error, check $clamscan_log for details!" 1
+		fi
+	fi
+	clamscan_fatal_error=$(grep -m1 'no reply from clamd' "$clamscan_results")
+	if [ "$clamscan_fatal_error" ]; then
+		quarantine_hits=0
+		eout "{scan} clamscan returned a fatal error in scan results, check $clamscan_log for details; quarantine has been disabled!" 1
+	fi
+	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> $clamscan_log
+	_process_clamav_hits "$clamscan_results" 1
+	_run_yara_scan "$find_results"
+}
+
+# shellcheck disable=SC2154
+_scan_run_native() {
+	if [ -z "$hscan" ]; then
+		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
+	fi
+	lbreakifs set
+	if [ ! -f "$scan_session" ]; then
+		touch $scan_session
+	fi
+
+	while read rpath; do
+		((cnt++))
+		if [ -z "$hscan" ] && [ ! "$set_background" == "1" ] && [ -z "$single_filescan" ]; then
+			echo -en "\\033[${res_col}G" && echo -n "maldet($$): {scan} $cnt/$tot_files files scanned: $progress_hits hits $progress_cleaned cleaned"
+		fi
+		if [ -f "$rpath" ]; then
+			scan_stage1 "$rpath" >> /dev/null 2>&1
+		fi
+
+	done < $find_results
+	lbreakifs unset
+	_run_yara_scan "$find_results"
+}
+
+_count_signatures() {
+	local _md5_src="$1" _hex_src="$2"
+	md5_sigs=$($wc -l < "$_md5_src")
+	hex_sigs=$($wc -l < "$_hex_src")
+	yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)
+	user_yara_sigs=0
+	if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
+		user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$sig_user_yara_file" 2>/dev/null || true)))
+	fi
+	for _yar in "$sig_user_yara_dir"/*.yar "$sig_user_yara_dir"/*.yara; do
+		if [ -f "$_yar" ] && [ -s "$_yar" ]; then
+			user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$_yar" 2>/dev/null || true)))
+		fi
+	done
+	if [ ! -f "$sig_user_md5_file" ]; then
+		user_md5_sigs=0
+	else
+		user_md5_sigs=$($wc -l < "$sig_user_md5_file")
+	fi
+	if [ ! -f "$sig_user_hex_file" ]; then
+		user_hex_sigs=0
+	else
+		user_hex_sigs=$($wc -l < "$sig_user_hex_file")
+	fi
+	user_sigs=$((user_hex_sigs + user_md5_sigs + user_yara_sigs))
+	tot_sigs=$((md5_sigs + hex_sigs + yara_sigs + user_sigs))
+}
+
+scan() {
+	scan_start_hr=$(date +"%b %e %Y %H:%M:%S %z")
+	scan_start=$(date +"%s")
+	spaths_str=$(echo "$1" | tr '?' '*' | tr ',' '\n')
+	spaths=()
+	while IFS= read -r pattern; do
+	  [ -z "$pattern" ] && continue
+	  expanded=( $pattern )
+	  spaths+=( "${expanded[@]}" )
+	done <<< "$spaths_str"
+	days="$2"
+	scanid="$datestamp.$$"
+	if [ "$file_list" ]; then
+		spath="\"$file_list\""
+	elif [ ! -f "$find" ]; then
+		eout "{scan} could not locate find command" 1
+		clean_exit
+		exit 1
+	fi
+	if [ -f "$spath" ] && [ -z "$file_list" ]; then
+		single_filescan=1
+	fi
+	
+	if [ ! -f "$sig_md5_file" ]; then
+		eout "{scan} required signature file not found ($sig_md5_file), try running -u|--update, aborting!" 1
+		clean_exit
+		exit 1
+	fi
+	if [ ! -f "$sig_hex_file" ]; then
+		eout "{scan} required signature file not found ($sig_hex_file), try running -u|--update, aborting!" 1
+		clean_exit
+		exit 1
+	fi
+	if [ ! -f "$ignore_paths" ]; then
+		touch $ignore_paths
+		chmod 640 $ignore_paths
+	fi
+	if [ ! -f "$ignore_sigs" ]; then
+		touch $ignore_sigs
+		chmod 640 $ignore_sigs
+	fi
+		
+	if [ ! "$days" == "all" ] && [ -z "$file_list" ]; then
+		if [[ "$days" =~ [[:alpha:]] ]]; then
+			eout "{scan} days value must be numeric value in the range of 1 - 90, reverting to default (7)." 1
+			days=7
+		elif [ "$days" -lt "1" ] || [ "$days" -gt "90" ]; then
+			eout "{scan} days value must be numeric value in the range of 1 - 90, reverting to default (7)." 1
+			days=7
+		fi
+	fi
+	
+	for p in "${spaths[@]}"; do
+	  if [ "${p:0:1}" != "/" ]; then
+	    eout "{scan} must use absolute path, provided relative path '$p'" 1
+	    exit 1
+	  fi
+	done
+
+	scan_session=$(mktemp "$tmpdir/.sess.XXXXXX")
+	find_results=$(mktemp "$tmpdir/.find.XXXXXX")
+	
+	gensigs
+	if [ "$scan_clamscan" == "1" ]; then
+		clamselector
+	fi
+
+	_count_signatures "$runtime_md5" "$runtime_hexstrings"
+	if [ -z "$hscan" ]; then
+		local yara_label="YARA"
+		if [ "$scan_yara" != "1" ]; then
+			yara_label="YARA(cav)"
+		fi
+		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
+	fi
+	_build_scan_filters
+	_scan_build_filelist
 	if [ ! -f "$find_results" ] || [ ! -s "$find_results" ]; then
 		if [ -z "$hscan" ]; then
 			if [ "$days" == "all" ]; then
 				eout "{scan} scan returned empty file list; check that path exists and contains files in scope of configuration." 1
-				rm -f $find_results $scan_session $runtime_ndb $runtime_hdb $runtime_hexstrings $clamscan_results $tmpdir/.tmpf*
+				_scan_cleanup
 				exit 0
 			else
 				eout "{scan} scan returned empty file list; check that path exists, contains files in days range or files in scope of configuration." 1
-				rm -f $find_results $scan_session $runtime_ndb $runtime_hdb $runtime_hexstrings $clamscan_results
+				_scan_cleanup
 				exit 0
 			fi
 		fi
@@ -1456,7 +1623,7 @@ scan() {
 	
 	res_col="1"
 	move_to_col="echo -en \\033[${res_col}G"
-	tot_files=$($wc -l $find_results | awk '{print$1}')
+	tot_files=$($wc -l < "$find_results")
 	if [ -z "$hscan" ] && [ -z "$single_filescan" ]; then
 		if [ "$file_list" ]; then
 			eout "{scan} user supplied file list '$file_list', found $tot_files files..." 1
@@ -1479,111 +1646,9 @@ scan() {
 		eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
 	fi
 	if [ -f "$clamscan" ] && [ "$scan_clamscan" == "1" ]; then
-		if [ -z "$hscan" ]; then
-			eout "{scan} found clamav binary at $clamscan, using clamav scanner engine..." 1
-		fi
-		if [ "$string_length_scan" == "1" ]; then
-			if [ -z "$hscan" ]; then
-				eout "{scan} preprocessing file list for string length hits..." 1
-				scan_strlen list "$find_results" >> /dev/null 2>&1
-			fi
-		fi
-		if [ -z "$hscan" ]; then
-			eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
-		fi
-
-		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan start"  >> $clamscan_log
-		clamscan_results=$(mktemp "$tmpdir/.clamscan.XXXXXX")
-		chmod 600 "$clamscan_results"
-		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) executed: $nice_command $clamscan $clamopts --infected --no-summary -f $find_results" >> $clamscan_log
-		if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
-                        try=0
-                        while [ $try -le $remote_clamd_max_retry ]; do
-                                $nice_command $clamscan $clamopts --infected --no-summary -f $find_results > $clamscan_results 2>> $clamscan_log
-                                clamscan_return=$?
-                                if [ "$clamscan_return" == "2" ]; then
-                                        ((try++))
-                                        echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $remote_clamd_retry_sleep seconds ($try)"
-                                        sleep $remote_clamd_retry_sleep
-                                else
-                                        break
-                                fi
-                        done
-                else
-                        $nice_command $clamscan $clamopts --infected --no-summary -f $find_results > $clamscan_results 2>> $clamscan_log
-                        clamscan_return=$?
-                fi
-		if [ "$clamscan_return" == "2" ]; then
-			if [ "$quarantine_on_error" == "0" ] || [ -z "$quarantine_on_error" ]; then
-				quarantine_hits=0
-				eout "{scan} clamscan returned an error, check $clamscan_log for details; quarantine_on_error=0 or unset, quarantine has been disabled!" 1
-			else
-				eout "{scan} clamscan returned an error, check $clamscan_log for details!" 1
-			fi
-		fi
-		clamscan_fatal_error=$(grep -m1 'no reply from clamd' $clamscan_results)
-		if [ "$clamscan_fatal_error" ]; then
-			quarantine_hits=0
-                        eout "{scan} clamscan returned a fatal error in scan results, check $clamscan_log for details; quarantine has been disabled!" 1
-		fi
-		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> $clamscan_log
-
-		lbreakifs set
-		while IFS= read -r hit; do
-			file="${hit#*:}"
-			signame="${hit%%:*}"
-			if [[ "$signame" == *YARA* ]]; then
-				signame="${signame/YARA./{YARA\}}"
-			elif [[ "$signame" != *HEX* ]] && [[ "$signame" != *MD5* ]]; then
-				signame="{CAV}$signame"
-			fi
-			ignore_hit=$(echo $signame | grep -E -vf $ignore_sigs)
-			if [ ! -z "$ignore_hit" ]; then
-			 record_hit "$file" "$signame"
-			 quarantine "$file" "$signame"
-			 if [ ! "$set_background" == "1" ]; then
-				if [ -z "$hscan" ]; then
-					echo -en "\\033[${res_col}G" && echo -n "maldet($$): {scan} processing scan results for hits: $progress_hits hits $progress_cleaned cleaned"
-				fi
-				cnt="$tot_files"
-			 fi
-			fi
-			unset ignore_hit
-		done < <(grep -E -v 'ERROR$|lstat()|no reply from clamd' "$clamscan_results" | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//')
-		lbreakifs unset
-		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end"  >> $clamscan_log
-		if [ "$scan_yara" == "1" ]; then
-			local yara_filelist
-			yara_filelist=$(_yara_filter_filelist "$find_results")
-			scan_stage_yara "$yara_filelist"
-			rm -f "$yara_filelist"
-		fi
+		_scan_run_clamav
 	else
-		if [ -z "$hscan" ]; then
-			eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
-		fi
-		lbreakifs set
-		if [ ! -f "$scan_session" ]; then
-			touch $scan_session
-		fi
-		
-		while read rpath; do
-			((cnt++))
-			if [ -z "$hscan" ] && [ ! "$set_background" == "1" ] && [ -z "$single_filescan" ]; then
-				echo -en "\\033[${res_col}G" && echo -n "maldet($$): {scan} $cnt/$tot_files files scanned: $progress_hits hits $progress_cleaned cleaned"
-			fi
-			if [ -f "$rpath" ]; then
-				scan_stage1 "$rpath" >> /dev/null 2>&1
-			fi
-			
-		done < $find_results
-		lbreakifs unset
-		if [ "$scan_yara" == "1" ]; then
-			local yara_filelist
-			yara_filelist=$(_yara_filter_filelist "$find_results")
-			scan_stage_yara "$yara_filelist"
-			rm -f "$yara_filelist"
-		fi
+		_scan_run_native
 	fi
 
 	if [ -z "$hscan" ]; then
@@ -1620,16 +1685,16 @@ scan() {
 	
 	if [ ! "$tot_hits" == "0" ]; then
 		if [ "$email_ignore_clean" == "1" ] && [ ! "$tot_hits" == "$tot_cl" ]; then
-			genalert file $nsess
+			genalert file "$nsess"
 		elif [ "$email_ignore_clean" == "0" ]; then
-			genalert file $nsess
+			genalert file "$nsess"
 		fi
 		if [ "$email_panel_user_alerts" == "1" ]; then
-			genalert panel $nsess
+			genalert panel "$nsess"
 		fi
 	fi
-	mv $scan_session $nsess_hits
-	rm -f $find_results $scan_session $runtime_ndb $runtime_hdb $runtime_hexstrings $clamscan_results
+	mv "$scan_session" "$nsess_hits"
+	_scan_cleanup
 }
 
 scan_strlen() {
@@ -1662,12 +1727,11 @@ scan_stage1() {
 	local _md5out
 	_md5out="$($md5sum "$file")"
 	hash="${_md5out%% *}"
-	if [ -z "$runtime_hexstrings" ]; then
-		sigignore
+	if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ]; then
 		gensigs
 	fi
 	if  [ ! -z "$hash" ]; then
-		val_hash=$(grep -m1 $hash $sig_user_md5_file $sig_md5_file)
+		val_hash=$(grep -m1 "$hash" "$runtime_md5")
 		if [ ! -z "$val_hash" ]; then
 			md5_hit="$hash"
 			local _tmp="${val_hash#*:}" ; _tmp="${_tmp#*:}" ; _tmp="${_tmp#*:}"
@@ -1703,7 +1767,7 @@ scan_stage2() {
 			else
 				$od -v -w64 -N$scan_hexfifo_depth -tx1 "$file" | cut -c9-256 | tr -d '\n ' > $hex_fifo_path 2>&1 &
 			fi
-			val_hex=$($perl $hex_fifo_script $runtime_hexstrings)
+			val_hex=$($perl $hex_fifo_script $runtime_hexstrings "$hex_fifo_path")
 		else
 			if [ "$os_freebsd" == "1" ]; then
 				val_hex=$($perl $hex_string_script $runtime_hexstrings $($od -v -N$scan_hexdepth -tx1 "$file" | cut -c12-256 | tr -d ' \n'))
@@ -1714,7 +1778,6 @@ scan_stage2() {
 		if [ ! -z "$val_hex" ]; then
 			hex_hit="${val_hex%% *}"
 			hex_hitname="${val_hex#* }"
-			hex_hitname="${hex_hitname% }"
 			if [ "$clean_check" == "1" ]; then
 				clean_failed=1
 			else
@@ -1961,9 +2024,19 @@ scan_stage_yara() {
 	eout "{yara} native YARA scan stage completed"
 }
 
+_json_escape() {
+	local s="$1"
+	s="${s//\\/\\\\}"
+	s="${s//\"/\\\"}"
+	s="${s//$'\n'/\\n}"
+	s="${s//$'\t'/\\t}"
+	s="${s//$'\r'/\\r}"
+	printf '%s' "$s"
+}
+
 gen_report() {
 	if [ -f "$scan_session" ]; then
-		tot_hits=$($wc -l $scan_session | awk '{print$1}')
+		tot_hits=$($wc -l < "$scan_session")
 		nsess_hits="$sessdir/session.hits.$datestamp.$$"
 		echo "$datestamp.$$" > $sessdir/session.last
 		nsess="$sessdir/session.$datestamp.$$"
@@ -1976,7 +2049,7 @@ trim_log() {
 	log="$1"
 	logtrim="$2"
 	if [ -f "$log" ]; then
-		log_size=$($wc -l "$log" | awk '{print$1}')
+		log_size=$($wc -l < "$log")
 		if [ "$log_size" -gt "$logtrim" 2> /dev/null ]; then
 			trim=$((logtrim/10))
 			local tmplog=$(mktemp "${log}.trim.XXXXXX")
@@ -1996,17 +2069,10 @@ genalert() {
 	file="$2"
         if [ "$email_alert" == "1" ] || [ "$type" == "digest" ] || [ "$type" == "daily" ]; then
 		if [ "$type" == "file" ] && [ -f "$file" ]; then
-			if [ -f "$mail" ]; then
-                cat $file | $mail -s "$email_subj" $email_addr
-            elif [ -f "$sendmail" ]; then
-                if ! grep -q "SUBJECT: " "$file"; then
-                    echo -e "SUBJECT: $email_subj\n$(cat $file)" > $file
-                fi
-                cat $file | $sendmail -t $email_addr
-            else
-                eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
-            fi
-			if [ ! "$(whoami)" == "root" ] && [ -z "$(echo $2 | grep '\@')" ]; then
+			if ! _send_email "$file" "$email_subj" "$email_addr"; then
+				eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
+			fi
+			if [ ! "$(whoami)" == "root" ] && [[ "$2" != *@* ]]; then
 				if [ -z "$hscan" ]; then
 					eout "{alert} sent scan report to config default $email_addr" 1
 					eout "{alert} send scan report to an alternate address with: maldet --report $datestamp.$$ you@domain.com" 1
@@ -2084,7 +2150,7 @@ genalert() {
                 	        cat "$tmpf" | $sendmail -t
                 	    elif [ -f "$mail" ] && [ "$control_panel" == "cpanel" ]; then
                 	        . "$email_panel_alert_etpl"
-                	    	cat "$tmpf" | $mail -r $email_panel_from -s $email_panel_alert_subj $contact_emails
+                	    	cat "$tmpf" | $mail -r "$email_panel_from" -s "$email_panel_alert_subj" "$contact_emails"
                 	    else 
                 	        eout "{panel} No compatible \$sendmail or \$mail binaries found, control panel account alerts disabled."
                 	    fi   
@@ -2101,7 +2167,7 @@ genalert() {
 			scan_start_elapsed=$(($(date +'%s')-$(date -d "$scan_start_hr" +'%s')))
 			inotify_run_time="$(($scan_start_elapsed/86400))d:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))/3600))h:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%3600/60))m:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%60))s"
 
-			rm -f $tmpdir/.digest.alert.hits $tmpdir/.digest.clean.hits $tmpdir/.digest.monitor.alert $tmpdir/.digest.susp.hits
+			rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
 
 			scanid="$datestamp.$$"
 			scan_session=$(cat "$sessdir/session.monitor.current")
@@ -2125,24 +2191,17 @@ genalert() {
 			tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" >> /dev/null 2>&1
 			tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" >> /dev/null 2>&1
 
-			if [ ! -z "$(cat $tmpdir/.digest.alert.hits)" ]; then
+			if [ ! -z "$(cat "$tmpdir/.digest.alert.hits")" ]; then
 				tmpf=$(mktemp "$tmpdir/.alert.XXXXXX")
 				if [ "$tot_hits" -gt "$tot_files" ]; then
 					tot_files="$tot_hits"
 				fi
-				. $email_template
-				cp $tmpf $sessdir/session.$scanid
-				grep -E '^{.*}' $sessdir/session.$scanid > $sessdir/session.hits.$scanid
-				echo "$scanid" > $sessdir/session.last
+				. "$email_template"
+				cp "$tmpf" "$sessdir/session.$scanid"
+				grep -E '^{.*}' "$sessdir/session.$scanid" > "$sessdir/session.hits.$scanid"
+				echo "$scanid" > "$sessdir/session.last"
 				local digest_subj="${email_subj}: monitor summary"
-				if [ -f "$mail" ]; then
-					cat $tmpf | $mail -s "$digest_subj" $email_addr
-					eout "{alert} sent $type alert to $email_addr"
-		                elif [ -f "$sendmail" ]; then
-					if ! grep -q "SUBJECT: " "$tmpf"; then
-						echo -e "SUBJECT: $digest_subj\n$(cat $tmpf)" > $tmpf
-					fi
-					cat $tmpf | $sendmail -t $email_addr
+				if _send_email "$tmpf" "$digest_subj" "$email_addr"; then
 					eout "{alert} sent $type alert to $email_addr"
 				else
 					eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
@@ -2150,7 +2209,7 @@ genalert() {
 				# set file for slack/telegram alerts below
 				file="$tmpf"
 				digest_tmpf="$tmpf"
-				rm -f $tmpdir/.digest.alert.hits $tmpdir/.digest.clean.hits $tmpdir/.digest.monitor.alert $tmpdir/.digest.susp.hits
+				rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
 			fi
 		else
 			eout "{alert} file input error, alert discarded."
@@ -2185,10 +2244,12 @@ genalert() {
 					else
 						local complete_rc=0
 						local complete_response
+						local escaped_slack_subj
+						escaped_slack_subj=$(_json_escape "$slack_subj")
 						complete_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -X POST "https://slack.com/api/files.completeUploadExternal" \
 							-H "Authorization: Bearer $slack_token" \
 							-H "Content-Type: application/json" \
-							-d "{\"files\":[{\"id\":\"$upload_file_id\",\"title\":\"$slack_subj\"}],\"channels\":\"$slack_channels\"}") || complete_rc=$?
+							-d "{\"files\":[{\"id\":\"$upload_file_id\",\"title\":\"$escaped_slack_subj\"}],\"channels\":\"$slack_channels\"}") || complete_rc=$?
 						if [ "$complete_rc" -ne 0 ]; then
 							eout "{alert} slack completeUploadExternal curl failed (exit $complete_rc), alert discarded" 1
 						elif echo "$complete_response" | grep -q '"ok":true'; then
@@ -2270,15 +2331,7 @@ monitor_cycle() {
 		fi
 		log_size=$($wc -l < "$inotify_log")
 		if [ "$log_size" -ge "$inotify_trim" ]; then
-			trim=$(($log_size - 1000))
-			local bytes_removed
-			bytes_removed=$(head -n "$trim" "$inotify_log" 2>/dev/null | $wc -c)
-			tlog_adjust_cursor "inotify" "$tmpdir" "$bytes_removed"
-			local tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
-			tail -n +"$((trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
-			cat "$tmplog" > "$inotify_log" 2>/dev/null
-			rm -f "$tmplog"
-			eout "{mon} inotify log file trimmed"
+			_inotify_trim_log "$(($log_size - 1000))"
 		fi
 		if [ "$inotify_cycle_runtime" -ge "$inotify_reloadtime" ] || [ -f "$inspath/reload_monitor" ]; then
 			if [ -f "$inspath/reload_monitor" ]; then
@@ -2294,33 +2347,7 @@ monitor_cycle() {
 				source "$syscnf"
 			fi
 			inotify_cycle_runtime=0
-		        ignore_fext_args=()
-		        if [ -f "$ignore_file_ext" ] && [ -s "$ignore_file_ext" ]; then
-		                while IFS= read -r i; do
-		                        ignore_fext_args+=(-not -iname "*$i")
-		                done < "$ignore_file_ext"
-		        fi
-		        if [ "$scan_ignore_root" == "1" ]; then
-		                ignore_root="-not -uid 0 -not -gid 0"
-		        fi
-		        if [ "$scan_ignore_user" ]; then
-		                while IFS= read -r i; do
-		                        if [ "$ignore_user" == "" ]; then
-		                                ignore_user="-not -user $i"
-		                        else
-		                                ignore_user="$ignore_user -not -user $i"
-		                        fi
-		                done < <(echo "$scan_ignore_user" | tr ', ' '\n' | grep -v '^$')
-		        fi
-		        if [ "$scan_ignore_group" ]; then
-		                while IFS= read -r i; do
-		                        if [ "$ignore_group" == "" ]; then
-		                                ignore_group="-not -group $i"
-		                        else
-		                                ignore_group="$ignore_group -not -group $i"
-		                        fi
-		                done < <(echo "$scan_ignore_group" | tr ', ' '\n' | grep -v '^$')
-		        fi
+			_build_scan_filters
 			_yara_bin="" _yara_type="" _yara_has_scan_list=""
 			eout "{mon} reloaded configuration data" 1
 		fi
@@ -2332,8 +2359,7 @@ monitor_cycle() {
 			_md5out="$(md5sum "$ignore_sigs")"
 			ignore_sigs_current_md5="${_md5out%% *}"
 			if [ ! "$ignore_sigs_current_md5" == "$ignore_sigs_last_md5" ]; then
-				sigignore 1
-				gensigs
+				gensigs 1
 				_md5out="$(md5sum "$ignore_sigs")"
 				ignore_sigs_current_md5="${_md5out%% *}"
 	                        eout "{mon} regenerated signature files on ignore_sigs file change detected" 1
@@ -2376,25 +2402,9 @@ monitor_check() {
 			return
 		fi
 		if [ "$scan_clamscan" == "1" ]; then
-	                clamscan_results=$(mktemp "$tmpdir/.clamscan.result.XXXXXX")
+			clamscan_results=$(mktemp "$tmpdir/.clamscan.result.XXXXXX")
 			chmod 600 "$clamscan_results"
-                        if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
-                                try=0
-                                while [ $try -le $remote_clamd_max_retry ]; do
-                                        cleanup_scanlist $monitor_scanlist
-                                        $nice_command $clamscan $clamopts --infected --no-summary -f $monitor_scanlist > $clamscan_results 2>> $clamscan_log
-                                        clamscan_return=$?
-                                        if [ "$clamscan_return" == "2" ]; then
-                                                ((try++))
-                                                echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $remote_clamd_retry_sleep seconds ($try)" >> $clamscan_log
-                                                sleep $remote_clamd_retry_sleep
-                                        else
-                                                break
-                                        fi
-                                done
-                        else
-                                $nice_command $clamscan $clamopts --infected --no-summary -f $monitor_scanlist > $clamscan_results 2>> $clamscan_log || clamscan_return=$?
-                        fi
+			_clamd_retry_scan "$monitor_scanlist" 1
 			clamscan_fatal_error=$(grep -m1 'no reply from clamd' "$clamscan_results")
 			if [ "$clamscan_fatal_error" ]; then
 				eout "{mon} clamscan returned a fatal error (no reply from clamd), skipping quarantine for this cycle" 1
@@ -2406,31 +2416,10 @@ monitor_check() {
 					eout "{mon} inotify clamav file scan on $file"
 				done < "$monitor_scanlist"
 			fi
-			lbreakifs set
-			while IFS= read -r hit; do
-	                        file="${hit#*:}"
-        	                signame="${hit%%:*}"
-	                        if [[ "$signame" == *YARA* ]]; then
-                        	        signame="${signame/YARA./{YARA\}}"
-                	        elif [[ "$signame" != *HEX* ]] && [[ "$signame" != *MD5* ]]; then
-        	                        signame="{CAV}$signame"
-	                        fi
-	                        ignore_hit=$(echo $signame | grep -E -vf $ignore_sigs)
-				if [ -f "$file" ] && [ ! -z "$ignore_hit" ]; then
-	                        	record_hit "$file" "$signame"
-	        	                quarantine "$file" "$signame"
-				fi
-				unset ignore_hit
-			done < <(grep -E -v 'ERROR$|lstat()|no reply from clamd' "$clamscan_results" | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//')
-			lbreakifs unset
+			_process_clamav_hits "$clamscan_results"
 			scanned_count=$($wc -l < "$monitor_scanlist")
 			eout "{mon} scanned ${scanned_count} new/changed files with clamav engine"
-			if [ "$scan_yara" == "1" ]; then
-				local yara_filelist
-				yara_filelist=$(_yara_filter_filelist "$monitor_scanlist")
-				scan_stage_yara "$yara_filelist"
-				rm -f "$yara_filelist"
-			fi
+			_run_yara_scan "$monitor_scanlist"
 			rm -f $clamscan_results $monitor_scanlist
 		else
 			while IFS= read -r file; do
@@ -2446,12 +2435,7 @@ monitor_check() {
 			done < "$monitor_scanlist"
 			scanned_count=$($wc -l < "$monitor_scanlist")
 			eout "{mon} scanned ${scanned_count} new/changed files with native engine"
-			if [ "$scan_yara" == "1" ]; then
-				local yara_filelist
-				yara_filelist=$(_yara_filter_filelist "$monitor_scanlist")
-				scan_stage_yara "$yara_filelist"
-				rm -f "$yara_filelist"
-			fi
+			_run_yara_scan "$monitor_scanlist"
 			rm -f $clamscan_results $monitor_scanlist
 		fi
 }
@@ -2516,7 +2500,7 @@ monitor_init() {
 	touch $inotify_log
 	chmod 640 $inotify_log
 	
-	if [ "$(echo $inopt | grep -iE 'user(s?)')" ]; then
+	if [[ "$inopt" =~ ^[Uu][Ss][Ee][Rr][Ss]?$ ]]; then
 		while IFS=':' read -r user user_id user_home; do
 			icnt=$((icnt + 1))
 			if [ "$user_id" -ge "$inotify_minuid" ]; then
@@ -2563,7 +2547,7 @@ monitor_init() {
 			fi
 		done < "$inopt"
 
-	elif [ -d "$inopt" ] || [ "$(echo $inopt | grep -E ".*,.*")" ]; then
+	elif [ -d "$inopt" ] || [[ "$inopt" == *,* ]]; then
 		while IFS= read -r i; do
 			if [ -d "$i" ]; then
 				eout "{mon} added $i to inotify monitoring array" 1
@@ -2601,20 +2585,7 @@ monitor_init() {
                 inotify_ionice=6
         fi
 
-        if [ -f "$nice" ]; then
-                nice_command="$nice -n $inotify_cpunice"
-        fi
-        if [ -f "$ionice" ]; then
-                nice_command="$nice_command $ionice -c2 -n $inotify_ionice"
-        fi
-        if [ -f "$cpulimit" ] && [ "$inotify_cpulimit" -gt 0 ] 2>/dev/null; then
-                max_cpulimit=$(( $(grep -E -w processor /proc/cpuinfo -c) * 100 ))
-                if [ "$inotify_cpulimit" -gt "$max_cpulimit" ]; then
-                        inotify_cpulimit="0"
-		else
-	                nice_command="$cpulimit -l $inotify_cpulimit -- $nice_command"
-                fi
-        fi
+        _build_nice_command "$inotify_cpunice" "$inotify_ionice" "$inotify_cpulimit"
 
 	$nice_command $inotify -r --fromfile $inotify_fpaths $exclude --timefmt "%d %b %H:%M:%S" --format "%w%f %e %T" -m -e create,move,modify >> $inotify_log 2>&1 &
 	sleep 2
@@ -2667,7 +2638,7 @@ EOT
 	elif [ -d "$file" ]; then
 		tmpf=$(mktemp "$tmpdir/.co.XXXXXX")
 		find "$file" -type f > "$tmpf"
-		cofiles=$($wc -l "$tmpf" | awk '{print$1}')
+		cofiles=$($wc -l < "$tmpf")
 		if [ "$cofiles" -ge "50" ]; then
 			eout "{checkout} path $file contains $cofiles files, limit of 50 file uploads, aborting!" 1
 			rm -f "$tmpf"
@@ -2698,9 +2669,11 @@ EOT
 }
 
 gensigs() {
+	local _silent="$1"
 	runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.XXXXXX")
 	runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.XXXXXX")
 	runtime_hexstrings=$(mktemp "$tmpdir/.runtime.hexsigs.XXXXXX")
+	runtime_md5=$(mktemp "$tmpdir/.runtime.md5sigs.XXXXXX")
 	ln -fs $runtime_ndb $sigdir/lmd.user.ndb 2> /dev/null
 	ln -fs $runtime_hdb $sigdir/lmd.user.hdb 2> /dev/null
 	if [ ! -f "$sig_user_yara_file" ]; then
@@ -2712,14 +2685,19 @@ gensigs() {
 		chmod 755 "$sig_user_yara_dir"
 	fi
 	if [ -s "$sig_user_hex_file" ]; then
-		cat "$sig_hex_file" "$sig_user_hex_file" | grep -vE '^\s*$' > $runtime_hexstrings
+		cat "$sig_hex_file" "$sig_user_hex_file" | grep -vE '^\s*$' > "$runtime_hexstrings"
 	else
-		cat "$sig_hex_file" > $runtime_hexstrings
+		cat "$sig_hex_file" > "$runtime_hexstrings"
+	fi
+	if [ -s "$sig_user_md5_file" ]; then
+		cat "$sig_md5_file" "$sig_user_md5_file" | grep -vE '^\s*$' > "$runtime_md5"
+	else
+		cat "$sig_md5_file" > "$runtime_md5"
 	fi
         for cp in $clamav_paths; do
         	clamav_linksigs "$cp"
         done
-	
+
 	if [ "$scan_clamscan" == "1" ]; then
 		if [ -s "$sig_user_hex_file" ]; then
 			while IFS= read -r i; do
@@ -2739,21 +2717,24 @@ gensigs() {
 			cp "$sig_cav_md5_file" "$runtime_hdb"
 		fi
 	fi
-}
 
-sigignore() {
-	sil="$1"
-	chk=$($wc -l $ignore_sigs | awk '{print$1}')
-	if [ ! "$chk" == "0" ]; then
-		cat $sig_hex_file | grep -E -vf $ignore_sigs > $sig_hex_file.new
-		mv $sig_hex_file.new $sig_hex_file
-		cat $sig_md5_file | grep -E -vf $ignore_sigs > $sig_md5_file.new
-		mv $sig_md5_file.new $sig_md5_file
-		chmod 640 $sig_md5_file $sig_hex_file
-		if [ "$sil" == "1" ] || [ "$hscan" == "1" ]; then
-			eout "{glob} processed $chk signature ignore entries"
-		else
-			eout "{glob} processed $chk signature ignore entries" 1
+	# Apply ignore_sigs filtering to runtime copies (non-destructive)
+	if [ -f "$ignore_sigs" ]; then
+		local _ign_count
+		_ign_count=$($wc -l < "$ignore_sigs")
+		if [ "$_ign_count" != "0" ]; then
+			local _tmpfilt
+			_tmpfilt=$(mktemp "$tmpdir/.sigfilt.XXXXXX")
+			grep -E -vf "$ignore_sigs" "$runtime_hexstrings" > "$_tmpfilt" || true
+			cat "$_tmpfilt" > "$runtime_hexstrings"
+			grep -E -vf "$ignore_sigs" "$runtime_md5" > "$_tmpfilt" || true
+			cat "$_tmpfilt" > "$runtime_md5"
+			rm -f "$_tmpfilt"
+			if [ "$_silent" == "1" ] || [ "$hscan" == "1" ]; then
+				eout "{glob} processed $_ign_count signature ignore entries"
+			else
+				eout "{glob} processed $_ign_count signature ignore entries" 1
+			fi
 		fi
 	fi
 }
@@ -2904,12 +2885,12 @@ sigup() {
 	fi
 	
 	if [ -f "$sig_md5_file" ]; then
-		lines_md5=$($wc -l $sig_md5_file | awk '{print$1}')
+		lines_md5=$($wc -l < "$sig_md5_file")
 	else
 		lines_md5=0
 	fi
 	if [ -f "$sig_hex_file" ]; then
-		lines_hex=$($wc -l $sig_hex_file | awk '{print$1}')
+		lines_hex=$($wc -l < "$sig_hex_file")
 	else
 		lines_hex="0"
 	fi
@@ -3006,32 +2987,8 @@ sigup() {
 			exit 1
 		else
 			eout "{sigup} signature set update completed" 1
-			sigignore
-			
-			hex_sigs=$($wc -l $sig_hex_file | awk '{print$1}')
-			md5_sigs=$($wc -l $sig_md5_file | awk '{print$1}')
-			yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)
-			user_yara_sigs=0
-			if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
-				user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$sig_user_yara_file" 2>/dev/null || true)))
-			fi
-			for _yar in "$sig_user_yara_dir"/*.yar "$sig_user_yara_dir"/*.yara; do
-				if [ -f "$_yar" ] && [ -s "$_yar" ]; then
-					user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$_yar" 2>/dev/null || true)))
-				fi
-			done
-			if [ ! -f "$sig_user_md5_file" ]; then
-				user_md5_sigs=0
-			else
-				user_md5_sigs=$($wc -l $sig_user_md5_file | awk '{print$1}')
-			fi
-			if [ ! -f "$sig_user_hex_file" ]; then
-				user_hex_sigs=0
-			else
-				user_hex_sigs=$($wc -l $sig_user_hex_file | awk '{print$1}')
-			fi
-			user_sigs=$((user_hex_sigs + user_md5_sigs + user_yara_sigs))
-			tot_sigs=$((md5_sigs + hex_sigs + yara_sigs + user_sigs))
+
+			_count_signatures "$sig_md5_file" "$sig_hex_file"
 			local yara_label="YARA"
 			if [ "$scan_yara" != "1" ]; then
 				yara_label="YARA(cav)"
@@ -3049,7 +3006,6 @@ sigup() {
 
 
 postrun() {
-	rm -f $find_results $scan_session $runtime_ndb $runtime_hdb $runtime_hexstrings $clamscan_results $tmpdir/.tmpf* 2> /dev/null
 	if [ ! "$tot_hits" ]; then
 		exit 0
 	elif [ "$tot_hits" == "0" ]; then

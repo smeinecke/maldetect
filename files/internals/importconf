@@ -5,7 +5,7 @@
 # This program may be freely redistributed under the terms of the GNU GPL v2
 ##
 #
-cat > /usr/local/maldetect/conf.maldet <<EOF
+cat > "$inspath/conf.maldet" <<EOF
 #
 ##
 # Linux Malware Detect v2.0.1
@@ -122,6 +122,12 @@ cron_prune_days="$cron_prune_days"
 # directories is performed via cron.
 # [0 = disabled, 1 = enabled]
 cron_daily_scan="$cron_daily_scan"
+
+# The number of days to look back for recently modified files during daily
+# cron scans. Files modified within this number of days will be scanned.
+# This value is passed as the DAYS argument to 'maldet -r PATH DAYS'.
+# [ integer, default = 1 ]
+scan_days="$scan_days"
 
 # When defined, the import_config_url option allows a configuration file to be
 # downloaded from a remote URL. The local conf.maldet and internals.conf are

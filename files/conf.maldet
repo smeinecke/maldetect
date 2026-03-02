@@ -115,6 +115,12 @@ cron_prune_days="21"
 # [0 = disabled, 1 = enabled]
 cron_daily_scan="1"
 
+# The number of days to look back for recently modified files during daily
+# cron scans. Files modified within this number of days will be scanned.
+# This value is passed as the DAYS argument to 'maldet -r PATH DAYS'.
+# [ integer, default = 1 ]
+scan_days="1"
+
 # When defined, the import_config_url option allows a configuration file to be
 # downloaded from a remote URL. The local conf.maldet and internals.conf are
 # parsed followed by the imported configuration file. As such, only variables

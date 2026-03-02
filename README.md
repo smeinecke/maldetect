@@ -171,6 +171,7 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `autoupdate_version_hashed` | Verify LMD executable MD5 against upstream | `1` |
 | `cron_prune_days` | Days to retain quarantine/session/temp data | `21` |
 | `cron_daily_scan` | Enable daily automatic scanning via cron | `1` |
+| `scan_days` | Days to look back for modified files in daily cron scans | `1` |
 | `import_config_url` | URL to download remote configuration override | — |
 | `import_config_expire` | Cache expiry for imported config (seconds) | `43200` |
 | `import_custsigs_md5_url` | URL to download custom MD5 signatures | — |
@@ -427,7 +428,7 @@ The cron job installed at `/etc/cron.daily/maldet` performs three tasks:
 
 1. **Prune** quarantine, session, and temp data older than `cron_prune_days` (default: 21)
 2. **Update** signatures and version (when `autoupdate_signatures` and `autoupdate_version` are enabled)
-3. **Scan** recently modified files under detected hosting panel paths
+3. **Scan** recently modified files under detected hosting panel paths (within `scan_days` days, default: 1)
 
 The daily scan auto-detects installed control panels and adjusts scan paths accordingly:
 

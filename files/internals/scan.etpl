@@ -89,6 +89,8 @@ if [ ! "$tot_hits" == "0" ]; then
 			hit_sig="${showhit%% :*}"
 			hit_file="${showhit#* : }"
 			hit_file="${hit_file%% =>*}"
+			hit_sig=$(_json_escape "$hit_sig")
+			hit_file=$(_json_escape "$hit_file")
 			$curl --output /dev/null --silent --show-error \
 				-XPOST "$elk_url" \
 				-H 'Content-Type: application/json' \
