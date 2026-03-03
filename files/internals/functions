@@ -73,22 +73,22 @@ prerun() {
 		chmod 640 "$maldet_log" 2> /dev/null
 		cd "$tmpdir"
 	else
-		echo "$ver" > "$lmd_version_file"
+		echo "$lmd_version" > "$lmd_version_file"
 	fi
 	
 	if [ ! -d "$sigdir" ]; then
-		mkdir -p $sigdir
-		chmod 755 $sigdir
+		mkdir -p "$sigdir"
+		chmod 750 "$sigdir"
 	fi
 	if [ ! -d "$logdir" ]; then
-		mkdir -p $logdir
-		chmod 755 $logdir
+		mkdir -p "$logdir"
+		chmod 750 "$logdir"
 	fi
 	if [ ! -d "$tmpdir" ]; then
-		mkdir -p $tmpdir
-		chmod 755 $tmpdir
+		mkdir -p "$tmpdir"
+		chmod 750 "$tmpdir"
 	else
-		chmod 755 $tmpdir
+		chmod 750 "$tmpdir"
 	fi
 	if [ ! -d "$sessdir" ]; then
 		mkdir -p $sessdir
@@ -114,12 +114,6 @@ prerun() {
 	if [ -z "$find" ]; then
 		header
 		echo "could not find required binary find, aborting."
-		exit 1
-	fi
-	
-	if [ -z "$perl" ]; then
-		header
-		echo "could not find required binary perl, aborting."
 		exit 1
 	fi
 	
@@ -151,17 +145,6 @@ prerun() {
 		chmod 755 "$sig_user_yara_dir"
 	fi
 
-	if [ "$scan_hexfifo" == "1" ]; then
-		mkfifo=$(command -v mkfifo 2> /dev/null)
-		if [ ! -f "$mkfifo" ]; then
-			scan_hexfifo=0
-		else
-			if [ -f "$mkfifo" ] && [ ! -p "$hex_fifo_path" ]; then
-				$mkfifo -m 600 "$hex_fifo_path"
-			fi
-		fi
-	fi
-	
 	if [ "$user" == "root" ]; then
 		$sed -i -e '/^$/d' $ignore_paths $ignore_sigs $ignore_inotify $ignore_file_ext
 	fi
@@ -510,7 +493,7 @@ usage: maldet [OPTION] [ARGUMENT]
     -U|--user USER              run as specified user
 
   monitoring:
-    -m|--monitor USERS|PATHS|FILE  start inotify real-time monitoring
+    -m|--monitor USERS|PATHS|FILE|RELOAD  start inotify monitoring
     -k|--kill-monitor           stop inotify monitoring
 
   quarantine & restore:
@@ -531,6 +514,7 @@ usage: maldet [OPTION] [ARGUMENT]
   other:
     -p|--purge                  clear logs, quarantine, temp data
     -c|--checkout FILE          submit suspected malware to rfxn.com
+    --mkpubpaths                create per-user pub/ data directories
     --web-proxy IP:PORT         set HTTP/HTTPS proxy
     -h|--help                   show detailed help
 EOF
@@ -577,14 +561,16 @@ SCAN FILTERS:
        e.g: maldet --user nobody --restore 050910-1534.21135
 
 MONITORING:
-    -m, --monitor USERS|PATHS|FILE
+    -m, --monitor USERS|PATHS|FILE|RELOAD
        Start inotify kernel-level file create/modify monitoring
-       USERS: monitor homedirs for UIDs >= inotify_minuid (default: 500)
-       FILE:  extract paths from line-spaced file
-       PATHS: comma-separated path list (no wildcards)
+       USERS:  monitor homedirs for UIDs >= inotify_minuid (default: 500)
+       FILE:   extract paths from line-spaced file
+       PATHS:  comma-separated path list (no wildcards)
+       RELOAD: trigger configuration reload on running monitor
        e.g: maldet --monitor users
        e.g: maldet --monitor /root/monitor_paths
        e.g: maldet --monitor /home/mike,/home/ashton
+       e.g: maldet --monitor RELOAD
 
     -k, --kill-monitor (also: -kill)
        Terminate inotify monitoring service
@@ -653,6 +639,10 @@ OTHER:
 
     -c, --checkout FILE
        Upload suspected malware to rfxn.com for review & hashing into signatures
+
+    --mkpubpaths
+       Create per-user pub/ data directories for non-root scan operations.
+       Requires scan_user_access=1 in conf.maldet.
 
     --web-proxy (also: --wget-proxy, --curl-proxy) IP:PORT
        Set HTTP/HTTPS proxy for all remote URL calls
@@ -802,7 +792,11 @@ restore() {
                 chown "${file_owner}:${file_group}" "$quardir/$file" >> /dev/null 2>&1
                 chmod $file_mode "$quardir/$file" >> /dev/null 2>&1
                 mv -f "$quardir/$file" "$file_path"
-		touch -m --date=@${file_mtime} "$file_path"
+		if [ "$os_freebsd" == "1" ]; then
+			touch -m -t "$(date -r "$file_mtime" +%Y%m%d%H%M.%S)" "$file_path"
+		else
+			touch -m --date="@${file_mtime}" "$file_path"
+		fi
                 eout "{restore} quarantined file '$file' restored to '$file_path'" 1
         elif [ -f "$file" ] && [ -f "${file}.info" ]; then
 		quar_get_filestat "${file}.info"
@@ -812,7 +806,11 @@ restore() {
                 chown "${file_owner}:${file_group}" "$file" >> /dev/null 2>&1
                 chmod $file_mode "$file" >> /dev/null 2>&1
                 mv -f "$file" "$file_path"
-		touch -m --date=@${file_mtime} "$file_path"
+		if [ "$os_freebsd" == "1" ]; then
+			touch -m -t "$(date -r "$file_mtime" +%Y%m%d%H%M.%S)" "$file_path"
+		else
+			touch -m --date="@${file_mtime}" "$file_path"
+		fi
                 eout "{restore} quarantined file '$file' restored to '$file_path'" 1
         else
                 eout "{restore} '$file' is not eligible for restore or could not be found" 1
@@ -859,11 +857,6 @@ clean_hitlist() {
                         while IFS= read -r file; do
                                 get_filestat "$file" 1
                                 hitname=$(grep -F "$file" "$hitlist" | awk '{print$1}')
-                                if [ ! "$md5_hash" ]; then
-                                        local _md5out
-                                        _md5out="$($md5sum "$file")"
-                                        md5_hash="${_md5out%% *}"
-                                fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
                         done < <(cut -d':' -f2- "$hitlist" | sed 's/.//')
                         lbreakifs unset
@@ -872,11 +865,6 @@ clean_hitlist() {
                         while IFS= read -r file; do
                                 quar_get_filestat "${file}.info" 1
                                 hitname=$(grep -F "$file" "$hitlist" | awk '{print$1}')
-                                if [ ! "$md5_hash" ]; then
-                                        local _md5out
-                                        _md5out="$($md5sum "$file")"
-                                        md5_hash="${_md5out%% *}"
-                                fi
                                 clean "$file" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash"
                         done < <(cut -d'>' -f2 "$hitlist" | sed 's/.//')
                         lbreakifs unset
@@ -992,7 +980,7 @@ purge() {
 	:> $maldet_log
 	if [ -f "$inotify_log" ]; then
 		log_size=$($wc -l < "$inotify_log")
-		if [ "$inotify_trim" ]; then
+		if [ "$inotify_trim" ] && [ "$log_size" -ge "$inotify_trim" ]; then
 			_inotify_trim_log "$(($log_size - 1000))"
 		fi
 	fi
@@ -1067,11 +1055,6 @@ record_hit() {
 	if [ -f "$file" ]; then
 		get_filestat "$file" 1
 		file_name="${file##*/}"
-		if [ ! "$md5_hash" ]; then
-			local _md5out
-			_md5out="$($md5sum "$file")"
-			md5_hash="${_md5out%% *}"
-		fi
 		eout "{hit} malware hit $hitname found for $file"
 		echo "${utime}:${hostid}:${hitname}:${md5_hash}:${file_size}:${file_owner}.${file_group}:${file_mode}:${file_times}:${file}" >> $hits_history
 	fi
@@ -1138,11 +1121,6 @@ quar_hitlist() {
 				file_hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
 				if [ -z "$file_hitname" ]; then
 					file_hitname="unknown"
-				fi
-				if [ ! "$md5_hash" ]; then
-					local _md5out
-					_md5out="$($md5sum "$file")"
-					md5_hash="${_md5out%% *}"
 				fi
 				if [ "$quarantine_suspend_user" == "1" ]; then
 					quarantine_suspend_user "$file"
@@ -1305,8 +1283,13 @@ _build_scan_filters() {
 _scan_cleanup() {
 	rm -f "$find_results" "$scan_session" "$runtime_ndb" "$runtime_hdb" \
 		"$runtime_hexstrings" "$runtime_md5" "$clamscan_results" \
+		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 		"$tmpdir"/.find_killed."$scanid" \
-		"$tmpdir"/.tmp* "$tmpdir"/.tmpf* "$tmpdir"/.yara_* 2>/dev/null
+		"$tmpdir"/.tmp* "$tmpdir"/.tmpf* "$tmpdir"/.yara_* \
+		"$tmpdir"/.hex_batch* "$tmpdir"/.hex_worker* "$tmpdir"/.hex_chunk* \
+		"$tmpdir"/.hex_md5hits* \
+		"$tmpdir"/.md5_batch_flist* "$tmpdir"/.md5_chunk* "$tmpdir"/.md5_worker* \
+		"$tmpdir"/.md5_linux* "$tmpdir"/.md5_fbsd* 2>/dev/null  # files may not exist depending on scan path
 }
 
 # shellcheck disable=SC2154
@@ -1383,8 +1366,10 @@ _scan_build_filelist() {
 
 _run_yara_scan() {
 	if [ "$scan_yara" == "1" ]; then
-		local yara_filelist
+		local yara_filelist _yara_file_count
 		yara_filelist=$(_yara_filter_filelist "$1")
+		_yara_file_count=$($wc -l < "$yara_filelist")
+		_scan_progress "yara" "$_yara_file_count files"
 		scan_stage_yara "$yara_filelist"
 		rm -f "$yara_filelist"
 	fi
@@ -1428,16 +1413,23 @@ _process_clamav_hits() {
 		if [ -f "$file" ] && [ ! -z "$ignore_hit" ]; then
 			record_hit "$file" "$signame"
 			quarantine "$file" "$signame"
-			if [ "$_progress" == "1" ] && [ ! "$set_background" == "1" ]; then
-				if [ -z "$hscan" ]; then
-					echo -en "\\033[${res_col}G" && echo -n "maldet($$): {scan} processing scan results for hits: $progress_hits hits $progress_cleaned cleaned"
-				fi
-				cnt="$tot_files"
-			fi
+			_scan_progress "clamav" "processing hits"
+			cnt="$tot_files"
 		fi
 		unset ignore_hit
 	done < <(grep -E -v 'ERROR$|lstat\(\)|no reply from clamd' "$_results" | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//')
 	lbreakifs unset
+}
+
+_scan_progress() {
+	# Unified scan progress line for all engines and stages.
+	# Gated by _in_scan_context to prevent output in monitor/clean paths.
+	local _stage="$1" _fileinfo="$2"
+	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
+	   [ "$set_background" != "1" ] && [ -z "$single_filescan" ]; then
+		echo -en "\\033[${res_col}G"
+		echo -n "maldet($$): {scan} [$_stage] $_fileinfo | $progress_hits hits $progress_cleaned cleaned"
+	fi
 }
 
 # shellcheck disable=SC2154
@@ -1454,6 +1446,7 @@ _scan_run_clamav() {
 	if [ -z "$hscan" ]; then
 		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
 	fi
+	_scan_progress "clamav" "$tot_files files"
 
 	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan start"  >> $clamscan_log
 	clamscan_results=$(mktemp "$tmpdir/.clamscan.XXXXXX")
@@ -1476,6 +1469,141 @@ _scan_run_clamav() {
 	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> $clamscan_log
 	_process_clamav_hits "$clamscan_results" 1
 	_run_yara_scan "$find_results"
+
+	# Final newline after progress ticker
+	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
+	   [ "$set_background" != "1" ] && [ -z "$single_filescan" ]; then
+		echo
+	fi
+}
+
+_resolve_worker_count() {
+	# Resolve the number of parallel workers for scan passes.
+	# Arg 1: total file count (workers capped to file count).
+	# Outputs resolved count to stdout.
+	local _count="${scan_workers:-0}"
+	if [ "$_count" -le 0 ] 2>/dev/null; then  # suppress error if non-numeric
+		_count=$(nproc 2>/dev/null || grep -E -c '^processor' /proc/cpuinfo 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+		if [ "$_count" -gt 4 ]; then _count=4; fi
+	fi
+	if [ "$_count" -gt 8 ]; then _count=8; fi
+	if [ "$1" -le "$_count" ]; then _count="$1"; fi
+	echo "$_count"
+}
+
+_md5_batch_worker() {
+	# Self-contained batch MD5 scanner for a chunk of files.
+	# Runs in a subshell (backgrounded by caller).
+	# Outputs tab-delimited filepath\thash\tsigname triples to stdout.
+	# Arg 1: chunk file (one filepath per line)
+	# Arg 2: runtime_md5 sig file (HASH:SIZE:{MD5}sig.name.N)
+	local _chunk="$1" _sigfile="$2"
+	local _md5_out
+	if [ "$os_freebsd" == "1" ]; then
+		# FreeBSD md5 -q outputs hash only (no filename); loop to pair them
+		local _fbsd_out _fpath _fhash
+		_fbsd_out=$(mktemp "$tmpdir/.md5_fbsd.XXXXXX")
+		while IFS= read -r _fpath; do
+			[ -f "$_fpath" ] && [ -r "$_fpath" ] || continue
+			_fhash=$($md5sum "$_fpath")
+			printf '%s\t%s\n' "$_fhash" "$_fpath"
+		done < "$_chunk" > "$_fbsd_out"
+		# awk join: load sigs, match on hash field
+		awk -F'\t' -v sigfile="$_sigfile" '
+		BEGIN {
+			while ((getline line < sigfile) > 0) {
+				colon1 = index(line, ":")
+				if (colon1 > 0) {
+					h = substr(line, 1, colon1 - 1)
+					rest = substr(line, colon1 + 1)
+					colon2 = index(rest, ":")
+					if (colon2 > 0) sigs[h] = substr(rest, colon2 + 1)
+				}
+			}
+			close(sigfile)
+		}
+		{ if ($1 in sigs) print $2 "\t" $1 "\t" sigs[$1] }
+		' "$_fbsd_out"
+		rm -f "$_fbsd_out"
+	else
+		# Linux: xargs md5sum hashes all files in one process
+		_md5_out=$(mktemp "$tmpdir/.md5_linux.XXXXXX")
+		xargs -d '\n' $md5sum < "$_chunk" > "$_md5_out" 2>/dev/null  # suppress errors on unreadable files
+		# awk join: load sigs (hash→signame), scan md5sum output for matches
+		# md5sum output format: "hash  filepath" (two spaces)
+		awk -v sigfile="$_sigfile" '
+		BEGIN {
+			while ((getline line < sigfile) > 0) {
+				colon1 = index(line, ":")
+				if (colon1 > 0) {
+					h = substr(line, 1, colon1 - 1)
+					rest = substr(line, colon1 + 1)
+					colon2 = index(rest, ":")
+					if (colon2 > 0) sigs[h] = substr(rest, colon2 + 1)
+				}
+			}
+			close(sigfile)
+		}
+		{
+			hash = $1
+			if (hash in sigs) {
+				fpath = substr($0, length(hash) + 3)
+				print fpath "\t" hash "\t" sigs[hash]
+			}
+		}
+		' "$_md5_out"
+		rm -f "$_md5_out"
+	fi
+}
+
+_hex_batch_worker() {
+	# Self-contained batch hex scanner for a chunk of files.
+	# Runs in a subshell (backgrounded by caller).
+	# Outputs tab-delimited filepath\tsigname hit pairs to stdout.
+	local _chunk="$1" _depth="$2" _literals="$3" _regexes="$4" _sigmap="$5"
+	local _batch_hex _idx=0 _line _hit_line _hit_linenum _hit_pat _hit_name
+	_batch_hex=$(mktemp "$tmpdir/.hex_batch.XXXXXX")
+	# Build parallel arrays: _names[idx]=filepath, batch_hex has one hex line per file
+	local _names
+	_names=()
+	while IFS= read -r _line; do
+		[ -f "$_line" ] && [ -r "$_line" ] || continue
+		_names[_idx]="$_line"
+		_idx=$((_idx + 1))
+		_hex_extract_file "$_line" "$_depth"
+		printf '\n'
+	done < "$_chunk" > "$_batch_hex"
+	# Literal pass: grep -Fno finds first match per line, awk deduplicates by line number
+	if [ -s "$_literals" ]; then
+		while IFS=: read -r _hit_linenum _hit_pat; do
+			local _fnum=$((_hit_linenum - 1))
+			if [ -n "${_names[$_fnum]+set}" ]; then
+				_hit_name=$(_hex_lookup_name "$_hit_pat" "$_sigmap")
+				if [ -n "$_hit_name" ]; then
+					printf '%s\t%s\n' "${_names[$_fnum]}" "$_hit_name"
+				fi
+				# Mark as hit so we skip in regex pass
+				_names[_fnum]=""
+			fi
+		done < <(grep -Fno -f "$_literals" "$_batch_hex" 2>/dev/null | awk -F: '!seen[$1]++')  # grep stderr: empty pattern file or no match
+	fi
+	# Wildcard pass: for each ERE pattern, scan remaining files
+	if [ -s "$_regexes" ]; then
+		local _orig_pat _ere_pat
+		while IFS=$'\t' read -r _orig_pat _ere_pat; do
+			while IFS=: read -r _hit_linenum _; do
+				local _fnum2=$((_hit_linenum - 1))
+				if [ -n "${_names[$_fnum2]+set}" ] && [ -n "${_names[$_fnum2]}" ]; then
+					_hit_name=$(_hex_lookup_name "$_orig_pat" "$_sigmap")
+					if [ -n "$_hit_name" ]; then
+						printf '%s\t%s\n' "${_names[$_fnum2]}" "$_hit_name"
+					fi
+					_names[_fnum2]=""
+				fi
+			done < <(grep -Eno "$_ere_pat" "$_batch_hex" 2>/dev/null | awk -F: '!seen[$1]++')  # grep stderr: malformed ERE is non-fatal
+		done < "$_regexes"
+	fi
+	rm -f "$_batch_hex"
 }
 
 # shellcheck disable=SC2154
@@ -1483,23 +1611,157 @@ _scan_run_native() {
 	if [ -z "$hscan" ]; then
 		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
 	fi
-	lbreakifs set
 	if [ ! -f "$scan_session" ]; then
-		touch $scan_session
+		touch "$scan_session"
 	fi
 
-	while read rpath; do
-		((cnt++))
-		if [ -z "$hscan" ] && [ ! "$set_background" == "1" ] && [ -z "$single_filescan" ]; then
-			echo -en "\\033[${res_col}G" && echo -n "maldet($$): {scan} $cnt/$tot_files files scanned: $progress_hits hits $progress_cleaned cleaned"
+	# --- Pass 1: MD5 (batch parallel workers) ---
+	local rpath _md5_batch_flist _md5_file_count _nworkers
+	_md5_batch_flist=$(mktemp "$tmpdir/.md5_batch_flist.XXXXXX")
+	# Build readable file list from find_results
+	while IFS= read -r rpath; do
+		[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
+	done < "$find_results" > "$_md5_batch_flist"
+	_md5_file_count=$($wc -l < "$_md5_batch_flist")
+	if [ "$_md5_file_count" -gt 0 ] && [ -s "$runtime_md5" ]; then
+		_nworkers=$(_resolve_worker_count "$_md5_file_count")
+		_scan_progress "md5" "$_md5_file_count files ($_nworkers workers)"
+		if [ "$_nworkers" -le 1 ]; then
+			# Single worker: run inline (no subshell overhead)
+			_md5_batch_worker "$_md5_batch_flist" "$runtime_md5" > "$tmpdir/.md5_worker.$$.0"
+		else
+			# Multi-worker: round-robin split and background
+			local _md5_chunk_prefix _w
+			_md5_chunk_prefix="$tmpdir/.md5_chunk.$$"
+			awk -v n="$_nworkers" -v prefix="$_md5_chunk_prefix" \
+				'{ print > (prefix "." ((NR-1) % n)) }' "$_md5_batch_flist"
+			local _md5_worker_pids
+			_md5_worker_pids=()
+			_w=0
+			while [ "$_w" -lt "$_nworkers" ]; do
+				if [ -f "$_md5_chunk_prefix.$_w" ]; then
+					_md5_batch_worker "$_md5_chunk_prefix.$_w" "$runtime_md5" \
+						> "$tmpdir/.md5_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
+					_md5_worker_pids[_w]=$!
+				fi
+				_w=$((_w + 1))
+			done
+			for _w in "${!_md5_worker_pids[@]}"; do
+				wait "${_md5_worker_pids[$_w]}" 2>/dev/null || true  # worker exit code not critical
+			done
+			rm -f "$_md5_chunk_prefix".* 2>/dev/null
 		fi
-		if [ -f "$rpath" ]; then
-			scan_stage1 "$rpath" >> /dev/null 2>&1
-		fi
+		# Process hits sequentially (state mutation in main process only)
+		_scan_progress "md5" "processing hits"
+		local _hit_file _hit_hash _hit_sig
+		for _w in "$tmpdir"/.md5_worker."$$".*; do
+			if [ -f "$_w" ] && [ -s "$_w" ]; then
+				while IFS=$'\t' read -r _hit_file _hit_hash _hit_sig; do
+					if [ -f "$_hit_file" ] && [ -n "$_hit_sig" ]; then
+						record_hit "$_hit_file" "$_hit_sig"
+						quarantine "$_hit_file" "$_hit_sig"
+					fi
+				done < "$_w"
+			fi
+		done
+		rm -f "$tmpdir"/.md5_worker."$$".* 2>/dev/null
+	fi
+	rm -f "$_md5_batch_flist"
 
-	done < $find_results
-	lbreakifs unset
+	# --- Pass 2: HEX batch (parallel workers) ---
+	local _hex_filelist _nworkers _hex_depth
+	_hex_filelist=$(mktemp "$tmpdir/.hex_batch_flist.XXXXXX")
+	# Build file list: skip files already hit by MD5 pass.
+	# Quarantined files are chmod 000 (not readable); non-quarantined hits
+	# are listed in scan_session — extract paths and use grep -vFf to exclude.
+	local _md5_hit_paths
+	_md5_hit_paths=$(mktemp "$tmpdir/.hex_md5hits.XXXXXX")
+	if [ -s "$scan_session" ]; then
+		# scan_session format: "signame : /path" or "signame : /path => /quarpath"
+		awk -F' : ' '{ sub(/ =>.*/, "", $2); if ($2 != "") print $2 }' "$scan_session" > "$_md5_hit_paths"
+	fi
+	while IFS= read -r rpath; do
+		[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
+	done < "$find_results" | {
+		if [ -s "$_md5_hit_paths" ]; then
+			grep -vFxf "$_md5_hit_paths"
+		else
+			cat
+		fi
+	} > "$_hex_filelist"
+	rm -f "$_md5_hit_paths"
+	local _hex_file_count
+	_hex_file_count=$($wc -l < "$_hex_filelist")
+	if [ "$_hex_file_count" -gt 0 ] && { [ -s "$runtime_hex_literal" ] || [ -s "$runtime_hex_regex" ]; }; then
+		# Determine hex depth
+		_hex_depth="${scan_hexdepth:-524288}"
+		# Resolve worker count
+		_nworkers=$(_resolve_worker_count "$_hex_file_count")
+		_scan_progress "hex" "$_hex_file_count files ($_nworkers workers)"
+		# Split file list into chunks via awk round-robin
+		local _chunk_prefix _w
+		_chunk_prefix="$tmpdir/.hex_chunk.$$"
+		awk -v n="$_nworkers" -v prefix="$_chunk_prefix" '{ print > (prefix "." ((NR-1) % n)) }' "$_hex_filelist"
+		# Launch workers and collect PIDs
+		local _worker_pids _worker_outputs _wout
+		_worker_pids=()
+		_worker_outputs=()
+		_w=0
+		while [ "$_w" -lt "$_nworkers" ]; do
+			_wout="$tmpdir/.hex_worker.$$.${_w}"
+			if [ -f "$_chunk_prefix.$_w" ]; then
+				_hex_batch_worker "$_chunk_prefix.$_w" "$_hex_depth" \
+					"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
+					> "$_wout" 2>/dev/null &  # suppress worker file-access stderr
+				_worker_pids[_w]=$!
+				_worker_outputs[_w]="$_wout"
+			fi
+			_w=$((_w + 1))
+		done
+		# Wait for all workers
+		for _w in "${!_worker_pids[@]}"; do
+			wait "${_worker_pids[$_w]}" 2>/dev/null || true  # worker exit code not critical
+		done
+		# Process hits sequentially (state mutation in main process only)
+		_scan_progress "hex" "processing hits"
+		local _hit_file _hit_sig
+		for _wout in "${_worker_outputs[@]}"; do
+			if [ -f "$_wout" ] && [ -s "$_wout" ]; then
+				while IFS=$'\t' read -r _hit_file _hit_sig; do
+					if [ -f "$_hit_file" ] && [ -n "$_hit_sig" ]; then
+						record_hit "$_hit_file" "$_hit_sig"
+						quarantine "$_hit_file" "$_hit_sig"
+					fi
+				done < "$_wout"
+			fi
+		done
+		# Cleanup chunk and worker output files
+		rm -f "$_chunk_prefix".* "$tmpdir"/.hex_worker."$$".* 2>/dev/null
+	fi
+
+	# --- Pass 3: strlen (per-file, on MD5-miss files) ---
+	# Matches old scan_stage1 behavior: strlen only runs on MD5 misses.
+	# Per-file mode handles paths with spaces correctly.
+	if [ "$string_length_scan" == "1" ] && [ -s "$_hex_filelist" ]; then
+		local _strlen_count
+		_strlen_count=$($wc -l < "$_hex_filelist")
+		_scan_progress "strlen" "$_strlen_count files"
+		while IFS= read -r rpath; do
+			if [ -f "$rpath" ]; then
+				scan_strlen file "$rpath" >> /dev/null 2>&1
+			fi
+		done < "$_hex_filelist"
+	fi
+	rm -f "$_hex_filelist"
+
+	# --- Pass 4: YARA (unchanged) ---
 	_run_yara_scan "$find_results"
+
+	# Final newline after progress ticker
+	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
+	   [ "$set_background" != "1" ] && [ -z "$single_filescan" ]; then
+		echo
+	fi
 }
 
 _count_signatures() {
@@ -1622,7 +1884,6 @@ scan() {
 	fi
 	
 	res_col="1"
-	move_to_col="echo -en \\033[${res_col}G"
 	tot_files=$($wc -l < "$find_results")
 	if [ -z "$hscan" ] && [ -z "$single_filescan" ]; then
 		if [ "$file_list" ]; then
@@ -1637,6 +1898,7 @@ scan() {
 	fi
 	progress_hits=0
 	progress_cleaned=0
+	_in_scan_context=1
 
 	if [ ! -z "$hscan" ]; then
 		eout "{scan.hook} scan of $spath in progress (id: $datestamp.$$)"
@@ -1651,11 +1913,6 @@ scan() {
 		_scan_run_native
 	fi
 
-	if [ -z "$hscan" ]; then
-		if [ ! "$set_background" == "1" ] && [ "$scan_clamscan" == "0" ] && [ -z "$single_filescan" ]; then
-			echo
-		fi
-	fi
 	scan_end_hr=$(date +"%b %e %Y %H:%M:%S %z")
 	scan_end=$(date +"%s")
 	scan_et=$((scan_end - scan_start))
@@ -1673,9 +1930,7 @@ scan() {
 			eout "{scan.hook} results returned OK on $spath (id: $datestamp.$$)"
 		fi
 	else
-		if [ -z "$hscan" ]; then
-			echo
-		fi
+		echo
 		eout "{scan} scan completed on $hrspath: files $tot_files, malware hits $tot_hits, cleaned hits $tot_cl, time ${scan_et}s" 1
 		eout "{scan} scan report saved, to view run: maldet --report $datestamp.$$" 1
 		if [ "$quarantine_hits" == "0" ] && [ ! "$tot_hits" == "0" ]; then
@@ -1757,34 +2012,84 @@ scan_stage1() {
 	fi
 }
 
+_hex_extract_file() {
+	# Extract hex content from a file using od, output contiguous hex string.
+	# Single source of truth for the od pipeline (replaces 4 duplicated branches).
+	local _file="$1" _depth="$2"
+	if [ "$os_freebsd" == "1" ]; then
+		$od -v -N"$_depth" -tx1 "$_file" | cut -c12-256 | tr -d ' \n'
+	else
+		$od -v -w64 -N"$_depth" -tx1 "$_file" | cut -c9-256 | tr -d '\n '
+	fi
+}
+
+_hex_compile_pattern() {
+	# Convert a ClamAV hex pattern to ERE if it contains wildcards.
+	# Returns 0 (true) if conversion was needed, 1 (false) if pure literal.
+	# Output: ERE pattern on stdout.
+	local _pat="$1"
+	local _has_wildcard=0
+	# Detect ClamAV wildcard tokens: ??, (alt), *, nibble ?x/x?
+	# Lowercase only — matches sed scope below; od outputs lowercase hex
+	local _wc_re='(\?\?|\(.*\|.*\)|\*|\?[0-9a-f]|[0-9a-f]\?)'
+	if [[ "$_pat" =~ $_wc_re ]]; then
+		_has_wildcard=1
+	fi
+	if [ "$_has_wildcard" == "0" ]; then
+		return 1
+	fi
+	# Convert wildcards to ERE:
+	#   ?? → [0-9a-f]{2}  (any byte)
+	#   *  → [0-9a-f]*    (variable length)
+	#   ?x → [0-9a-f]x    (nibble wildcard, high)
+	#   x? → x[0-9a-f]    (nibble wildcard, low)
+	#   (aa|bb) → already ERE, passthrough
+	local _ere="$_pat"
+	# Order matters: ?? before single-nibble ?x
+	# Note: $sed on FreeBSD already includes -E; double -E is harmless
+	_ere=$(echo "$_ere" | $sed -E 's/\?\?/[0-9a-f]{2}/g')
+	# Nibble wildcards: ?x where x is hex digit (high nibble wild)
+	_ere=$(echo "$_ere" | $sed -E 's/\?([0-9a-f])/[0-9a-f]\1/g')
+	# Nibble wildcards: x? where x is hex digit (low nibble wild)
+	_ere=$(echo "$_ere" | $sed -E 's/([0-9a-f])\?/\1[0-9a-f]/g')
+	# * → variable length match
+	_ere=$(echo "$_ere" | $sed -E 's/\*/[0-9a-f]*/g')
+	echo "$_ere"
+	return 0
+}
+
+_hex_lookup_name() {
+	# Look up signature name from tab-delimited sigmap file.
+	# Uses exact field match (not substring) via awk.
+	local _pattern="$1" _sigmap="$2"
+	awk -F'\t' -v pat="$_pattern" '$1 == pat { print $2; exit }' "$_sigmap"
+}
+
 scan_stage2() {
-	file="$1"
-	clean_check="$2"
-	if [ -z "$ftype" ]; then
-		if [ -p "$hex_fifo_path" ] && [ "$scan_hexfifo" == "1" ]; then
-			if [ "$os_freebsd" == "1" ]; then
-				$od -v -N$scan_hexfifo_depth -tx1 "$file" | cut -c12-256 | tr -d ' \n' > $hex_fifo_path 2>&1 &
-			else
-				$od -v -w64 -N$scan_hexfifo_depth -tx1 "$file" | cut -c9-256 | tr -d '\n ' > $hex_fifo_path 2>&1 &
+	local file="$1"
+	local clean_check="$2"
+	local depth val_hex hex_hitname
+	depth="${scan_hexdepth:-524288}"
+	# Literal pass: grep -F for fixed hex patterns (first match)
+	val_hex=$(_hex_extract_file "$file" "$depth" | grep -Fo -m1 -f "$runtime_hex_literal" 2>/dev/null)
+	# Wildcard pass: if no literal hit and regex sigs exist, try ERE patterns
+	if [ -z "$val_hex" ] && [ -s "$runtime_hex_regex" ]; then
+		local _hex_content _ere_pat _orig_pat
+		_hex_content=$(_hex_extract_file "$file" "$depth")
+		while IFS=$'\t' read -r _orig_pat _ere_pat; do
+			if echo "$_hex_content" | grep -Eq "$_ere_pat" 2>/dev/null; then
+				val_hex="$_orig_pat"
+				break
 			fi
-			val_hex=$($perl $hex_fifo_script $runtime_hexstrings "$hex_fifo_path")
+		done < "$runtime_hex_regex"
+	fi
+	if [ -n "$val_hex" ]; then
+		hex_hitname=$(_hex_lookup_name "$val_hex" "$runtime_hex_sigmap")
+		if [ "$clean_check" == "1" ]; then
+			clean_failed=1
 		else
-			if [ "$os_freebsd" == "1" ]; then
-				val_hex=$($perl $hex_string_script $runtime_hexstrings $($od -v -N$scan_hexdepth -tx1 "$file" | cut -c12-256 | tr -d ' \n'))
-			else
-				val_hex=$($perl $hex_string_script $runtime_hexstrings $($od -v -w$scan_hexdepth -N$scan_hexdepth -tx1 "$file" | tr -d '\n '))
-			fi
-		fi
-		if [ ! -z "$val_hex" ]; then
-			hex_hit="${val_hex%% *}"
-			hex_hitname="${val_hex#* }"
-			if [ "$clean_check" == "1" ]; then
-				clean_failed=1
-			else
-                                record_hit "$file" "$hex_hitname"
-				quarantine "$file" "$hex_hitname"
-			fi
-			unset val_hex hex_hit hex_hitname
+			record_hit "$file" "$hex_hitname"
+			quarantine "$file" "$hex_hitname"
 		fi
 	fi
 }
@@ -2162,6 +2467,10 @@ genalert() {
 		done
             fi   
 		elif [ "$type" == "daily" ] || [ "$type" == "digest" ]; then
+			if [ ! -f "$sessdir/session.monitor.current" ]; then
+				eout "{alert} no active monitor session found, digest alert skipped"
+				return
+			fi
 			inotify_start_time=$(ps -p $(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1) -o lstart= 2> /dev/null)
 			scan_start_hr=$(date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z")
 			scan_start_elapsed=$(($(date +'%s')-$(date -d "$scan_start_hr" +'%s')))
@@ -2273,7 +2582,13 @@ genalert() {
 		if [ -f "$file" ]; then
 			local tg_curl_rc=0
 			local telegram_response
-			telegram_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -F "document=@$file" -F "caption=$telegram_file_caption" "https://api.telegram.org/bot$telegram_bot_token/sendDocument?chat_id=$telegram_channel_id" 2>/dev/null) || tg_curl_rc=$?
+			local tg_curlcfg
+			tg_curlcfg=$(mktemp "$tmpdir/.tg_curl.XXXXXX")
+			chmod 600 "$tg_curlcfg"
+			printf 'url = "https://api.telegram.org/bot%s/sendDocument?chat_id=%s"\n' \
+				"$telegram_bot_token" "$telegram_channel_id" > "$tg_curlcfg"
+			telegram_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -F "document=@$file" -F "caption=$telegram_file_caption" -K "$tg_curlcfg" 2>/dev/null) || tg_curl_rc=$?
+			rm -f "$tg_curlcfg"
 			if [ "$tg_curl_rc" -ne 0 ]; then
 				eout "{alert} telegram sendDocument curl failed (exit $tg_curl_rc), alert discarded" 1
 			elif echo "$telegram_response" | grep -q '"ok":true'; then
@@ -2602,6 +2917,10 @@ monitor_init() {
 }
 
 checkout() {
+	if ! command -v ftp >/dev/null 2>&1; then
+		eout "{checkout} ftp binary not found, unable to upload" 1
+		return 1
+	fi
 	file="$1"
 	host=ftp.rfxn.com
 	user=anonymous@rfxn.com
@@ -2625,7 +2944,7 @@ checkout() {
 		eout "{checkout} uploading $file to $host" 1
 		
 (ftp -v -n -p -i $host || ftp -v -n -i $host) << EOT
-user $user@rfxn.com $passwd
+user $user $passwd
 prompt
 cd $upath
 binary
@@ -2670,6 +2989,10 @@ EOT
 
 gensigs() {
 	local _silent="$1"
+	# Clean up previous runtime sig files if re-called (monitor path)
+	rm -f "$runtime_ndb" "$runtime_hdb" "$runtime_hexstrings" "$runtime_md5" \
+		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
+		2>/dev/null  # vars empty on first call
 	runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.XXXXXX")
 	runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.XXXXXX")
 	runtime_hexstrings=$(mktemp "$tmpdir/.runtime.hexsigs.XXXXXX")
@@ -2737,6 +3060,26 @@ gensigs() {
 			fi
 		fi
 	fi
+
+	# Build native hex scanner lookup files from runtime_hexstrings.
+	# Format of runtime_hexstrings: HEXPATTERN:{HEX}sig.name.N (colon-delimited)
+	runtime_hex_literal=$(mktemp "$tmpdir/.runtime.hex_literal.XXXXXX")
+	runtime_hex_regex=$(mktemp "$tmpdir/.runtime.hex_regex.XXXXXX")
+	runtime_hex_sigmap=$(mktemp "$tmpdir/.runtime.hex_sigmap.XXXXXX")
+	local _hex_line _hex_pat _hex_name _ere
+	while IFS= read -r _hex_line; do
+		[ -z "$_hex_line" ] && continue
+		_hex_pat="${_hex_line%%:*}"
+		_hex_name="${_hex_line#*:}"
+		# Build sigmap: tab-delimited pattern→name for all sigs
+		printf '%s\t%s\n' "$_hex_pat" "$_hex_name" >> "$runtime_hex_sigmap"
+		# Route to literal or regex file based on wildcard detection
+		if _ere=$(_hex_compile_pattern "$_hex_pat"); then
+			printf '%s\t%s\n' "$_hex_pat" "$_ere" >> "$runtime_hex_regex"
+		else
+			echo "$_hex_pat" >> "$runtime_hex_literal"
+		fi
+	done < "$runtime_hexstrings"
 }
 
 
@@ -2755,7 +3098,7 @@ lmdup() {
         get_remote_file "$lmd_version_url" "update" "1"
 	upstreamver="$return_file"	
 	if [ -s "$upstreamver" ]; then
-		installedver=$(echo $ver | tr -d '.')
+		installedver=$(echo $lmd_version | tr -d '.')
 		if [ "$(echo $installedver | $wc -L)" -eq "2" ]; then
 			installedver="${installedver}0"
 		fi
@@ -2845,7 +3188,7 @@ lmdup() {
 			rm -f "$install_log"
 			cp -f "$inspath.last/sigs/custom."* "$sigdir/" 2> /dev/null
 			cp -f "$inspath.last/clean/custom."* "$inspath/clean/" 2> /dev/null
-			eout "{update} completed update v$ver ${installed_hash:0:6} => v$upstreamver_readable ${upstream_md5:0:6}, running signature updates..." 1
+			eout "{update} completed update v$lmd_version ${installed_hash:0:6} => v$upstreamver_readable ${upstream_md5:0:6}, running signature updates..." 1
 			$inspath/maldet --update 1
 			eout "{update} update and config import completed" 1
 		else

@@ -12,6 +12,24 @@ operations, and multi-channel alerting (email, Slack, Telegram).
 > (C) 2026, Ryan MacDonald &lt;ryan@rfxn.com&gt;<br>
 > Licensed under [GNU GPL v2](COPYING.GPL)
 
+### What's New in 2.0.1
+
+**43x faster native scan engine** — the native scanning pipeline has been completely
+rewritten with batch parallel processing. Real-world benchmark on ~10,000 files:
+
+| Version | Runtime | Files | Hits |
+|---------|---------|-------|------|
+| v1.6.6 | 1,217s | 9,931 | 35 |
+| v2.0.1 | 28s | 9,931 | 35 |
+
+MD5 and HEX signature matching now use batch grep with Aho-Corasick parallel workers,
+eliminating per-file pattern compilation overhead and ~500,000 subprocess forks per scan.
+Configure parallel worker count with `scan_workers` (default: auto).
+
+Other highlights: native YARA scanning (`scan_yara=1`), Slack/Telegram alerting fixes,
+ClamAV hex wildcard support in the native engine, and 200+ bug fixes across the codebase.
+See [CHANGELOG](CHANGELOG) for full details.
+
 ---
 
 ## Contents
@@ -79,7 +97,7 @@ LMD focuses on the malware classes that traditional AV products frequently miss:
 
 **Detection Stages**
 - MD5 file hash matching for exact threat identification
-- HEX pattern matching for identifying threat variants and families
+- HEX pattern matching via native batch grep engine with parallel workers
 - Native YARA rule scanning with full module support and custom rules
 - Statistical string-length analysis for detecting obfuscated threats (base64, gzinflate)
 - ClamAV integration for extended coverage with LMD-maintained ClamAV signatures
@@ -206,9 +224,8 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `scan_max_depth` | Maximum directory depth for find | `15` |
 | `scan_min_filesize` | Minimum file size to scan | `24` bytes |
 | `scan_max_filesize` | Maximum file size to scan | `2048k` |
-| `scan_hexdepth` | Byte depth for HEX signature matching | `65536` |
-| `scan_hexfifo` | Use FIFO-based HEX scanner (faster) | `1` |
-| `scan_hexfifo_depth` | Byte depth for FIFO HEX scanner | `524288` |
+| `scan_hexdepth` | Byte depth for HEX signature matching | `524288` |
+| `scan_workers` | Parallel workers for MD5 and HEX scan passes (0=auto) | `0` |
 | `scan_cpunice` | Nice priority for scan process (-19 to 19) | `19` |
 | `scan_ionice` | IO scheduling class priority (0-7) | `6` |
 | `scan_cpulimit` | Hard CPU limit percentage (0=disabled) | `0` |
@@ -336,7 +353,7 @@ SCAN FILTERS:
   -U, --user USER               run as specified user
 
 MONITORING:
-  -m, --monitor USERS|PATHS|FILE  start inotify real-time monitoring
+  -m, --monitor USERS|PATHS|FILE|RELOAD  start inotify monitoring
   -k, --kill-monitor            stop inotify monitoring
 
 QUARANTINE & RESTORE:
@@ -357,6 +374,7 @@ UPDATES:
 OTHER:
   -p, --purge                   clear logs, quarantine, temp data
   -c, --checkout FILE           submit suspected malware to rfxn.com
+  --mkpubpaths                  create per-user pub/ data directories
   --web-proxy IP:PORT           set HTTP/HTTPS proxy
   -h, --help                    show detailed help
 ```

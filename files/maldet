@@ -8,7 +8,7 @@
 ##
 #
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
-ver=2.0.1
+lmd_version="2.0.1"
 inspath='/usr/local/maldetect'
 intcnf="$inspath/internals/internals.conf"
 if [ -f "/etc/sysconfig/maldet" ]; then
@@ -18,7 +18,7 @@ elif [ -f "/etc/default/maldet" ]; then
 fi
 
 header() {
-	echo "Linux Malware Detect v$ver"
+	echo "Linux Malware Detect v$lmd_version"
 	echo "            (C) 2002-2026, R-fx Networks <proj@rfxn.com>"
 	echo "            (C) 2026, Ryan MacDonald <ryan@rfxn.com>"
 	echo "This program may be freely redistributed under the terms of the GNU GPL v2"
@@ -161,28 +161,42 @@ else
 			;;
 			-c|--checkout)
 				shift
+				if [ -z "$1" ]; then
+					echo "ERROR: -c/--checkout requires a file or path argument" >&2
+					exit 1
+				fi
 				header
 				checkout "$1"
 			;;
 			-x|--exclude-regex)
 				shift
-				if [ "$1" ]; then
-					exclude_regex_args=(-not -regex "$1")
+				if [ -z "$1" ]; then
+					echo "ERROR: -x/--exclude-regex requires a regex pattern argument" >&2
+					exit 1
 				fi
+				exclude_regex_args=(-not -regex "$1")
 			;;
 			-i|--include-regex)
 				shift
-				if [ "$1" ]; then
-					include_regex_args=(-regex "$1")
+				if [ -z "$1" ]; then
+					echo "ERROR: -i/--include-regex requires a regex pattern argument" >&2
+					exit 1
 				fi
+				include_regex_args=(-regex "$1")
 			;;
 			--wget-proxy|--curl-proxy|--web-proxy)
 				shift
-				if [ "$1" ]; then
-					web_proxy="$1"
+				if [ -z "$1" ]; then
+					echo "ERROR: --web-proxy requires a proxy address argument" >&2
+					exit 1
 				fi
+				web_proxy="$1"
 			;;
 			--alert-daily|--monitor-report)
+				if ! pgrep -f 'inotify.paths.[0-9]+' >/dev/null 2>&1; then
+					echo "ERROR: no active monitor process found; start with: maldet --monitor users" >&2
+					exit 1
+				fi
 				genalert digest
 			;;
 			-m|--monitor)
@@ -288,6 +302,10 @@ else
 				header
 				shift
 				view_report "$1" "$2"
+				# consume optional email argument
+				if [ -n "$2" ]; then
+					shift
+				fi
 			;;
 			-E|--dump-report)
 				header

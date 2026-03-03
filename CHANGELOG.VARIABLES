@@ -6,8 +6,8 @@ maxdepth           =>  scan_max_depth
 minfilesize        =>  scan_min_filesize
 maxfilesize        =>  scan_max_filesize
 hexdepth           =>  scan_hexdepth
-hex_fifo_scan      =>  scan_hexfifo
-hex_fifo_depth     =>  scan_hexfifo_depth
+hex_fifo_scan      =>  scan_hexfifo        =>  DEPRECATED (v2.0.1)
+hex_fifo_depth     =>  scan_hexfifo_depth  =>  scan_hexdepth (v2.0.1)
 clamav_scan        =>  scan_clamscan
 tmpdir_scan        =>  DELETED
 tmpdir_paths       =>  scan_tmpdir_paths

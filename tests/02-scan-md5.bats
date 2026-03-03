@@ -105,3 +105,39 @@ teardown() {
     [ -f "$LMD_INSTALL/sess/session.last" ]
     [ -s "$LMD_INSTALL/sess/session.last" ]
 }
+
+@test "scan_workers=1 single-threaded MD5 detection" {
+    lmd_set_config scan_workers 1
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+}
+
+@test "scan_workers=2 parallel MD5 detection" {
+    lmd_set_config scan_workers 2
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+}
+
+@test "batch MD5: multiple infected files with parallel workers" {
+    lmd_set_config scan_workers 2
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/eicar1.com"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/eicar2.com"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/eicar3.com"
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 3"
+}
+
+@test "batch MD5: clean files produce zero hits with workers" {
+    lmd_set_config scan_workers 2
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/clean1.txt"
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/clean2.txt"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_success
+    assert_output --partial "malware hits 0"
+}

@@ -32,6 +32,11 @@ if [ "$Z" == "y" ] || [ "$Z" == "Y" ]; then
 				rc-update del maldet default 2>/dev/null
 			elif [ -f /etc/slackware-version ]; then
 				rm -f /etc/rc.d/rc3.d/S70maldet /etc/rc.d/rc4.d/S70maldet /etc/rc.d/rc5.d/S70maldet
+			elif [ -f /etc/redhat-release ]; then
+				if command -v chkconfig >/dev/null 2>&1; then
+					chkconfig maldet off 2>/dev/null
+					chkconfig --del maldet 2>/dev/null
+				fi
 			fi
 		else
 			if [ -f /etc/redhat-release ]; then

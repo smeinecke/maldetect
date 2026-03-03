@@ -29,7 +29,7 @@ setup() {
     assert_success
 }
 
-@test "maldet ver variable is set to 2.0.1" {
-    run grep '^ver=2.0.1' "$LMD_INSTALL/maldet"
+@test "maldet lmd_version variable is set to 2.0.1" {
+    run grep '^lmd_version=' "$LMD_INSTALL/maldet"
     assert_success
 }

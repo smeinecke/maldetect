@@ -8,8 +8,7 @@
 ##
 #
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
-ver=2.0.1
-ver_major=2.0
+lmd_version="2.0.1"
 inspath=/usr/local/maldetect
 logf=$inspath/logs/event_log
 conftemp="$inspath/internals/importconf"
@@ -24,7 +23,9 @@ clamav_linksigs() {
         fi
 }
 
-if [ ! -d "$inspath" ] && [ -d "files" ]; then
+clamav_paths="/usr/local/cpanel/3rdparty/share/clamav/ /var/lib/clamav/ /var/clamav/ /usr/share/clamav/ /usr/local/share/clamav"
+
+_install_core() {
 	mkdir -p "$inspath"
 	chmod 755 "$inspath"
 	cp -pR files/* "$inspath"
@@ -32,7 +33,7 @@ if [ ! -d "$inspath" ] && [ -d "files" ]; then
 	chmod 640 "$inspath/conf.maldet"
 	test -f "$inspath/conf.maldet.hookscan" && chmod 640 "$inspath/conf.maldet.hookscan"
 	mkdir -p "$inspath/clean" "$inspath/pub" "$inspath/quarantine" "$inspath/sess" "$inspath/sigs" "$inspath/tmp" 2> /dev/null
-	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/internals/tlog" "$inspath/internals/tlog_lib.sh" 2> /dev/null
+	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/sigs" "$inspath/logs" "$inspath/internals/tlog" "$inspath/internals/tlog_lib.sh" 2> /dev/null
 	# tlog: replace default BASERUN for cursor storage security
 	sed -i "s|BASERUN=\"\${BASERUN:-/tmp}\"|BASERUN=\"\${BASERUN:-$inspath/tmp}\"|" "$inspath/internals/tlog"
 	ln -fs "$inspath/maldet" /usr/local/sbin/maldet
@@ -41,35 +42,30 @@ if [ ! -d "$inspath" ] && [ -d "files" ]; then
 	mkdir -p /usr/local/share/man/man1/
 	gzip -9 "$inspath/maldet.1"
 	ln -fs "$inspath/maldet.1.gz" /usr/local/share/man/man1/maldet.1.gz
-	clamav_paths="/usr/local/cpanel/3rdparty/share/clamav/ /var/lib/clamav/ /var/clamav/ /usr/share/clamav/ /usr/local/share/clamav"
 	for lp in $clamav_paths; do
 		clamav_linksigs "$lp"
 	done
 	killall -SIGUSR2 clamd 2> /dev/null
+}
+
+if [ ! -d "$inspath" ] && [ -d "files" ]; then
+	_install_core
 else
 	if [ "$(ps -A --user root -o "command" 2> /dev/null | grep maldetect | grep inotifywait)" ]; then
 		$inspath/maldet -k >> /dev/null 2>&1
 		monmode=1
 	fi
 	$find "${inspath}."* -maxdepth 0 -type d -mtime +30 -exec rm -rf {} + 2> /dev/null
-	chattr -ia "$inspath/internals/internals.conf"
+	if command -v chattr >/dev/null 2>&1; then
+		chattr -ia "$inspath/internals/internals.conf"
+	fi
 	if ! mv "$inspath" "$inspath.bk$$"; then
 		echo "ERROR: failed to backup $inspath to $inspath.bk$$, aborting install."
 		exit 1
 	fi
 	ln -fs "$inspath.bk$$" "$inspath.last"
-	mkdir -p "$inspath"
-	chmod 755 "$inspath"
-	cp -pR files/* "$inspath"
-	chmod 755 "$inspath/maldet"
-	chmod 640 "$inspath/conf.maldet"
-	test -f "$inspath/conf.maldet.hookscan" && chmod 640 "$inspath/conf.maldet.hookscan"
-	ln -fs "$inspath/maldet" /usr/local/sbin/maldet
-	ln -fs "$inspath/maldet" /usr/local/sbin/lmd
-	mkdir -p /usr/local/share/man/man1/
-	gzip -9 "$inspath/maldet.1"
-	ln -fs "$inspath/maldet.1.gz" /usr/local/share/man/man1/maldet.1.gz
-	cp -f "$inspath.bk$$"/ignore_* "$inspath/"  >> /dev/null 2>&1
+	_install_core
+	cp -f "$inspath.bk$$"/ignore_* "$inspath/" >> /dev/null 2>&1
 	cp -f "$inspath.bk$$"/sess/* "$inspath/sess/" >> /dev/null 2>&1
 	cp -f "$inspath.bk$$"/tmp/* "$inspath/tmp/" >> /dev/null 2>&1
 	cp -f "$inspath.bk$$"/quarantine/* "$inspath/quarantine/" >> /dev/null 2>&1
@@ -81,18 +77,15 @@ else
 	fi
 	cp -f "$inspath.bk$$"/monitor_paths "$inspath/" >> /dev/null 2>&1
 	cp -pf "$inspath.bk$$"/clean/custom.* "$inspath/clean/" >> /dev/null 2>&1
-	cp -f CHANGELOG COPYING.GPL README "$inspath/"
-	mkdir -p "$inspath/clean" "$inspath/pub" "$inspath/quarantine" "$inspath/sess" "$inspath/sigs" "$inspath/tmp" 2> /dev/null
-	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/internals/tlog" "$inspath/internals/tlog_lib.sh" 2> /dev/null
-	# tlog: replace default BASERUN for cursor storage security
-	sed -i "s|BASERUN=\"\${BASERUN:-/tmp}\"|BASERUN=\"\${BASERUN:-$inspath/tmp}\"|" "$inspath/internals/tlog"
+	cp -pf "$inspath.bk$$"/conf.maldet.hookscan "$inspath/" >> /dev/null 2>&1
+	if [ -d "$inspath.bk$$"/pub ]; then
+		cp -af "$inspath.bk$$"/pub "$inspath/" >> /dev/null 2>&1
+	fi
 	# tlog cursor migration: inotify switching from line-count to byte-offset
 	rm -f "$inspath/tmp/inotify" 2>/dev/null
-	clamav_paths="/usr/local/cpanel/3rdparty/share/clamav/ /var/lib/clamav/ /var/clamav/ /usr/share/clamav/ /usr/local/share/clamav"
-	for lp in $clamav_paths; do
-		clamav_linksigs "$lp"
-	done
-	killall -SIGUSR2 clamd 2> /dev/null
+	# Remove stale Perl hex scripts and FIFO (replaced by native grep engine)
+	rm -f "$inspath/internals/hexfifo.pl" "$inspath/internals/hexstring.pl" \
+		"$inspath/internals/hexfifo" 2>/dev/null
 fi
 
 if [ -d "/etc/cron.daily" ]; then
@@ -180,7 +173,7 @@ mkdir -p "$inspath/logs" && touch "$logf"
 ln -fs "$logf" "$inspath/event_log"
 $inspath/maldet --alert-daily 2> /dev/null
 
-echo "Linux Malware Detect v$ver"
+echo "Linux Malware Detect v$lmd_version"
 echo "            (C) 2002-2026, R-fx Networks <proj@rfxn.com>"
 echo "            (C) 2026, Ryan MacDonald <ryan@rfxn.com>"
 echo "This program may be freely redistributed under the terms of the GNU GPL v2"

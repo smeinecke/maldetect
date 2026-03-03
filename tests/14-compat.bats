@@ -58,11 +58,11 @@ _source_compat() {
     [ "$inotify_docroot" = "public_html" ]
 }
 
-@test "deprecated hex_fifo_scan maps to scan_hexfifo" {
-    unset scan_hexfifo
-    hex_fifo_scan=0
+@test "deprecated hex_fifo_depth migrates to scan_hexdepth via scan_hexfifo" {
+    scan_hexfifo=1
+    scan_hexfifo_depth=1048576
     _source_compat
-    [ "$scan_hexfifo" = "0" ]
+    [ "$scan_hexdepth" = "1048576" ]
 }
 
 @test "deprecated clamav_scan maps to scan_clamscan" {
@@ -87,14 +87,12 @@ _source_compat() {
 }
 
 @test "multiple deprecated vars work together" {
-    unset quarantine_clean scan_cpunice scan_hexfifo
+    unset quarantine_clean scan_cpunice
     quar_clean=1
     scan_nice=15
-    hex_fifo_scan=0
     _source_compat
     [ "$quarantine_clean" = "1" ]
     [ "$scan_cpunice" = "15" ]
-    [ "$scan_hexfifo" = "0" ]
 }
 
 @test "deprecated minfilesize maps to scan_min_filesize" {
@@ -123,6 +121,13 @@ _source_compat() {
     tmpdir_paths="/tmp /var/tmp"
     _source_compat
     [ "$scan_tmpdir_paths" = "/tmp /var/tmp" ]
+}
+
+@test "deprecated scan_hex_workers maps to scan_workers" {
+    unset scan_workers
+    scan_hex_workers=3
+    _source_compat
+    [ "$scan_workers" = "3" ]
 }
 
 @test "compat.conf sourced after conf.maldet in maldet entry point" {

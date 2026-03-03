@@ -20,17 +20,15 @@ teardown() {
     rm -f /tmp/hookscan-val.*
 }
 
-# F-037: hex FIFO permissions
-@test "hex FIFO created with mode 600 not 666" {
-    rm -f "$LMD_INSTALL/internals/hexfifo"
-    lmd_set_config scan_hexfifo 1
-    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+# Verify hex batch temp files are cleaned up after scan
+@test "hex batch temp files cleaned after scan" {
+    cp "$SAMPLES_DIR/test-hex-match.php" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"
-    # FIFO must exist after a hex scan — fail explicitly if missing
-    [ -p "$LMD_INSTALL/internals/hexfifo" ]
-    local perms
-    perms=$(stat -c '%a' "$LMD_INSTALL/internals/hexfifo")
-    [ "$perms" = "600" ]
+    assert_scan_completed
+    # No hex batch/worker/chunk temp files should remain
+    local leftovers
+    leftovers=$(find "$LMD_INSTALL/tmp" -name '.hex_batch*' -o -name '.hex_worker*' -o -name '.hex_chunk*' 2>/dev/null)
+    [ -z "$leftovers" ]
 }
 
 # F-022: conf.maldet permissions

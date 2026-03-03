@@ -308,7 +308,7 @@ teardown() {
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
-        ver="2.0.1"
+        lmd_version="2.0.1"
         lmdup
     '
     # lmdup will try to run install.sh from the tarball
@@ -330,7 +330,7 @@ teardown() {
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
-        ver="2.0.1"
+        lmd_version="2.0.1"
         autoupdate_version_hashed="0"
         lmdup
     '
@@ -354,7 +354,7 @@ teardown() {
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
-        ver="2.0.1"
+        lmd_version="2.0.1"
         lmdup
     '
     assert_failure
@@ -378,7 +378,7 @@ teardown() {
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
-        ver="2.0.1"
+        lmd_version="2.0.1"
         autoupdate_version_hashed="1"
         lmdup
     '
@@ -402,7 +402,7 @@ teardown() {
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
-        ver="2.0.1"
+        lmd_version="2.0.1"
         autoupdate_version_hashed="1"
         lmdup
     '

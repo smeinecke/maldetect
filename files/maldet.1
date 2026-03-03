@@ -82,6 +82,10 @@ Update the LMD installation to the latest version.
 \fB\-c\fR, \fB\-\-checkout\fR \fIFILE\fR
 Upload a suspected malware sample to rfxn.com for analysis.
 .TP
+\fB\-\-mkpubpaths\fR
+Create per\-user pub/ data directories for non\-root scan operations.
+Requires \fBscan_user_access=1\fR in conf.maldet.
+.TP
 \fB\-p\fR, \fB\-\-purge\fR
 Clear logs, quarantine queue, session, and temporary data.
 .TP
@@ -150,10 +154,17 @@ Notable variables include
 .BR scan_clamscan ,
 .BR scan_yara ,
 .BR scan_hexdepth ,
+.BR scan_workers ,
 .BR scan_find_timeout ,
 .BR scan_days ,
 and
 .BR string_length_scan .
+.PP
+.B scan_workers
+sets the number of parallel workers for native MD5 and HEX scan passes.
+A value of 0 (default) uses automatic detection: min(nproc, 4).
+Set to 1 for single\-threaded operation.
+Maximum recommended value: 8.
 .PP
 .B scan_find_timeout
 sets the maximum execution time in seconds for the

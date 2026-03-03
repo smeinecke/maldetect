@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY . /opt/lmd-src
 COPY tests/ /opt/tests/
 
-# Ensure cron directories exist for watchdog install
-RUN mkdir -p /etc/cron.weekly
+# Ensure cron directories exist for install.sh (cron.daily) and watchdog (cron.weekly)
+RUN mkdir -p /etc/cron.daily /etc/cron.weekly
 
 # Pre-install LMD with test config
 RUN cd /opt/lmd-src && ./install.sh && \

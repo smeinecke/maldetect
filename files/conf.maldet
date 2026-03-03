@@ -144,39 +144,10 @@ import_custsigs_yara_url=""
 ##
 # [ SCAN OPTIONS ]
 ##
-
-# The maximum directory depth that the scanner will search, a value
-# of 10-15 is recommended.
-# [ changing this may have an impact on scan performance ]
-scan_max_depth="15"
-
-# The minimum file size in bytes for a file to be included in LMD scans.
-# [ changing this may have an impact on scan performance ]
-scan_min_filesize="24"
-
-# The maximum file size for a file to be included in LMD scans. Accepted
-# value formats are b, k, M. The ClamAV engine max-filesize is set separately
-# based on the largest known filesize from the MD5 hash signature file.
-# [ changing this may have an impact on scan performance ]
-scan_max_filesize="2048k"
-
-# The maximum byte depth that the scanner will search into a files content.
-# The default signature rules expect a depth size of at least 65536 bytes.
-# [ changing this may have an impact on scan performance ]
-scan_hexdepth="65536"
-
-# Use named pipe (FIFO) for passing file contents hex data instead of stdin
-# default; improved performance and greater scanning depth. This is highly
-# recommended and works on most systems. The hexfifo will be disabled
-# automatically if for any reason it can not be successfully utilized.
-# [ 0 = disabled, 1 = enabled ]
-scan_hexfifo="1"
-
-# The maximum byte depth that the scanner will search into a file's content
-# when using named pipe (FIFO). Improved performance allows for greater
-# scan depth over default scan_hexdepth value.
-# [ changing this may have an impact on scan performance ]
-scan_hexfifo_depth="524288"
+# Number of parallel workers for native scan passes (MD5 and HEX).
+# A value of 0 uses automatic detection: min(nproc, 4).
+# [ 0 = auto, 1 = single-threaded, max recommended = 8 ]
+scan_workers="0"
 
 # If installed, use ClamAV clamscan binary as default scan engine which
 # provides improved scan performance on large file sets. The clamscan
@@ -185,26 +156,6 @@ scan_hexfifo_depth="524288"
 # detection capabilities.
 # [ 0 = disabled, 1 = enabled ]
 scan_clamscan="1"
-
-# Include the scanning of known temporary world-writable paths for
-# -a|--scan-all and -r|--recent scan types.
-scan_tmpdir_paths="/tmp /var/tmp /dev/shm /var/fcgi_ipc"
-
-# Allows non-root users to perform scans. This must be enabled when
-# using mod_security2 upload scanning or if you want to allow users
-# to perform scans. When enabled, this will populate 'pub/' with user
-# owned quarantine, session and temporary paths to facilitate scans.
-# [ 0 = disabled, 1 = enabled, disabled by default ]
-scan_user_access="0"
-
-# The minimum UID for users when creating per-user scan directories
-# with --mkpubpaths. Users with UID below this value are skipped.
-# [ default = 100 ]
-scan_user_access_minuid="100"
-
-##
-# [ YARA OPTIONS ]
-##
 
 # Enable native YARA scanning. Invokes the yara binary (or yr from YARA-X)
 # independently of ClamAV, supporting YARA modules, compiled rules, and
@@ -223,6 +174,38 @@ scan_yara_timeout="300"
 # When ClamAV is disabled, this is ignored and all rules are scanned.
 # [ all | custom ]
 scan_yara_scope="custom"
+
+# Allows non-root users to perform scans. This must be enabled when
+# using mod_security2 upload scanning or if you want to allow users
+# to perform scans. When enabled, this will populate 'pub/' with user
+# owned quarantine, session and temporary paths to facilitate scans.
+# [ 0 = disabled, 1 = enabled, disabled by default ]
+scan_user_access="0"
+
+# The minimum UID for users when creating per-user scan directories
+# with --mkpubpaths. Users with UID below this value are skipped.
+# [ default = 100 ]
+scan_user_access_minuid="100"
+
+# The maximum directory depth that the scanner will search, a value
+# of 10-15 is recommended.
+# [ changing this may have an impact on scan performance ]
+scan_max_depth="15"
+
+# The minimum file size in bytes for a file to be included in LMD scans.
+# [ changing this may have an impact on scan performance ]
+scan_min_filesize="24"
+
+# The maximum file size for a file to be included in LMD scans. Accepted
+# value formats are b, k, M. The ClamAV engine max-filesize is set separately
+# based on the largest known filesize from the MD5 hash signature file.
+# [ changing this may have an impact on scan performance ]
+scan_max_filesize="2048k"
+
+# The maximum byte depth that the scanner will search into a file's content.
+# Higher values allow deeper pattern matching at the cost of scan performance.
+# [ changing this may have an impact on scan performance ]
+scan_hexdepth="524288"
 
 # Process CPU scheduling (nice) priority level for scan operations.
 # [ -19 = high prio , 19 = low prio, default = 19 ]
@@ -271,6 +254,10 @@ scan_find_timeout="0"
 # recent result set will be saved to '/usr/local/maldetect/tmp/find_results.last'
 # [ 0 = disabled, 1 = enabled ]
 scan_export_filelist="0"
+
+# Include the scanning of known temporary world-writable paths for
+# -a|--scan-all and -r|--recent scan types.
+scan_tmpdir_paths="/tmp /var/tmp /dev/shm /var/fcgi_ipc"
 
 ##
 # [ QUARANTINE OPTIONS ]

@@ -54,12 +54,33 @@ create_mock_curl() {
     cat > "$MOCK_BIN_DIR/curl" <<CURLEOF
 #!/usr/bin/env bash
 echo "CURL_CALL: \$@" >> /tmp/mock-curl.log
+# Log -K config contents for test verification
+_prev=""
+for _arg in "\$@"; do
+    if [ "\$_prev" = "-K" ] && [ -f "\$_arg" ]; then
+        echo "CURL_CONFIG: \$(cat "\$_arg")" >> /tmp/mock-curl.log
+    fi
+    _prev="\$_arg"
+done
 if [[ "\$*" == *"getUploadURLExternal"* ]]; then
     echo '{"ok":true,"upload_url":"http://mock-upload","file_id":"F12345"}'
 elif [[ "\$*" == *"completeUploadExternal"* ]]; then
     echo '{"ok":true}'
-elif [[ "\$*" == *"sendDocument"* ]]; then
-    echo '{"ok":true,"result":{}}'
+elif [[ "\$*" == *"-K"* ]]; then
+    # Telegram uses -K config file; check config content for sendDocument
+    _cfg=""
+    _p=""
+    for _a in "\$@"; do
+        if [ "\$_p" = "-K" ] && [ -f "\$_a" ]; then
+            _cfg=\$(cat "\$_a")
+        fi
+        _p="\$_a"
+    done
+    if [[ "\$_cfg" == *"sendDocument"* ]]; then
+        echo '{"ok":true,"result":{}}'
+    else
+        $real_curl "\$@"
+    fi
 elif [[ "\$*" == *"mock-upload"* ]]; then
     echo 'ok'
 else
@@ -74,12 +95,33 @@ create_mock_curl_error() {
     cat > "$MOCK_BIN_DIR/curl" <<'CURLEOF'
 #!/usr/bin/env bash
 echo "CURL_CALL: $@" >> /tmp/mock-curl.log
+# Log -K config contents for test verification
+_prev=""
+for _arg in "$@"; do
+    if [ "$_prev" = "-K" ] && [ -f "$_arg" ]; then
+        echo "CURL_CONFIG: $(cat "$_arg")" >> /tmp/mock-curl.log
+    fi
+    _prev="$_arg"
+done
 if [[ "$*" == *"getUploadURLExternal"* ]]; then
     echo '{"ok":false,"error":"invalid_auth"}'
 elif [[ "$*" == *"completeUploadExternal"* ]]; then
     echo '{"ok":false,"error":"channel_not_found"}'
-elif [[ "$*" == *"sendDocument"* ]]; then
-    echo '{"ok":false,"error_code":401,"description":"Unauthorized"}'
+elif [[ "$*" == *"-K"* ]]; then
+    # Telegram uses -K config file; check config content for sendDocument
+    _cfg=""
+    _p=""
+    for _a in "$@"; do
+        if [ "$_p" = "-K" ] && [ -f "$_a" ]; then
+            _cfg=$(cat "$_a")
+        fi
+        _p="$_a"
+    done
+    if [[ "$_cfg" == *"sendDocument"* ]]; then
+        echo '{"ok":false,"error_code":401,"description":"Unauthorized"}'
+    else
+        echo '{"ok":false,"error":"unknown"}'
+    fi
 elif [[ "$*" == *"mock-upload"* ]]; then
     echo 'ok'
 else
@@ -226,7 +268,7 @@ run_maldet_with_mocks() {
     run_maldet_with_mocks -a "$TEST_SCAN_DIR"
     assert_scan_completed
     [ -f /tmp/mock-curl.log ]
-    run grep "bot999:XYZ" /tmp/mock-curl.log
+    run grep -F "bot999:XYZ" /tmp/mock-curl.log
     assert_success
 }
 

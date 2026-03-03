@@ -9,8 +9,8 @@ RUN microdnf install -y \
 COPY . /opt/lmd-src
 COPY tests/ /opt/tests/
 
-# Ensure cron directories exist for watchdog install
-RUN mkdir -p /etc/cron.weekly
+# Ensure cron directories exist for install.sh (cron.daily) and watchdog (cron.weekly)
+RUN mkdir -p /etc/cron.daily /etc/cron.weekly
 
 RUN cd /opt/lmd-src && ./install.sh && \
     sed -i 's/^autoupdate_signatures=.*/autoupdate_signatures="0"/' /usr/local/maldetect/conf.maldet && \
