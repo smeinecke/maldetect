@@ -43,6 +43,26 @@ assert_report_contains() {
     fi
 }
 
+# Assert malware was found (exit code 2)
+# Usage: run maldet -a PATH; assert_malware_found
+assert_malware_found() {
+    if [ "$status" -ne 2 ]; then
+        echo "# expected exit code 2 (malware found), got $status" >&2
+        echo "# output: $output" >&2
+        return 1
+    fi
+}
+
+# Assert scan was clean (exit code 0)
+# Usage: run maldet -a PATH; assert_scan_clean
+assert_scan_clean() {
+    if [ "$status" -ne 0 ]; then
+        echo "# expected exit code 0 (clean scan), got $status" >&2
+        echo "# output: $output" >&2
+        return 1
+    fi
+}
+
 # Get the most recent scan ID
 # Usage: scanid=$(get_last_scanid)
 get_last_scanid() {

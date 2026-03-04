@@ -54,3 +54,19 @@ setup() {
     run bash -n "$LMD_INSTALL/internals/compat.conf"
     assert_success
 }
+
+@test "tlog_lib.sh syntax check passes" {
+    run bash -n "$LMD_INSTALL/internals/tlog_lib.sh"
+    assert_success
+}
+
+@test "cron.watchdog syntax check passes" {
+    [ -f /etc/cron.weekly/maldet-watchdog ] || skip "cron.watchdog not installed"
+    run bash -n /etc/cron.weekly/maldet-watchdog
+    assert_success
+}
+
+@test "uninstall.sh syntax check passes" {
+    run bash -n "$LMD_INSTALL/uninstall.sh"
+    assert_success
+}

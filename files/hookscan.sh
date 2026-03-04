@@ -52,4 +52,4 @@ if [ -f "$hookcnf" ]; then
         source "$hookcnf"
 fi
 
-cd /tmp ; $inspath/maldet --hook-scan --config-option quarantine_hits=$quarantine_hits,quarantine_clean=$quarantine_clean,tmpdir=/var/tmp,scan_tmpdir_paths=$scan_tmpdir_paths,scan_clamscan=$clamd_scan,scan_yara=$scan_yara -a "$file"
+cd "$tmpdir" ; $inspath/maldet --hook-scan --config-option quarantine_hits=$quarantine_hits,quarantine_clean=$quarantine_clean,tmpdir=$tmpdir,scan_tmpdir_paths=$scan_tmpdir_paths,scan_clamscan=$clamd_scan,scan_yara=$scan_yara -a "$file"

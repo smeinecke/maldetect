@@ -1,0 +1,20 @@
+# VCS history (largest savings ~33MB)
+.git
+
+# Working/planning files (not source)
+.claude/
+CLAUDE.md
+PLAN*.md
+MEMORY.md
+AUDIT.md
+REGR.md
+audit-output/
+
+# Benchmark/dev scripts
+bench-*.sh
+
+# Downloaded signatures (runtime data, not source)
+files/sigs/
+
+# Reference documentation (dev-only)
+reference/

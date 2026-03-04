@@ -70,6 +70,11 @@ teardown() {
     assert_success
 }
 
+@test "scan_user_access_minuid has default value 100" {
+    run grep '^scan_user_access_minuid="100"' "$LMD_INSTALL/conf.maldet"
+    assert_success
+}
+
 @test "scan_ignore_user with non-existent user does not break scan" {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run maldet -co scan_ignore_user=nonexistent_user_xyz -a "$TEST_SCAN_DIR"

@@ -18,7 +18,7 @@ EOF
 if [ "$spath" ]; then
 	echo "PATH:          $hrspath" >> $tmpf
 fi
-if [ "$days" ] && [ ! "$days" == "all" ]; then
+if [ "$days" ] && [ "$days" != "all" ]; then
 	echo "RANGE:         $days days" >> $tmpf
 fi
 cat >> $tmpf <<EOF
@@ -26,7 +26,7 @@ TOTAL HITS:    $user_tot_hits
 TOTAL CLEANED: $user_tot_cl
 
 EOF
-if [ "$quarantine_hits" == "0" ] && [ ! "$tot_hits" == "0" ]; then
+if [ "$quarantine_hits" == "0" ] && [ "$tot_hits" != "0" ]; then
  echo "WARNING: Automatic quarantine is currently disabled, detected threats are still accessible to users!" >> $tmpf
  echo "To enable, set quarantine_hits=1 and/or to quarantine hits from this scan run:" >> $tmpf
  echo -e "/usr/local/sbin/maldet -q $datestamp.$$\n" >> $tmpf
@@ -36,7 +36,7 @@ elif [ "$quarantine_hits" == "1" ]; then
  echo "Please see below for details on which files have been moved to quarantine." >> $tmpf
 fi
 if [ "$quarantine_clean" == "1" ]; then
-  if [ "$type" == "scan" ] && [ -f "$sessdir/clean.$$" ] && [ ! -z "$(cat $sessdir/clean.$$)" ]; then
+  if [ "$type" == "scan" ] && [ -s "$sessdir/clean.$$" ]; then
 	cleaned_list="$sessdir/clean.$$"
   fi
   if [ -f "$cleaned_list" ]; then
@@ -47,7 +47,7 @@ $(cat $cleaned_list)
 EOF
   fi
  if [ "$quarantine_suspend_user" == "1" ]; then
-  if [ -f "$sessdir/suspend.users.$$" ] && [ ! -z "$(cat $sessdir/suspend.users.$$)" ]; then
+  if [ -s "$sessdir/suspend.users.$$" ]; then
 	suspended_list="$sessdir/suspend.users.$$"
   fi
   if [ -f "$suspended_list" ]; then
@@ -60,7 +60,7 @@ EOF
  fi
 fi
 
-if [ ! "$user_tot_hits" == "0" ]; then
+if [ "$user_tot_hits" != "0" ]; then
  hitlist_file="$tmpdir/.${sys_user}.hits"
  if [ -f "$hitlist_file" ]; then
  	echo "FILE HIT LIST:" >> $tmpf

@@ -50,6 +50,18 @@ teardown() {
     assert_report_contains "$scanid" "EICAR"
 }
 
+@test "exit code is 2 when malware detected" {
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_malware_found
+}
+
+@test "exit code is 0 when scan is clean" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_clean
+}
+
 @test "scan_min_filesize filters small files" {
     echo "x" > "$TEST_SCAN_DIR/tiny.txt"
     lmd_set_config scan_min_filesize 999999

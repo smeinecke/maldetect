@@ -36,6 +36,18 @@ v2.0.1 | Feb 24 2026:
       CentOS 6 (util-linux 2.17) gracefully falls back to plain text
 
   -- Bug Fixes --
+[Fix] import_conf() re-source compat.conf and syscnf after remote config
+      so deprecated variable names in imported configs get mapped correctly
+[Fix] guard $curl binary in ELK statistics (scan.etpl) and Telegram
+      alerting (genalert) to prevent unbound-variable errors on systems
+      without curl installed
+[Fix] restrict custom signature file permissions to 640/750 when pubscan
+      disabled; defense-in-depth alongside parent directory restrictions
+[Fix] strip CR/LF from email subjects in _send_email() and panel alert
+      path to prevent header injection
+[Fix] replace hardcoded /var/tmp and cd /tmp with $tmpdir in hookscan.sh
+[Fix] SysV init status() checks monitor.pid before pgrep fallback for
+      reliable PID tracking
 [Fix] Slack alerting: migrate from deprecated files.upload API to
       files.getUploadURLExternal + files.completeUploadExternal; fix
       multi-channel to use channels parameter instead of channel_id; check
@@ -292,6 +304,19 @@ v2.0.1 | Feb 24 2026:
       when ftp client is not installed
 
   -- Changes --
+[Change] normalize mixed tabs/spaces to tabs across functions; replace
+      if-test default init with parameter expansion in monitor_init()
+[Change] sigup() corruption check uses _count_signatures() instead of
+      duplicate inline wc -l; restructure elif chain to separate if blocks
+[Change] replace ! -z with -n and ! "$x" == "$y" with "$x" != "$y" across
+      functions, maldet, scan.etpl, panel_alert.etpl; replace -f && ! -z $(cat)
+      with -s for session file existence checks
+[Change] eliminate 14x useless cat|cmd pipes in functions; replace with
+      direct file arguments, stdin redirects, or read builtins; add grep -h
+      on multi-file sig merges to suppress filename prefixes
+[Change] deduplicate prerun(): extract _require_bin() helper, replace 5
+      dir-creation blocks with loop, 3 sig-file blocks with loop, 2
+      default-assign blocks with parameter expansion
 [Change] tlog rewritten: shared tlog_lib.sh sourced as in-process library;
       byte-mode tracking for monitor, line-mode for digest email; CLI rewritten
       with option parsing and subcommands; backward-compatible positional interface
@@ -383,6 +408,12 @@ v2.0.1 | Feb 24 2026:
       usage_short(), usage_long(), and README CLI table
 
   -- Test Suite --
+[Change] yara-x CI job captures JUnit reports and uploads as artifact
+[Change] parameterize YARA-X binary architecture via YARA_X_ARCH build arg
+[New] .dockerignore excludes .git, working files, audit artifacts,
+      benchmark scripts, and downloaded signatures from Docker build context
+[New] test lmdup_force=1 triggers update even when version matches
+[Change] wrap 7 bare cron.daily invocations with run+assert_success
 [New] BATS test infrastructure: 26 test files, 328 tests covering scanning
       (MD5, HEX, string length, YARA), quarantine/restore, clean operations,
       ignore files, config options, compat.conf, cron, reporting, signatures,

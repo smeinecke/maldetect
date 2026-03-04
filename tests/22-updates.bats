@@ -339,6 +339,29 @@ teardown() {
     assert_success
 }
 
+@test "lmdup forces update with --force even when version matches" {
+    set_fixture "maldet.current.ver" "2.0.1"
+    create_mock_tarball "2.0.1"
+
+    run bash -c '
+        source /opt/tests/helpers/mock-update-server.sh
+        setup_mock_update_server
+        source "'"$LMD_INSTALL"'/internals/internals.conf"
+        source "'"$LMD_INSTALL"'/conf.maldet"
+        if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
+        source "'"$LMD_INSTALL"'/internals/functions"
+        import_config_url=""
+        web_proxy=""
+        get_proxy_arg=""
+        lmd_version="2.0.1"
+        autoupdate_version_hashed="0"
+        lmdup_force=1
+        lmdup
+    '
+    run grep "version update with --force requested" "$LMD_INSTALL/logs/event_log"
+    assert_success
+}
+
 @test "lmdup rejects tarball with bad MD5" {
     create_mock_tarball "2.0.2"
     # Corrupt the md5 file

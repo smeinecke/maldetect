@@ -6,10 +6,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install YARA-X (yr) instead of classic yara
+# YARA_X_ARCH: target architecture triple prefix (default x86_64)
+# NOTE: SHA256 is architecture-specific; update when changing YARA_X_ARCH
+ARG YARA_X_ARCH=x86_64
 RUN YARA_X_VERSION=1.13.0 && \
     YARA_X_SHA256=b93fb0b87016c60498c26b8a17d2617bbc49f5d5b1a291cde5b09658ce93bb69 && \
     wget -qO /tmp/yr.tar.gz \
-      "https://github.com/VirusTotal/yara-x/releases/download/v${YARA_X_VERSION}/yara-x-v${YARA_X_VERSION}-x86_64-unknown-linux-gnu.gz" && \
+      "https://github.com/VirusTotal/yara-x/releases/download/v${YARA_X_VERSION}/yara-x-v${YARA_X_VERSION}-${YARA_X_ARCH}-unknown-linux-gnu.gz" && \
     echo "${YARA_X_SHA256}  /tmp/yr.tar.gz" | sha256sum -c - && \
     tar xzf /tmp/yr.tar.gz -C /usr/local/bin && \
     chmod 755 /usr/local/bin/yr && \

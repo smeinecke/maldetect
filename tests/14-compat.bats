@@ -130,6 +130,13 @@ _source_compat() {
     [ "$scan_workers" = "3" ]
 }
 
+@test "deprecated pubuser_minuid maps to scan_user_access_minuid" {
+    unset scan_user_access_minuid
+    pubuser_minuid=500
+    _source_compat
+    [ "$scan_user_access_minuid" = "500" ]
+}
+
 @test "compat.conf sourced after conf.maldet in maldet entry point" {
     run grep -n 'source.*compatcnf' "$LMD_INSTALL/maldet"
     assert_success

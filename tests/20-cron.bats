@@ -81,7 +81,8 @@ teardown() {
     mkdir -p /usr/local/cpanel
     install_mock_maldet
     lmd_set_config cron_daily_scan 1
-    bash /etc/cron.daily/maldet
+    run bash /etc/cron.daily/maldet
+    assert_success
     # Default/cPanel path includes /home?/?/public_html/
     run grep "public_html" "$CRON_MALDET_LOG"
     assert_success
@@ -91,7 +92,8 @@ teardown() {
     mkdir -p /etc/psa /var/lib/psa
     install_mock_maldet
     lmd_set_config cron_daily_scan 1
-    bash /etc/cron.daily/maldet
+    run bash /etc/cron.daily/maldet
+    assert_success
     run grep "vhosts" "$CRON_MALDET_LOG"
     assert_success
 }
@@ -100,7 +102,8 @@ teardown() {
     mkdir -p /usr/local/directadmin
     install_mock_maldet
     lmd_set_config cron_daily_scan 1
-    bash /etc/cron.daily/maldet
+    run bash /etc/cron.daily/maldet
+    assert_success
     run grep "domains" "$CRON_MALDET_LOG"
     assert_success
 }
@@ -109,7 +112,8 @@ teardown() {
     mkdir -p /opt/webdir /etc/nginx/bx
     install_mock_maldet
     lmd_set_config cron_daily_scan 1
-    bash /etc/cron.daily/maldet
+    run bash /etc/cron.daily/maldet
+    assert_success
     run grep "bitrix" "$CRON_MALDET_LOG"
     assert_success
 }
@@ -118,7 +122,8 @@ teardown() {
     # Ensure no panel dirs exist
     install_mock_maldet
     lmd_set_config cron_daily_scan 1
-    bash /etc/cron.daily/maldet
+    run bash /etc/cron.daily/maldet
+    assert_success
     # Default path includes /home?/?/public_html/
     run grep "public_html" "$CRON_MALDET_LOG"
     assert_success
@@ -127,7 +132,8 @@ teardown() {
 @test "cron skips scan when cron_daily_scan=0" {
     install_mock_maldet
     lmd_set_config cron_daily_scan 0
-    bash /etc/cron.daily/maldet
+    run bash /etc/cron.daily/maldet
+    assert_success
     # No maldet scan call should appear
     if [ -f "$CRON_MALDET_LOG" ]; then
         run grep -c "MALDET_CALL" "$CRON_MALDET_LOG"
@@ -194,6 +200,7 @@ if [ "$TEST_CRON_SOURCED" = "1" ]; then
     touch /tmp/cron-custom-marker
 fi
 EOF
-    bash /etc/cron.daily/maldet
+    run bash /etc/cron.daily/maldet
+    assert_success
     [ -f /tmp/cron-custom-marker ]
 }

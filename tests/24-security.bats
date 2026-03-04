@@ -89,6 +89,32 @@ _hookscan_validation_script() {
     assert_output --partial "rejected unsafe -co value"
 }
 
+@test "-co neutralizes semicolon in value via quoting" {
+    # sed pipeline wraps values in double quotes, making ; a literal
+    mkdir -p /tmp/lmd-co-test
+    echo "clean" > /tmp/lmd-co-test/file.txt
+    run maldet -co 'scan_max_filesize=1;echo pwned' -a /tmp/lmd-co-test
+    # The semicolon is neutralized by quoting — no command execution
+    refute_output --partial "pwned"
+    rm -rf /tmp/lmd-co-test
+}
+
+@test "-co neutralizes pipe in value via quoting" {
+    mkdir -p /tmp/lmd-co-test
+    echo "clean" > /tmp/lmd-co-test/file.txt
+    run maldet -co 'scan_max_filesize=1|echo pwned' -a /tmp/lmd-co-test
+    refute_output --partial "pwned"
+    rm -rf /tmp/lmd-co-test
+}
+
+@test "-co neutralizes ampersand in value via quoting" {
+    mkdir -p /tmp/lmd-co-test
+    echo "clean" > /tmp/lmd-co-test/file.txt
+    run maldet -co 'scan_max_filesize=1&echo pwned' -a /tmp/lmd-co-test
+    refute_output --partial "pwned"
+    rm -rf /tmp/lmd-co-test
+}
+
 @test "-co accepts legitimate variable assignment" {
     mkdir -p /tmp/lmd-co-test
     echo "clean" > /tmp/lmd-co-test/file.txt

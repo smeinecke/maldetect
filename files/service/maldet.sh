@@ -101,9 +101,17 @@ restart() {
 
 status() {
         echo -n "Checking $prog monitoring status: "
-        if [ "$(pgrep -f inotify.paths.[0-9]+)" ]; then
+        if [ -f "$tmpdir/monitor.pid" ]; then
+            local _mpid
+            _mpid=$(cat "$tmpdir/monitor.pid")
+            if [ -n "$_mpid" ] && kill -0 "$_mpid" 2>/dev/null; then  # validate PID is alive
+                echo "Running (pid $_mpid)"
+                exit 0
+            fi
+        fi
+        if [ "$(pgrep -f 'inotify.paths.[0-9]+')" ]; then
             echo "Running"
-	    exit 0
+            exit 0
         else
             echo "Not running"
             exit 1

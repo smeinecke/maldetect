@@ -12,7 +12,7 @@ HOST:      $HOSTNAME
 SCAN ID:   $scanid
 STARTED:   $scan_start_hr
 EOF
-if [ ! "$type" == "digest" ]; then
+if [ "$type" != "digest" ]; then
 cat >> $tmpf <<EOF
 COMPLETED: $scan_end_hr
 ELAPSED:   ${scan_et}s [find: ${file_list_et}s]
@@ -27,7 +27,7 @@ fi
 if [ "$spath" ]; then
 	echo "PATH:          $hrspath" >> $tmpf
 fi
-if [ "$days" ] && [ ! "$days" == "all" ]; then
+if [ "$days" ] && [ "$days" != "all" ]; then
 	echo "RANGE:         $days days" >> $tmpf
 fi
 cat >> $tmpf <<EOF
@@ -36,15 +36,15 @@ TOTAL HITS:    $tot_hits
 TOTAL CLEANED: $tot_cl
 
 EOF
-if [ "$quarantine_hits" == "0" ] && [ ! "$tot_hits" == "0" ]; then
+if [ "$quarantine_hits" == "0" ] && [ "$tot_hits" != "0" ]; then
  echo "WARNING: Automatic quarantine is currently disabled, detected threats are still accessible to users!" >> $tmpf
  echo "To enable, set quarantine_hits=1 and/or to quarantine hits from this scan run:" >> $tmpf
  echo -e "/usr/local/sbin/maldet -q $datestamp.$$\n" >> $tmpf
 fi
 if [ "$quarantine_clean" == "1" ]; then
-  if [ "$type" == "scan" ] && [ -f "$sessdir/clean.$$" ] && [ ! -z "$(cat $sessdir/clean.$$)" ]; then
+  if [ "$type" == "scan" ] && [ -s "$sessdir/clean.$$" ]; then
 	cleaned_list="$sessdir/clean.$$"
-  elif [ "$type" == "digest" ] && [ -f "$tmpdir/.digest.clean.hits" ] && [ ! "$tot_cl" == "0" ]; then
+  elif [ "$type" == "digest" ] && [ -f "$tmpdir/.digest.clean.hits" ] && [ "$tot_cl" != "0" ]; then
 	cleaned_list="$tmpdir/.digest.clean.hits"
   fi
   if [ -f "$cleaned_list" ]; then
@@ -55,9 +55,9 @@ $(cat $cleaned_list)
 EOF
   fi
  if [ "$quarantine_suspend_user" == "1" ]; then
-  if [ -f "$sessdir/suspend.users.$$" ] && [ ! -z "$(cat $sessdir/suspend.users.$$)" ]; then
+  if [ -s "$sessdir/suspend.users.$$" ]; then
 	suspended_list="$sessdir/suspend.users.$$"
-  elif [ "$type" == "digest" ] && [ -f "$tmpdir/.digest.susp.hits" ] && [ ! "$tot_susp" == "0" ]; then
+  elif [ "$type" == "digest" ] && [ -f "$tmpdir/.digest.susp.hits" ] && [ "$tot_susp" != "0" ]; then
 	suspended_list="$tmpdir/.digest.susp.hits"
   fi
   if [ -f "$suspended_list" ]; then
@@ -70,7 +70,7 @@ EOF
  fi
 fi
 
-if [ ! "$tot_hits" == "0" ]; then
+if [ "$tot_hits" != "0" ]; then
  if [ "$type" == "digest" ]; then
 	hitlist_file="$tmpdir/.digest.alert.hits"
  else
@@ -83,7 +83,7 @@ if [ ! "$tot_hits" == "0" ]; then
 	else
 		cat "$hitlist_file" >> "$tmpf"
 	fi
-	if [ "$enable_statistic" == "1" ] && [ -n "$elk_host" ] && [ -n "$elk_port" ]; then
+	if [ "$enable_statistic" == "1" ] && [ -n "$elk_host" ] && [ -n "$elk_port" ] && [ -n "$curl" ]; then
 		elk_url="${elk_host}:${elk_port}"
 		if [ -n "$elk_index" ]; then
 			elk_url="${elk_url}/${elk_index}/message"
