@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 ##
 # Linux Malware Detect v2.0.1
 #             (C) 2002-2026, R-fx Networks <proj@rfxn.com>
@@ -97,6 +98,9 @@ prerun() {
 		email_alert=0
 	fi
 
+	_lmd_alert_init
+	_lmd_elog_init
+
 	if [ "$scan_yara" == "1" ] && [ -z "$yr" ] && [ -z "$yara" ]; then
 		eout "{yara} no yara or yr binary found, native YARA scanning disabled" 1
 		scan_yara=0
@@ -132,34 +136,20 @@ prerun() {
 	if [ -z "$cron_daily_scan" ]; then
 		cron_daily_scan=1
 	fi
+
+	command -v elog_event >/dev/null 2>&1 && \
+		elog_event "$ELOG_EVT_CONFIG_LOADED" "info" "configuration loaded" "config=$cnf"
 }
 
 eout() {
-	local msg="$1"
-	local stdout="$2"
-	local appn=maldet
-	local log_size trim
-	if [ ! -d "$logdir" ]; then
-		mkdir -p $logdir ; chmod 700 $logdir
-	fi
-	if [ ! -f "$maldet_log" ]; then
-		touch $maldet_log
-	fi
-	if [ "$maldet_log_truncate" == "1" ]; then
-		log_size=$($wc -l < "$maldet_log")
-		if [ "$log_size" -ge "20000" ]; then
-			trim=1000
-			local tmplog=$(mktemp "${maldet_log}.trim.XXXXXX")
-			tail -n +"$((trim + 1))" "$maldet_log" > "$tmplog" 2>/dev/null
-			cat "$tmplog" > "$maldet_log" 2>/dev/null
-			rm -f "$tmplog"
-		fi
-	fi
-	if [ "$msg" != "" ]; then
-		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) $appn($$): $msg" >> $maldet_log
-		if [ -n "$stdout" ]; then
-			echo "$appn($$): $msg"
-		fi
+	# Sync dynamic log path (--user flag changes $maldet_log after init)
+	ELOG_LOG_FILE="$maldet_log"
+	if command -v elog >/dev/null 2>&1; then
+		elog info "$1" "$2"
+	else
+		# Fallback if elog_lib not loaded
+		echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) maldet($$): $1" >> "$maldet_log"
+		if [ -n "$2" ]; then echo "maldet($$): $1"; fi
 	fi
 }
 
@@ -678,6 +668,8 @@ clean() {
 				progress_cleaned=$((${progress_cleaned:-0} + 1))
 				echo "$file_path" >> $clean_history
 				eout "{clean} clean successful on $file_path" 1
+				command -v elog_event >/dev/null 2>&1 && \
+					elog_event "$ELOG_EVT_FILE_CLEANED" "info" "cleaned $file_path" "file=$file_path" "sig=$sh_hitname"
 			fi
 		elif { [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ]; } && [ -f "$file" ]; then
 			file_path="$file"
@@ -698,6 +690,8 @@ clean() {
 				progress_cleaned=$((${progress_cleaned:-0} + 1))
 				echo "$file_path" >> $clean_history
 				eout "{clean} clean successful on $file" 1
+				command -v elog_event >/dev/null 2>&1 && \
+					elog_event "$ELOG_EVT_FILE_CLEANED" "info" "cleaned $file" "file=$file" "sig=$sh_hitname"
 			fi
 		else
 			eout "{clean} could not find clean rule for hit $sh_hitname or file $file no longer exists." 1
@@ -774,6 +768,8 @@ restore() {
 			touch -m --date="@${file_mtime}" "$file_path"
 		fi
 		eout "{restore} quarantined file '$file' restored to '$file_path'" 1
+		command -v elog_event >/dev/null 2>&1 && \
+			elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
 	elif [ -f "$file" ] && [ -f "${file}.info" ]; then
 		quar_get_filestat "${file}.info"
 		if ! _validate_restore_path "$file_path"; then
@@ -788,6 +784,8 @@ restore() {
 			touch -m --date="@${file_mtime}" "$file_path"
 		fi
 		eout "{restore} quarantined file '$file' restored to '$file_path'" 1
+		command -v elog_event >/dev/null 2>&1 && \
+			elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
 	else
 		eout "{restore} '$file' is not eligible for restore or could not be found" 1
 	fi
@@ -851,23 +849,97 @@ clean_hitlist() {
 	fi
 }
 
-_send_email() {
-	local _file="$1" _subj="$2" _addr="$3"
-	# Strip CR/LF to prevent email header injection
-	_subj="${_subj//$'\r'/}"
-	_subj="${_subj//$'\n'/}"
-	if [ -f "$mail" ]; then
-		$mail -s "$_subj" "$_addr" < "$_file"
-	elif [ -f "$sendmail" ]; then
-		local _tmpmail
-		_tmpmail=$(mktemp "$tmpdir/.mail.XXXXXX")
-		echo "SUBJECT: $_subj" > "$_tmpmail"
-		cat "$_file" >> "$_tmpmail"
-		$sendmail -t "$_addr" < "$_tmpmail"
-		rm -f "$_tmpmail"
+_lmd_alert_init() {
+	# Map LMD config vars to alert_lib env vars
+	export ALERT_CURL_TIMEOUT="${remote_uri_timeout:-30}"
+	export ALERT_CURL_MAX_TIME="120"
+	export ALERT_TMPDIR="$tmpdir"
+
+	# Slack — bot mode only (LMD uses file upload, requires Bot API)
+	export ALERT_SLACK_MODE="bot"
+	export ALERT_SLACK_TOKEN="${slack_token:-}"
+	export ALERT_SLACK_CHANNEL="${slack_channels:-}"
+
+	# Telegram
+	export ALERT_TELEGRAM_BOT_TOKEN="${telegram_bot_token:-}"
+	export ALERT_TELEGRAM_CHAT_ID="${telegram_channel_id:-}"
+
+	# Discord
+	export ALERT_DISCORD_WEBHOOK_URL="${discord_webhook_url:-}"
+
+	# Enable/disable channels
+	if [ "${slack_alert:-0}" = "1" ]; then
+		alert_channel_enable "slack"
 	else
+		alert_channel_disable "slack"
+	fi
+	if [ "${telegram_alert:-0}" = "1" ]; then
+		alert_channel_enable "telegram"
+	else
+		alert_channel_disable "telegram"
+	fi
+	if [ "${discord_alert:-0}" = "1" ]; then
+		alert_channel_enable "discord"
+	else
+		alert_channel_disable "discord"
+	fi
+}
+
+_lmd_elog_init() {
+	# Map LMD config to elog_lib env vars
+	ELOG_APP="maldet"
+	ELOG_LOG_DIR="$logdir"
+	ELOG_LOG_FILE="$maldet_log"
+	ELOG_TS_FORMAT="%b %d %Y %H:%M:%S"
+	ELOG_STDOUT="flag"
+	ELOG_STDOUT_PREFIX="short"
+	ELOG_FORMAT="classic"
+
+	# Truncation: elog_lib caps at N lines (inode-preserving)
+	if [ "$maldet_log_truncate" == "1" ]; then
+		ELOG_LOG_MAX_LINES=20000
+	else
+		ELOG_LOG_MAX_LINES=0
+	fi
+
+	# Audit trail — disabled for non-root users
+	if [ "$(id -u)" -eq 0 ]; then
+		ELOG_AUDIT_FILE="/var/log/maldet/audit.log"
+		[ -d "/var/log/maldet" ] || mkdir -p "/var/log/maldet" 2>/dev/null
+	else
+		ELOG_AUDIT_FILE=""
+	fi
+
+	export ELOG_APP ELOG_LOG_DIR ELOG_LOG_FILE ELOG_TS_FORMAT
+	export ELOG_STDOUT ELOG_STDOUT_PREFIX ELOG_FORMAT
+	export ELOG_LOG_MAX_LINES ELOG_AUDIT_FILE
+
+	if command -v elog_init >/dev/null 2>&1; then
+		elog_init
+		# elog_init enables file+audit but not stdout; enable explicitly
+		elog_output_enable "stdout" 2>/dev/null || true
+	fi
+}
+
+_lmd_dispatch_messaging() {
+	local file="$1" subject="$2"
+	local _any_enabled=0 _ch
+	for _ch in slack telegram discord; do
+		if alert_channel_enabled "$_ch"; then
+			_any_enabled=1; break
+		fi
+	done
+	[ "$_any_enabled" = "1" ] || return 0
+
+	local _tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
+	export SUBJECT="$subject"
+	export HOSTNAME; HOSTNAME=$(hostname)
+
+	if ! alert_dispatch "$_tpl_dir" "$subject" "all" "$file"; then
+		eout "{alert} one or more messaging channels failed" 1
 		return 1
 	fi
+	return 0
 }
 
 view_report() {
@@ -922,7 +994,7 @@ view_report() {
 	fi
 	# Email report if second argument contains @
 	if [[ "$2" == *@* ]]; then
-		if ! _send_email "$sessdir/session.$rid" "$email_subj" "$2"; then
+		if ! _alert_deliver_email "$2" "$email_subj" "$sessdir/session.$rid" "" "text"; then
 			eout "{report} no \$mail or \$sendmail binaries found, e-mail alerts disabled." 1
 			exit 1
 		fi
@@ -1035,6 +1107,8 @@ record_hit() {
 		get_filestat "$file" 1
 		file_name="${file##*/}"
 		eout "{hit} malware hit $hitname found for $file"
+		command -v elog_event >/dev/null 2>&1 && \
+			elog_event "$ELOG_EVT_THREAT_DETECTED" "warn" "malware hit $hitname found for $file" "file=$file" "sig=$hitname"
 		echo "${utime}:${hostid}:${hitname}:${md5_hash}:${file_size}:${file_owner}.${file_group}:${file_mode}:${file_times}:${file}" >> $hits_history
 	fi
 }
@@ -1058,6 +1132,8 @@ _quarantine_file() {
 	fi
 	echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$_file" > "$quardir/$file_name.$rnd.info"
 	eout "{quar} malware quarantined from '$_file' to '$quardir/$file_name.$rnd'" $_verbose
+	command -v elog_event >/dev/null 2>&1 && \
+		elog_event "$ELOG_EVT_QUARANTINE_ADDED" "warn" "quarantined $_file" "file=$_file" "sig=$_hitname"
 	echo "$utime:$_hitname:$_file:$file_owner:$file_group:$md5_hash:$file_size:$quardir/$file_name.$rnd" >> $quar_history
 	_quar_dest="$quardir/$file_name.$rnd"
 }
@@ -1133,7 +1209,7 @@ _clamscan_fallback() {
 
 clamselector() {
 	sig_max_filesize=$(cut -d':' -f2 "$sig_md5_file" | sort -n | tail -n1)
-	if [ "$sig_max_filesize" -gt "1" 2> /dev/null ]; then
+	if [ "$sig_max_filesize" -gt "1" ] 2>/dev/null; then
 		clamscan_max_filesize=$((sig_max_filesize+1))
 	else
 		clamscan_max_filesize="2592000"
@@ -1878,6 +1954,8 @@ scan() {
 	progress_hits=0
 	progress_cleaned=0
 	_in_scan_context=1
+	command -v elog_event >/dev/null 2>&1 && \
+		elog_event "$ELOG_EVT_SCAN_STARTED" "info" "scan started on $hrspath" "path=$hrspath" "mode=${svc:-a}"
 
 	if [ -n "$hscan" ]; then
 		eout "{scan.hook} scan of $spath in progress (id: $datestamp.$$)"
@@ -1916,7 +1994,9 @@ scan() {
 			eout "{scan} quarantine is disabled! set quarantine_hits=1 in $cnffile or to quarantine results run: maldet -q $datestamp.$$" 1
 		fi
 	fi
-	
+	command -v elog_event >/dev/null 2>&1 && \
+		elog_event "$ELOG_EVT_SCAN_COMPLETED" "info" "scan completed on $hrspath" "hits=$tot_hits" "files=$tot_files" "cleaned=$tot_cl" "time=${scan_et}s"
+
 	if [ "$tot_hits" != "0" ]; then
 		if [ "$email_ignore_clean" == "1" ] && [ "$tot_hits" != "$tot_cl" ]; then
 			genalert file "$nsess"
@@ -2308,16 +2388,6 @@ scan_stage_yara() {
 	eout "{yara} native YARA scan stage completed"
 }
 
-_json_escape() {
-	local s="$1"
-	s="${s//\\/\\\\}"
-	s="${s//\"/\\\"}"
-	s="${s//$'\n'/\\n}"
-	s="${s//$'\t'/\\t}"
-	s="${s//$'\r'/\\r}"
-	printf '%s' "$s"
-}
-
 gen_report() {
 	if [ -f "$scan_session" ]; then
 		tot_hits=$($wc -l < "$scan_session")
@@ -2334,7 +2404,7 @@ trim_log() {
 	logtrim="$2"
 	if [ -f "$log" ]; then
 		log_size=$($wc -l < "$log")
-		if [ "$log_size" -gt "$logtrim" 2> /dev/null ]; then
+		if [ "$log_size" -gt "$logtrim" ] 2>/dev/null; then
 			trim=$((logtrim/10))
 			local tmplog=$(mktemp "${log}.trim.XXXXXX")
 			tail -n +"$((trim + 1))" "$log" > "$tmplog" 2>/dev/null
@@ -2353,8 +2423,11 @@ genalert() {
 	file="$2"
 	if [ "$email_alert" == "1" ] || [ "$type" == "digest" ] || [ "$type" == "daily" ]; then
 		if [ "$type" == "file" ] && [ -f "$file" ]; then
-			if ! _send_email "$file" "$email_subj" "$email_addr"; then
+			if ! _alert_deliver_email "$email_addr" "$email_subj" "$file" "" "text"; then
 				eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
+			else
+				command -v elog_event >/dev/null 2>&1 && \
+					elog_event "$ELOG_EVT_ALERT_SENT" "info" "scan report emailed" "recipients=$email_addr"
 			fi
 			if [ "$(whoami)" != "root" ] && [[ "$2" != *@* ]]; then
 				if [ -z "$hscan" ]; then
@@ -2423,25 +2496,11 @@ genalert() {
 						fi
 
 						tmpf="$tmpdir/.${sys_user}.alert"
-
-						# Strip CR/LF to prevent email header injection
-						local _panel_subj="${email_panel_alert_subj//$'\r'/}"
-						_panel_subj="${_panel_subj//$'\n'/}"
-
-						if [ -f "$sendmail" ]; then
-							echo "TO: $contact_emails" > "$tmpf"
-							echo "FROM: $email_panel_from" >> "$tmpf"
-							echo "REPLY-TO: $email_panel_replyto" >> "$tmpf"
-							echo -e "SUBJECT: $_panel_subj\n" >> "$tmpf"
-							. "$email_panel_alert_etpl"
-
-							$sendmail -t < "$tmpf"
-						elif [ -f "$mail" ] && [ "$control_panel" == "cpanel" ]; then
-							. "$email_panel_alert_etpl"
-							$mail -r "$email_panel_from" -s "$_panel_subj" "$contact_emails" < "$tmpf"
-						else
-							eout "{panel} No compatible \$sendmail or \$mail binaries found, control panel account alerts disabled."
-						fi
+						. "$email_panel_alert_etpl"
+						# Use shared lib for delivery with custom From/Reply-To
+						ALERT_SMTP_FROM="$email_panel_from" \
+						ALERT_EMAIL_REPLY_TO="$email_panel_replyto" \
+						_alert_deliver_email "$contact_emails" "$email_panel_alert_subj" "$tmpf" "" "text"
 					done
 				fi
 				rm -f "$tmpdir/.panel_alert.hits" "$tmpdir/.panel_alert.clean"
@@ -2493,12 +2552,12 @@ genalert() {
 				grep -E '^{.*}' "$sessdir/session.$scanid" > "$sessdir/session.hits.$scanid"
 				echo "$scanid" > "$sessdir/session.last"
 				local digest_subj="${email_subj}: monitor summary"
-				if _send_email "$tmpf" "$digest_subj" "$email_addr"; then
+				if _alert_deliver_email "$email_addr" "$digest_subj" "$tmpf" "" "text"; then
 					eout "{alert} sent $type alert to $email_addr"
 				else
 					eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
 				fi
-				# set file for slack/telegram alerts below
+				# set file for messaging alerts below
 				file="$tmpf"
 				digest_tmpf="$tmpf"
 				rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
@@ -2506,82 +2565,13 @@ genalert() {
 		else
 			eout "{alert} file input error, alert discarded."
 		fi
-		
+
 	fi
 
-	if [ "$slack_alert" == "1" ]; then
-		if [ -f "$file" ] && [ -f "$curl" ]; then
-			local fsize=$($wc -c < "$file")
-			local upload_url upload_file_id
-			local curl_rc=0
-			local url_response
-			url_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -X POST "https://slack.com/api/files.getUploadURLExternal" \
-				-H "Authorization: Bearer $slack_token" \
-				-d "filename=$slack_subj" \
-				-d "length=$fsize") || curl_rc=$?
-			if [ "$curl_rc" -ne 0 ]; then
-				eout "{alert} slack getUploadURLExternal curl failed (exit $curl_rc), alert discarded" 1
-			elif ! echo "$url_response" | grep -q '"ok":true'; then
-				local api_err
-				api_err=$(echo "$url_response" | $sed -n 's/.*"error" *: *"\([^"]*\)".*/\1/p')
-				eout "{alert} slack getUploadURLExternal API error${api_err:+: $api_err}, alert discarded" 1
-			else
-				upload_url=$(echo "$url_response" | $sed -n 's/.*"upload_url" *: *"\([^"]*\)".*/\1/p')
-				upload_file_id=$(echo "$url_response" | $sed -n 's/.*"file_id" *: *"\([^"]*\)".*/\1/p')
-				if [ "$upload_url" ] && [ "$upload_file_id" ]; then
-					local upload_rc=0
-					$curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -X POST "$upload_url" -F "file=@$file" > /dev/null 2>&1 || upload_rc=$?
-					if [ "$upload_rc" -ne 0 ]; then
-						eout "{alert} slack file upload curl failed (exit $upload_rc), alert discarded" 1
-					else
-						local complete_rc=0
-						local complete_response
-						local escaped_slack_subj
-						escaped_slack_subj=$(_json_escape "$slack_subj")
-						complete_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -X POST "https://slack.com/api/files.completeUploadExternal" \
-							-H "Authorization: Bearer $slack_token" \
-							-H "Content-Type: application/json" \
-							-d "{\"files\":[{\"id\":\"$upload_file_id\",\"title\":\"$escaped_slack_subj\"}],\"channels\":\"$slack_channels\"}") || complete_rc=$?
-						if [ "$complete_rc" -ne 0 ]; then
-							eout "{alert} slack completeUploadExternal curl failed (exit $complete_rc), alert discarded" 1
-						elif echo "$complete_response" | grep -q '"ok":true'; then
-							eout "{alert} scan report sent to slack channel(s): $slack_channels" 0
-						else
-							local complete_err
-							complete_err=$(echo "$complete_response" | $sed -n 's/.*"error" *: *"\([^"]*\)".*/\1/p')
-							eout "{alert} slack completeUploadExternal API error${complete_err:+: $complete_err}, alert discarded" 1
-						fi
-					fi
-				else
-					eout "{alert} slack getUploadURLExternal response missing upload_url or file_id, alert discarded" 1
-				fi
-			fi
-		else
-			eout "{alert} could not upload scan report to slack channel(s), alert discarded" 1
-		fi
-	fi
-
-	if [ "$telegram_alert" == "1" ]; then
-		if [ -f "$file" ] && [ -n "$curl" ]; then
-			local tg_curl_rc=0
-			local telegram_response
-			local tg_curlcfg
-			tg_curlcfg=$(mktemp "$tmpdir/.tg_curl.XXXXXX")
-			chmod 600 "$tg_curlcfg"
-			printf 'url = "https://api.telegram.org/bot%s/sendDocument?chat_id=%s"\n' \
-				"$telegram_bot_token" "$telegram_channel_id" > "$tg_curlcfg"
-			telegram_response=$($curl -s --connect-timeout "$remote_uri_timeout" --max-time 120 -F "document=@$file" -F "caption=$telegram_file_caption" -K "$tg_curlcfg" 2>/dev/null) || tg_curl_rc=$?
-			rm -f "$tg_curlcfg"
-			if [ "$tg_curl_rc" -ne 0 ]; then
-				eout "{alert} telegram sendDocument curl failed (exit $tg_curl_rc), alert discarded" 1
-			elif echo "$telegram_response" | grep -q '"ok":true'; then
-				eout "{alert} scan report sent to telegram channel: $telegram_channel_id" 0
-			else
-				local tg_err
-				tg_err=$(echo "$telegram_response" | $sed -n 's/.*"description" *: *"\([^"]*\)".*/\1/p')
-				eout "{alert} telegram sendDocument API error${tg_err:+: $tg_err}, alert discarded" 1
-			fi
-		fi
+	# Dispatch to messaging channels (Slack, Telegram, Discord) via shared alert_lib
+	# Only for file and digest types — panel alerts are per-user email only
+	if [ "$type" != "panel" ] && [ -f "$file" ]; then
+		_lmd_dispatch_messaging "$file" "${slack_subj:-$email_subj}"
 	fi
 
 	# clean up digest report temp file if generated
@@ -2645,6 +2635,8 @@ monitor_cycle() {
 				source "$syscnf"
 			fi
 			inotify_cycle_runtime=0
+			_lmd_alert_init
+			_lmd_elog_init
 			_build_scan_filters
 			_yara_bin="" _yara_type="" _yara_has_scan_list=""
 			eout "{mon} reloaded configuration data" 1
@@ -2890,6 +2882,8 @@ monitor_init() {
 	else
 		eout "{mon} inotify startup successful (pid: $inotify_pid)" 1
 		eout "{mon} inotify monitoring log: $inotify_log" 1
+		command -v elog_event >/dev/null 2>&1 && \
+			elog_event "$ELOG_EVT_MONITOR_STARTED" "info" "inotify monitor started (pid: $inotify_pid)"
 		echo "$inotify_pid" > $tmpdir/inotifywait.pid
 	fi
 	monitor_cycle >> /dev/null 2>&1 &

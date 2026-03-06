@@ -41,6 +41,32 @@ else
 	exit 1
 fi
 
+if [ -f "$alert_lib" ]; then
+	source "$alert_lib"
+else
+	header
+	echo "maldet($$): {glob} \$alert_lib not found, aborting." >&2
+	exit 1
+fi
+
+# shellcheck disable=SC1090,SC1091
+if [ -f "$elog_lib" ]; then
+	. "$elog_lib"
+fi
+
+# elog_lib constants — event taxonomy
+ELOG_EVT_CONFIG_LOADED="config_loaded"
+ELOG_EVT_CONFIG_ERROR="config_error"
+ELOG_EVT_SCAN_STARTED="scan_started"
+ELOG_EVT_SCAN_COMPLETED="scan_completed"
+ELOG_EVT_THREAT_DETECTED="threat_detected"
+ELOG_EVT_QUARANTINE_ADDED="quarantine_added"
+ELOG_EVT_QUARANTINE_REMOVED="quarantine_removed"
+ELOG_EVT_FILE_CLEANED="file_cleaned"
+ELOG_EVT_MONITOR_STARTED="monitor_started"
+ELOG_EVT_MONITOR_STOPPED="monitor_stopped"
+ELOG_EVT_ALERT_SENT="alert_sent"
+
 if [ -f "$cnf" ]; then
 	source "$cnf"
 else

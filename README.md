@@ -6,7 +6,7 @@
 
 **Malware scanner for Linux** — multi-stage threat detection (MD5, HEX, YARA, statistical
 analysis), ClamAV integration, real-time inotify monitoring, quarantine/clean/restore
-operations, and multi-channel alerting (email, Slack, Telegram).
+operations, and multi-channel alerting (email, Slack, Telegram, Discord).
 
 > (C) 2002-2026, R-fx Networks &lt;proj@rfxn.com&gt;<br>
 > (C) 2026, Ryan MacDonald &lt;ryan@rfxn.com&gt;<br>
@@ -119,6 +119,7 @@ LMD focuses on the malware classes that traditional AV products frequently miss:
 - Email alerts per scan or daily digest
 - Slack alerting via Bot API (files.getUploadURLExternal)
 - Telegram alerting via Bot API (sendDocument)
+- Discord alerting via webhook (multipart file upload)
 - Scan reports with per-file hit details
 
 **Infrastructure**
@@ -216,6 +217,8 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `telegram_file_caption` | Caption for Telegram report file | `maldet alert from $(hostname)` |
 | `telegram_bot_token` | Telegram Bot API token | — |
 | `telegram_channel_id` | Telegram chat or group ID | — |
+| `discord_alert` | Enable Discord webhook alerts | `0` |
+| `discord_webhook_url` | Discord webhook URL for alert delivery | — |
 
 ### 3.3 Scanning Options
 

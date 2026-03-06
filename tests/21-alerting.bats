@@ -47,7 +47,9 @@ EOF
     chmod 755 "$MOCK_BIN_DIR/sendmail"
 }
 
-# Helper: create mock curl binary for Slack/Telegram tests
+# Helper: create mock curl binary for Slack/Telegram/Discord tests
+# Handles shared alert_lib curl patterns (same Slack/Telegram APIs,
+# plus Discord webhook support).
 create_mock_curl() {
     local real_curl
     real_curl=$(command -v curl)
@@ -66,6 +68,10 @@ if [[ "\$*" == *"getUploadURLExternal"* ]]; then
     echo '{"ok":true,"upload_url":"http://mock-upload","file_id":"F12345"}'
 elif [[ "\$*" == *"completeUploadExternal"* ]]; then
     echo '{"ok":true}'
+elif [[ "\$*" == *"chat.postMessage"* ]]; then
+    echo '{"ok":true,"channel":"C12345","ts":"1234567890.123456"}'
+elif [[ "\$*" == *"discord"*"webhook"* ]] || [[ "\$*" == *"discordapp"*"webhook"* ]]; then
+    echo '{"id":"msg123"}'
 elif [[ "\$*" == *"-K"* ]]; then
     # Telegram uses -K config file; check config content for sendDocument
     _cfg=""
@@ -76,7 +82,7 @@ elif [[ "\$*" == *"-K"* ]]; then
         fi
         _p="\$_a"
     done
-    if [[ "\$_cfg" == *"sendDocument"* ]]; then
+    if [[ "\$_cfg" == *"sendDocument"* ]] || [[ "\$_cfg" == *"sendMessage"* ]]; then
         echo '{"ok":true,"result":{}}'
     else
         $real_curl "\$@"
@@ -107,6 +113,11 @@ if [[ "$*" == *"getUploadURLExternal"* ]]; then
     echo '{"ok":false,"error":"invalid_auth"}'
 elif [[ "$*" == *"completeUploadExternal"* ]]; then
     echo '{"ok":false,"error":"channel_not_found"}'
+elif [[ "$*" == *"chat.postMessage"* ]]; then
+    echo '{"ok":false,"error":"invalid_auth"}'
+elif [[ "$*" == *"discord"*"webhook"* ]] || [[ "$*" == *"discordapp"*"webhook"* ]]; then
+    echo '{"code":50035,"message":"Invalid Form Body"}'
+    exit 0
 elif [[ "$*" == *"-K"* ]]; then
     # Telegram uses -K config file; check config content for sendDocument
     _cfg=""
@@ -117,7 +128,7 @@ elif [[ "$*" == *"-K"* ]]; then
         fi
         _p="$_a"
     done
-    if [[ "$_cfg" == *"sendDocument"* ]]; then
+    if [[ "$_cfg" == *"sendDocument"* ]] || [[ "$_cfg" == *"sendMessage"* ]]; then
         echo '{"ok":false,"error_code":401,"description":"Unauthorized"}'
     else
         echo '{"ok":false,"error":"unknown"}'
@@ -146,6 +157,10 @@ run_maldet_with_mocks() {
     PATH="$MOCK_BIN_DIR:$PATH" run maldet "$@"
 }
 
+# ---------------------------------------------------------------------------
+# Email alerts (via shared alert_lib _alert_deliver_email)
+# ---------------------------------------------------------------------------
+
 @test "email alert sent via mail binary when email_alert=1" {
     create_mock_mail
     lmd_set_config email_alert 1
@@ -165,7 +180,8 @@ run_maldet_with_mocks() {
     run_maldet_with_mocks -a "$TEST_SCAN_DIR"
     assert_scan_completed
     [ -f /tmp/mock-sendmail.log ]
-    run grep "test@example.com" /tmp/mock-sendmail.log
+    # Shared lib uses sendmail -t -oi (recipient in To: header via stdin)
+    run grep "test@example.com" /tmp/mock-sendmail.body
     assert_success
 }
 
@@ -203,6 +219,10 @@ run_maldet_with_mocks() {
     [ ! -f /tmp/mock-sendmail.log ]
 }
 
+# ---------------------------------------------------------------------------
+# Slack alerts (via shared alert_lib _alert_slack_upload)
+# ---------------------------------------------------------------------------
+
 @test "slack alert calls getUploadURLExternal API" {
     create_mock_curl
     lmd_set_config email_alert 0
@@ -230,6 +250,10 @@ run_maldet_with_mocks() {
     assert_success
 }
 
+# ---------------------------------------------------------------------------
+# Telegram alerts (via shared alert_lib _alert_telegram_document)
+# ---------------------------------------------------------------------------
+
 @test "telegram alert calls sendDocument API" {
     create_mock_curl
     lmd_set_config email_alert 0
@@ -249,6 +273,7 @@ run_maldet_with_mocks() {
     lmd_set_config email_alert 0
     lmd_set_config slack_alert 0
     lmd_set_config telegram_alert 0
+    lmd_set_config discord_alert 0
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run_maldet_with_mocks -a "$TEST_SCAN_DIR"
     assert_scan_completed
@@ -281,7 +306,8 @@ run_maldet_with_mocks() {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run_maldet_with_mocks -a "$TEST_SCAN_DIR"
     assert_scan_completed
-    run grep "invalid_auth" "$LMD_INSTALL/logs/event_log"
+    # Shared lib writes errors to stderr; LMD wraps with eout
+    run grep -E "invalid_auth|messaging channels failed" "$LMD_INSTALL/logs/event_log"
     assert_success
 }
 
@@ -294,7 +320,8 @@ run_maldet_with_mocks() {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run_maldet_with_mocks -a "$TEST_SCAN_DIR"
     assert_scan_completed
-    run grep "curl failed (exit 7)" "$LMD_INSTALL/logs/event_log"
+    # Shared lib writes "curl exit N" to stderr; LMD wraps with eout
+    run grep -E "curl exit 7|curl failed|messaging channels failed" "$LMD_INSTALL/logs/event_log"
     assert_success
 }
 
@@ -307,6 +334,52 @@ run_maldet_with_mocks() {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run_maldet_with_mocks -a "$TEST_SCAN_DIR"
     assert_scan_completed
-    run grep "Unauthorized" "$LMD_INSTALL/logs/event_log"
+    # Shared lib writes "Unauthorized" to stderr; LMD wraps with eout
+    run grep -E "Unauthorized|messaging channels failed" "$LMD_INSTALL/logs/event_log"
     assert_success
+}
+
+# ---------------------------------------------------------------------------
+# Discord alerts (via shared alert_lib _alert_discord_webhook)
+# ---------------------------------------------------------------------------
+
+@test "discord alert calls webhook URL when discord_alert=1" {
+    create_mock_curl
+    lmd_set_config email_alert 0
+    lmd_set_config discord_alert 1
+    lmd_set_config discord_webhook_url "https://discord.com/api/webhooks/123/abc"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run_maldet_with_mocks -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    [ -f /tmp/mock-curl.log ]
+    run grep "discord.com/api/webhooks" /tmp/mock-curl.log
+    assert_success
+}
+
+@test "discord alert disabled when discord_alert=0" {
+    create_mock_curl
+    lmd_set_config email_alert 0
+    lmd_set_config discord_alert 0
+    lmd_set_config discord_webhook_url "https://discord.com/api/webhooks/123/abc"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run_maldet_with_mocks -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    if [ -f /tmp/mock-curl.log ]; then
+        run grep "discord" /tmp/mock-curl.log
+        assert_failure
+    fi
+}
+
+@test "discord alert not sent when webhook URL empty" {
+    create_mock_curl
+    lmd_set_config email_alert 0
+    lmd_set_config discord_alert 1
+    lmd_set_config discord_webhook_url ""
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run_maldet_with_mocks -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    if [ -f /tmp/mock-curl.log ]; then
+        run grep "discord" /tmp/mock-curl.log
+        assert_failure
+    fi
 }

@@ -11,7 +11,7 @@ Linux shared hosting environments.
 It provides multi\-stage detection using MD5 hashes, HEX patterns,
 statistical analysis, native YARA rules, and optional ClamAV integration.
 Detected threats can be quarantined, cleaned, or reported via email,
-Slack, and Telegram.
+Slack, Telegram, and Discord.
 .SH OPTIONS
 .SS Scanning
 .TP
@@ -124,6 +124,9 @@ Backward compatibility variable mappings.
 .I /usr/local/maldetect/internals/functions
 Core function library.
 .TP
+.I /usr/local/maldetect/internals/alert_lib.sh
+Shared alerting library (email, Slack, Telegram, Discord delivery).
+.TP
 .I /usr/local/maldetect/sigs/
 Signature directory (MD5, HEX, YARA, ClamAV).
 .TP
@@ -157,8 +160,10 @@ Notable variables include
 .BR scan_workers ,
 .BR scan_find_timeout ,
 .BR scan_days ,
+.BR string_length_scan ,
+.BR discord_alert ,
 and
-.BR string_length_scan .
+.BR discord_webhook_url .
 .PP
 .B scan_workers
 sets the number of parallel workers for native MD5 and HEX scan passes.

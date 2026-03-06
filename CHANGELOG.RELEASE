@@ -1,6 +1,27 @@
 v2.0.1 | Feb 24 2026:
 
   -- New Features --
+[New] shared elog_lib (v1.0.0) integration: structured event logging with
+      dual app/audit log model; eout() replaced with thin elog() wrapper
+      preserving exact call signature; _lmd_elog_init() maps config vars to
+      ELOG_* env vars; audit trail in /var/log/maldet/audit.log (root only);
+      inode-preserving log truncation via elog_lib; dynamic log path sync
+      for --user flag; fallback to direct write if elog_lib not loaded
+[New] elog_event() calls at 11 operation points: config_loaded, scan_started,
+      scan_completed, threat_detected, quarantine_added, quarantine_removed,
+      file_cleaned, monitor_started, alert_sent; all guarded with command -v
+      check for graceful degradation
+[New] shared alert_lib (v1.0.1) integration: all email, Slack, Telegram,
+      and Discord alerting primitives replaced with calls to shared library;
+      _send_email, _json_escape, and inline Slack/Telegram blocks removed
+[New] Discord alerting support: discord_alert and discord_webhook_url config
+      variables; scan reports uploaded via Discord webhook multipart upload
+[New] _lmd_alert_init maps LMD config vars to ALERT_* env vars and manages
+      channel enable/disable state; called from prerun and monitor reload
+[New] _lmd_dispatch_messaging provides single-call messaging dispatch to all
+      enabled channels (Slack, Telegram, Discord) via alert_dispatch
+[New] minimal messaging templates in internals/alert/ for Slack, Telegram,
+      and Discord; scan report sent as file attachment, not template body
 [New] native YARA scanning: scan_yara=1 enables YARA as an independent scan
       stage using the yara binary (or yr from YARA-X); supports custom rules
       via custom.yara and custom.yara.d/ drop-in directory for third-party
@@ -36,6 +57,17 @@ v2.0.1 | Feb 24 2026:
       CentOS 6 (util-linux 2.17) gracefully falls back to plain text
 
   -- Bug Fixes --
+[Fix] messaging templates used %%SUBJECT%% token format instead of
+      {{SUBJECT}} expected by alert_lib template engine; Slack, Telegram,
+      Discord message text showed literal %%SUBJECT%% instead of subject
+[Fix] genalert panel type dispatched messaging channels (Slack/Telegram/
+      Discord), causing duplicate scan report delivery when both email_alert
+      and email_panel_user_alerts were enabled; restrict messaging dispatch
+      to file and digest alert types only
+[Fix] install.sh: set alert/ template directory to 750; preserve custom.d/
+      template overrides across upgrades
+[Fix] panel email delivery no longer restricted to cPanel+sendmail; shared
+      lib tries sendmail first then falls back to mail for any control panel
 [Fix] import_conf() re-source compat.conf and syscnf after remote config
       so deprecated variable names in imported configs get mapped correctly
 [Fix] guard $curl binary in ELK statistics (scan.etpl) and Telegram
@@ -304,6 +336,14 @@ v2.0.1 | Feb 24 2026:
       when ftp client is not installed
 
   -- Changes --
+[Change] shared alert_lib updated to v1.0.2: SMTP relay credentials hidden
+      from process listing via curl -K config file; webhook URLs redacted in
+      error messages; curl -s flag added to email relay for consistency
+[Change] panel email delivery uses shared lib _alert_deliver_email with
+      command-scoped ALERT_SMTP_FROM and ALERT_EMAIL_REPLY_TO env vars
+[Change] ELK statistics JSON escaping uses shared lib _alert_json_escape
+[Change] alerting tests updated for shared lib integration; added 3 Discord
+      tests (webhook call, disabled state, empty URL guard)
 [Change] normalize mixed tabs/spaces to tabs across functions; replace
       if-test default init with parameter expansion in monitor_init()
 [Change] sigup() corruption check uses _count_signatures() instead of
@@ -392,6 +432,12 @@ v2.0.1 | Feb 24 2026:
 [Change] internals.conf: add usermod binary discovery via command -v
 
   -- Documentation --
+[Change] man page: add Discord config vars (discord_alert, discord_webhook_url)
+      to CONFIGURATION; add alert_lib.sh to FILES; update DESCRIPTION to include
+      Discord in alerting channels
+[Change] README.md: add discord_alert and discord_webhook_url to Alerting config
+      table; add Discord webhook to Alerting & Reporting features list; update
+      header description to include Discord
 [Fix] --monitor RELOAD missing from usage_short(), usage_long(), and README
       CLI table; man page already documented it
 [Fix] --mkpubpaths undocumented in usage_short(), usage_long(), man page;

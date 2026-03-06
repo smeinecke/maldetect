@@ -90,6 +90,14 @@ telegram_bot_token="$telegram_bot_token"
 # more information https://stackoverflow.com/questions/33858927/how-to-obtain-the-chat-id-of-a-private-telegram-channel?answertab=active#tab-top
 telegram_channel_id="$telegram_channel_id"
 
+# Enable or disable discord alerts, this will upload the scan report
+# via a discord webhook
+# [0 = disabled, 1 = enabled]
+discord_alert="$discord_alert"
+
+# Discord webhook URL for alert delivery
+discord_webhook_url="$discord_webhook_url"
+
 # This controls the daily automatic updates of LMD signature files
 # and cleaner rules. The signature update process preserves any
 # custom signature or cleaner files. It is highly recommended that this

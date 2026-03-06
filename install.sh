@@ -33,7 +33,9 @@ _install_core() {
 	chmod 640 "$inspath/conf.maldet"
 	test -f "$inspath/conf.maldet.hookscan" && chmod 640 "$inspath/conf.maldet.hookscan"
 	mkdir -p "$inspath/clean" "$inspath/pub" "$inspath/quarantine" "$inspath/sess" "$inspath/sigs" "$inspath/tmp" 2> /dev/null
-	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/sigs" "$inspath/logs" "$inspath/internals/tlog" "$inspath/internals/tlog_lib.sh" 2> /dev/null
+	chmod 750 "$inspath/quarantine" "$inspath/sess" "$inspath/tmp" "$inspath/sigs" "$inspath/logs" "$inspath/internals/tlog" "$inspath/internals/alert" "$inspath/internals/tlog_lib.sh" "$inspath/internals/alert_lib.sh" "$inspath/internals/elog_lib.sh" 2> /dev/null
+	# shellcheck disable=SC2086
+	chmod 640 "$inspath/internals/alert/"* 2>/dev/null
 	# tlog: replace default BASERUN for cursor storage security
 	sed -i "s|BASERUN=\"\${BASERUN:-/tmp}\"|BASERUN=\"\${BASERUN:-$inspath/tmp}\"|" "$inspath/internals/tlog"
 	ln -fs "$inspath/maldet" /usr/local/sbin/maldet
@@ -80,6 +82,9 @@ else
 	cp -pf "$inspath.bk$$"/conf.maldet.hookscan "$inspath/" >> /dev/null 2>&1
 	if [ -d "$inspath.bk$$"/pub ]; then
 		cp -af "$inspath.bk$$"/pub "$inspath/" >> /dev/null 2>&1
+	fi
+	if [ -d "$inspath.bk$$"/internals/alert/custom.d ]; then
+		cp -rf "$inspath.bk$$"/internals/alert/custom.d "$inspath/internals/alert/" >> /dev/null 2>&1
 	fi
 	# tlog cursor migration: inotify switching from line-count to byte-offset
 	rm -f "$inspath/tmp/inotify" 2>/dev/null
