@@ -9,6 +9,7 @@ LMD_INSTALL="/usr/local/maldetect"
 CRON_MALDET_LOG="/tmp/cron-maldet.log"
 
 setup() {
+    RESET_FULL=1
     source /opt/tests/helpers/reset-lmd.sh
     source /opt/tests/helpers/mock-update-server.sh
     setup_mock_update_server

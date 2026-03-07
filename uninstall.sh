@@ -10,11 +10,15 @@
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:$PATH
 inspath=/usr/local/maldetect
 
-# Source shared packaging library from install path
-# shellcheck disable=SC1090,SC1091
-source "$inspath/internals/pkg_lib.sh"
+# Source shared packaging library
+# shellcheck disable=SC1091
+source files/internals/pkg_lib.sh
 
-echo "This will completely remove Linux Malware Detect from your server including all quarantine data!"
+pkg_header "Linux Malware Detect" "2.0.1" "uninstall"
+echo ""
+echo "This will completely remove Linux Malware Detect from your server"
+echo "including all quarantine data!"
+echo ""
 if ! pkg_uninstall_confirm "Linux Malware Detect"; then
 	echo "You selected No or provided an invalid confirmation, nothing has been done!"
 	exit 0
@@ -31,7 +35,7 @@ pkg_service_uninstall maldet
 # Remove cron files
 pkg_uninstall_cron /etc/cron.d/maldet_pub /etc/cron.daily/maldet /etc/cron.weekly/maldet-watchdog
 
-# Remove man page and symlink
+# Remove man page
 pkg_uninstall_man 1 maldet
 rm -f /usr/local/share/man/man1/maldet.1.gz 2>/dev/null  # safe: symlink may not exist
 

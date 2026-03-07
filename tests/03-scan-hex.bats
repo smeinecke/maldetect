@@ -28,13 +28,6 @@ teardown() {
     assert_output --partial "malware hits 1"
 }
 
-@test "HEX scan: clean file produces no hits" {
-    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    run maldet -a "$TEST_SCAN_DIR"
-    assert_success
-    assert_output --partial "malware hits 0"
-}
-
 @test "HEX scan with custom scan_hexdepth" {
     lmd_set_config scan_hexdepth 524288
     cp "$SAMPLES_DIR/test-hex-match.php" "$TEST_SCAN_DIR/"

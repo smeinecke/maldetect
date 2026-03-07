@@ -9,8 +9,20 @@ LMD_INSTALL="/usr/local/maldetect"
 SAMPLES_DIR="/opt/tests/samples"
 TEST_SCAN_DIR="/tmp/lmd-test-quar"
 
-setup() {
+# Shared scan+quarantine state for read-only assertion tests.
+# Runs once per file, storing scanid for individual tests.
+setup_file() {
     source /opt/tests/helpers/reset-lmd.sh
+    mkdir -p "$TEST_SCAN_DIR"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    echo "$scanid" > "$BATS_FILE_TMPDIR/scanid"
+    maldet -q "$scanid"
+}
+
+setup() {
     mkdir -p "$TEST_SCAN_DIR"
 }
 
@@ -18,33 +30,19 @@ teardown() {
     rm -rf "$TEST_SCAN_DIR"
 }
 
+# --- Read-only tests: share setup_file() state ---
+
 @test "quarantine moves file out of original location" {
-    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR" || true
-    local scanid
-    scanid=$(get_last_scanid)
-    run maldet -q "$scanid"
-    assert_success
     [ ! -f "$TEST_SCAN_DIR/eicar.com" ]
 }
 
 @test "quarantined file exists in quarantine directory" {
-    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR" || true
-    local scanid
-    scanid=$(get_last_scanid)
-    maldet -q "$scanid"
     local qcount
     qcount=$(find "$LMD_INSTALL/quarantine" -type f ! -name '*.info' | wc -l)
     [ "$qcount" -ge 1 ]
 }
 
 @test "quarantined file has permissions 000" {
-    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR" || true
-    local scanid
-    scanid=$(get_last_scanid)
-    maldet -q "$scanid"
     local qfile
     qfile=$(find "$LMD_INSTALL/quarantine" -type f ! -name '*.info' | head -1)
     [ -n "$qfile" ]
@@ -54,36 +52,24 @@ teardown() {
 }
 
 @test "quarantine metadata recorded in quarantine.hist" {
-    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR" || true
-    local scanid
-    scanid=$(get_last_scanid)
-    maldet -q "$scanid"
     [ -f "$LMD_INSTALL/sess/quarantine.hist" ]
     [ -s "$LMD_INSTALL/sess/quarantine.hist" ]
 }
 
 @test "quarantine hist contains original file path" {
-    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR" || true
-    local scanid
-    scanid=$(get_last_scanid)
-    maldet -q "$scanid"
     run grep "$TEST_SCAN_DIR/eicar.com" "$LMD_INSTALL/sess/quarantine.hist"
     assert_success
 }
 
 @test "quarantine hist contains signature name" {
-    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR" || true
-    local scanid
-    scanid=$(get_last_scanid)
-    maldet -q "$scanid"
     run grep "EICAR" "$LMD_INSTALL/sess/quarantine.hist"
     assert_success
 }
 
+# --- State-modifying tests: each performs own scan+quarantine ---
+
 @test "restore returns file to original location" {
+    source /opt/tests/helpers/reset-lmd.sh
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     maldet -a "$TEST_SCAN_DIR" || true
     local scanid
@@ -96,6 +82,7 @@ teardown() {
 }
 
 @test "restored file has correct content" {
+    source /opt/tests/helpers/reset-lmd.sh
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     local orig_md5
     orig_md5=$(md5sum "$TEST_SCAN_DIR/eicar.com" | awk '{print $1}')
@@ -110,6 +97,7 @@ teardown() {
 }
 
 @test "batch quarantine via -q SCANID handles multiple files" {
+    source /opt/tests/helpers/reset-lmd.sh
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/eicar1.com"
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/eicar2.com"
     maldet -a "$TEST_SCAN_DIR" || true
@@ -122,6 +110,7 @@ teardown() {
 }
 
 @test "batch restore via -s SCANID restores multiple files" {
+    source /opt/tests/helpers/reset-lmd.sh
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/eicar1.com"
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/eicar2.com"
     maldet -a "$TEST_SCAN_DIR" || true
@@ -135,6 +124,7 @@ teardown() {
 }
 
 @test "clean file is not quarantined" {
+    source /opt/tests/helpers/reset-lmd.sh
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
     maldet -a "$TEST_SCAN_DIR"
     local scanid
@@ -144,6 +134,7 @@ teardown() {
 }
 
 @test "quarantine_hits=1 auto-quarantines on scan" {
+    source /opt/tests/helpers/reset-lmd.sh
     lmd_set_config quarantine_hits 1
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"
@@ -152,6 +143,7 @@ teardown() {
 }
 
 @test "quarantine_hits=0 does not auto-quarantine" {
+    source /opt/tests/helpers/reset-lmd.sh
     lmd_set_config quarantine_hits 0
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"

@@ -1,4 +1,66 @@
-v2.0.1 | Feb 24 2026:
+v2.0.1 | Mar 07 2026:
+
+[Change] update vendored tlog_lib.sh 2.0.2 to 2.0.3; adds inline error
+      suppression comments and corrupt-archive stderr handling
+
+[Fix] move config_loaded elog_event to monitor mode only (startup and config
+      reload cycle); eliminates per-scan audit/syslog noise from cron
+
+[Change] reset-lmd.sh uses light mode by default; full sig directory copy
+      (4MB) only runs for tests that modify main sig files (09-signatures,
+      22-updates); all other tests reset only custom sigs and state files
+[Change] quarantine tests share scan+quarantine setup via setup_file();
+      read-only assertion tests no longer re-scan independently
+[Fix] remove meta-tests (test-infrastructure tests), duplicate clean-file
+      tests, and redundant scan_workers MD5 tests; test count 359 to 352
+
+[New] _lmd_elog_event() helper replaces 11 inline command -v elog_event
+      guard patterns with single-call dispatch
+[New] elog_event for monitor_stopped added to monitor_kill() exit path
+[Change] vendored elog_lib.sh updated to v1.0.2: ELOG_AUDIT_FILE expansion
+      fix (${:-} to ${-}), SIEM output modules (CEF, syslog UDP, GELF, ELK)
+[Change] vendored alert_lib.sh updated to v1.0.3: sed injection fix in Slack
+      channel via awk, MIME boundary randomization, ALERT_TMPDIR fallback
+[Change] vendored pkg_lib.sh updated to v1.0.1: pkg_sed_replace delimiter
+      escaping, find -printf for directory listing, inline comments on
+      suppressed errors
+[Change] _lmd_elog_init non-root: unset ELOG_AUDIT_FILE instead of empty
+      assignment for explicit intent
+[Fix] add inline comments to 6 suppressed-error patterns (elog_output_enable,
+      grep || true in _count_signatures and gensigs) per coding conventions
+[Fix] remove unused ELOG_EVT_CONFIG_ERROR constant (no usable error path
+      after elog_lib is loaded)
+[Fix] test 78 description corrected: "_lmd_elog_init enables audit for root"
+      (was incorrectly labeled as non-root test)
+
+[New] shared pkg_lib (v1.0.0) integration: packaging, install, and uninstall
+      primitives from shared library; install.sh refactored to use pkg_backup,
+      pkg_copy_tree, pkg_create_dirs, pkg_symlink, pkg_cron_install,
+      pkg_service_install, pkg_item, pkg_header, and pkg_detect_os/pkg_detect_init
+      for platform detection
+[New] project-root uninstall.sh using pkg_lib functions: pkg_uninstall_confirm,
+      pkg_service_uninstall, pkg_uninstall_cron, pkg_uninstall_man,
+      pkg_symlink_cleanup, pkg_uninstall_sysconfig, pkg_uninstall_files
+[New] RPM/DEB packaging infrastructure in pkg/ directory: RPM spec, DEB
+      debian/ directory, Docker build files, Makefile, and GitHub Actions
+      workflow; generated from pkg_lib templates via pkg_gen.sh
+[New] pkg.manifest with LMD project metadata for packaging artifact generation
+[Change] install.sh refactored from 217 to ~170 lines using pkg_lib functions;
+      backup uses timestamped naming with maldetect.last symlink via pkg_backup;
+      old backup pruning uses pkg_backup_prune; all project-specific logic
+      (ClamAV integration, importconf, monitor restart) preserved
+[Change] files/uninstall.sh refactored to use pkg_lib functions for consistent
+      service removal, cron cleanup, man page removal, and symlink cleanup
+      across all supported init systems and OS families
+[Fix] uninstall.sh: add missing SC1091 to shellcheck directive for dynamic
+      source per coding conventions
+[Fix] changelog: remove pkg_man_install and pkg_service_enable from function
+      list (install.sh uses inline gzip+pkg_symlink and direct systemctl enable);
+      correct backup symlink name from .bk.last to maldetect.last
+[Fix] legacy pre-pkg_lib backup directories (.bk* format) now pruned on
+      upgrade; pkg_backup_prune only matches new timestamp format
+[Change] installed uninstall.sh (files/uninstall.sh) uses pkg_service_uninstall
+      for consistent service removal, replacing hand-rolled OS detection
 
 [New] shared elog_lib (v1.0.0) integration: structured event logging with
       dual app/audit log model; eout() replaced with thin elog() wrapper

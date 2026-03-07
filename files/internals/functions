@@ -137,8 +137,10 @@ prerun() {
 		cron_daily_scan=1
 	fi
 
-	command -v elog_event >/dev/null 2>&1 && \
-		elog_event "$ELOG_EVT_CONFIG_LOADED" "info" "configuration loaded" "config=$cnf"
+	if [ -z "$_LMD_CONFIG_LOADED_LOGGED" ]; then
+		_lmd_elog_event "$ELOG_EVT_CONFIG_LOADED" "info" "configuration loaded" "config=$cnf"
+		_LMD_CONFIG_LOADED_LOGGED=1
+	fi
 }
 
 eout() {
@@ -668,8 +670,7 @@ clean() {
 				progress_cleaned=$((${progress_cleaned:-0} + 1))
 				echo "$file_path" >> $clean_history
 				eout "{clean} clean successful on $file_path" 1
-				command -v elog_event >/dev/null 2>&1 && \
-					elog_event "$ELOG_EVT_FILE_CLEANED" "info" "cleaned $file_path" "file=$file_path" "sig=$sh_hitname"
+				_lmd_elog_event "$ELOG_EVT_FILE_CLEANED" "info" "cleaned $file_path" "file=$file_path" "sig=$sh_hitname"
 			fi
 		elif { [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ]; } && [ -f "$file" ]; then
 			file_path="$file"
@@ -690,8 +691,7 @@ clean() {
 				progress_cleaned=$((${progress_cleaned:-0} + 1))
 				echo "$file_path" >> $clean_history
 				eout "{clean} clean successful on $file" 1
-				command -v elog_event >/dev/null 2>&1 && \
-					elog_event "$ELOG_EVT_FILE_CLEANED" "info" "cleaned $file" "file=$file" "sig=$sh_hitname"
+				_lmd_elog_event "$ELOG_EVT_FILE_CLEANED" "info" "cleaned $file" "file=$file" "sig=$sh_hitname"
 			fi
 		else
 			eout "{clean} could not find clean rule for hit $sh_hitname or file $file no longer exists." 1
@@ -768,8 +768,7 @@ restore() {
 			touch -m --date="@${file_mtime}" "$file_path"
 		fi
 		eout "{restore} quarantined file '$file' restored to '$file_path'" 1
-		command -v elog_event >/dev/null 2>&1 && \
-			elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
+		_lmd_elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
 	elif [ -f "$file" ] && [ -f "${file}.info" ]; then
 		quar_get_filestat "${file}.info"
 		if ! _validate_restore_path "$file_path"; then
@@ -784,8 +783,7 @@ restore() {
 			touch -m --date="@${file_mtime}" "$file_path"
 		fi
 		eout "{restore} quarantined file '$file' restored to '$file_path'" 1
-		command -v elog_event >/dev/null 2>&1 && \
-			elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
+		_lmd_elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
 	else
 		eout "{restore} '$file' is not eligible for restore or could not be found" 1
 	fi
@@ -907,7 +905,7 @@ _lmd_elog_init() {
 		ELOG_AUDIT_FILE="/var/log/maldet/audit.log"
 		[ -d "/var/log/maldet" ] || mkdir -p "/var/log/maldet" 2>/dev/null
 	else
-		ELOG_AUDIT_FILE=""
+		unset ELOG_AUDIT_FILE
 	fi
 
 	export ELOG_APP ELOG_LOG_DIR ELOG_LOG_FILE ELOG_TS_FORMAT
@@ -917,8 +915,12 @@ _lmd_elog_init() {
 	if command -v elog_init >/dev/null 2>&1; then
 		elog_init
 		# elog_init enables file+audit but not stdout; enable explicitly
-		elog_output_enable "stdout" 2>/dev/null || true
+		elog_output_enable "stdout" 2>/dev/null || true  # safe: stdout module always pre-registered at elog_lib load
 	fi
+}
+
+_lmd_elog_event() {
+	command -v elog_event >/dev/null 2>&1 && elog_event "$@"
 }
 
 _lmd_dispatch_messaging() {
@@ -1107,8 +1109,7 @@ record_hit() {
 		get_filestat "$file" 1
 		file_name="${file##*/}"
 		eout "{hit} malware hit $hitname found for $file"
-		command -v elog_event >/dev/null 2>&1 && \
-			elog_event "$ELOG_EVT_THREAT_DETECTED" "warn" "malware hit $hitname found for $file" "file=$file" "sig=$hitname"
+		_lmd_elog_event "$ELOG_EVT_THREAT_DETECTED" "warn" "malware hit $hitname found for $file" "file=$file" "sig=$hitname"
 		echo "${utime}:${hostid}:${hitname}:${md5_hash}:${file_size}:${file_owner}.${file_group}:${file_mode}:${file_times}:${file}" >> $hits_history
 	fi
 }
@@ -1132,8 +1133,7 @@ _quarantine_file() {
 	fi
 	echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$_file" > "$quardir/$file_name.$rnd.info"
 	eout "{quar} malware quarantined from '$_file' to '$quardir/$file_name.$rnd'" $_verbose
-	command -v elog_event >/dev/null 2>&1 && \
-		elog_event "$ELOG_EVT_QUARANTINE_ADDED" "warn" "quarantined $_file" "file=$_file" "sig=$_hitname"
+	_lmd_elog_event "$ELOG_EVT_QUARANTINE_ADDED" "warn" "quarantined $_file" "file=$_file" "sig=$_hitname"
 	echo "$utime:$_hitname:$_file:$file_owner:$file_group:$md5_hash:$file_size:$quardir/$file_name.$rnd" >> $quar_history
 	_quar_dest="$quardir/$file_name.$rnd"
 }
@@ -1823,14 +1823,14 @@ _count_signatures() {
 	local _md5_src="$1" _hex_src="$2"
 	md5_sigs=$($wc -l < "$_md5_src")
 	hex_sigs=$($wc -l < "$_hex_src")
-	yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)
+	yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)  # safe: grep exits 1 when no rule match found; zero count is valid
 	user_yara_sigs=0
 	if [ -f "$sig_user_yara_file" ] && [ -s "$sig_user_yara_file" ]; then
-		user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$sig_user_yara_file" 2>/dev/null || true)))
+		user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$sig_user_yara_file" 2>/dev/null || true)))  # safe: grep exits 1 when no rule match found; zero count is valid
 	fi
 	for _yar in "$sig_user_yara_dir"/*.yar "$sig_user_yara_dir"/*.yara; do
 		if [ -f "$_yar" ] && [ -s "$_yar" ]; then
-			user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$_yar" 2>/dev/null || true)))
+			user_yara_sigs=$((user_yara_sigs + $(grep -E -c '^rule ' "$_yar" 2>/dev/null || true)))  # safe: grep exits 1 when no rule match found; zero count is valid
 		fi
 	done
 	if [ ! -f "$sig_user_md5_file" ]; then
@@ -1954,8 +1954,7 @@ scan() {
 	progress_hits=0
 	progress_cleaned=0
 	_in_scan_context=1
-	command -v elog_event >/dev/null 2>&1 && \
-		elog_event "$ELOG_EVT_SCAN_STARTED" "info" "scan started on $hrspath" "path=$hrspath" "mode=${svc:-a}"
+	_lmd_elog_event "$ELOG_EVT_SCAN_STARTED" "info" "scan started on $hrspath" "path=$hrspath" "mode=${svc:-a}"
 
 	if [ -n "$hscan" ]; then
 		eout "{scan.hook} scan of $spath in progress (id: $datestamp.$$)"
@@ -1994,8 +1993,7 @@ scan() {
 			eout "{scan} quarantine is disabled! set quarantine_hits=1 in $cnffile or to quarantine results run: maldet -q $datestamp.$$" 1
 		fi
 	fi
-	command -v elog_event >/dev/null 2>&1 && \
-		elog_event "$ELOG_EVT_SCAN_COMPLETED" "info" "scan completed on $hrspath" "hits=$tot_hits" "files=$tot_files" "cleaned=$tot_cl" "time=${scan_et}s"
+	_lmd_elog_event "$ELOG_EVT_SCAN_COMPLETED" "info" "scan completed on $hrspath" "hits=$tot_hits" "files=$tot_files" "cleaned=$tot_cl" "time=${scan_et}s"
 
 	if [ "$tot_hits" != "0" ]; then
 		if [ "$email_ignore_clean" == "1" ] && [ "$tot_hits" != "$tot_cl" ]; then
@@ -2426,8 +2424,7 @@ genalert() {
 			if ! _alert_deliver_email "$email_addr" "$email_subj" "$file" "" "text"; then
 				eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
 			else
-				command -v elog_event >/dev/null 2>&1 && \
-					elog_event "$ELOG_EVT_ALERT_SENT" "info" "scan report emailed" "recipients=$email_addr"
+				_lmd_elog_event "$ELOG_EVT_ALERT_SENT" "info" "scan report emailed" "recipients=$email_addr"
 			fi
 			if [ "$(whoami)" != "root" ] && [[ "$2" != *@* ]]; then
 				if [ -z "$hscan" ]; then
@@ -2600,6 +2597,7 @@ monitor_kill() {
 	elif [ -n "$inotify_pid" ]; then
 		kill -9 $inotify_pid >> /dev/null 2>&1
 	fi
+	_lmd_elog_event "$ELOG_EVT_MONITOR_STOPPED" "info" "inotify monitor stopped"
 	exit $exit_code
 }
 
@@ -2882,8 +2880,7 @@ monitor_init() {
 	else
 		eout "{mon} inotify startup successful (pid: $inotify_pid)" 1
 		eout "{mon} inotify monitoring log: $inotify_log" 1
-		command -v elog_event >/dev/null 2>&1 && \
-			elog_event "$ELOG_EVT_MONITOR_STARTED" "info" "inotify monitor started (pid: $inotify_pid)"
+		_lmd_elog_event "$ELOG_EVT_MONITOR_STARTED" "info" "inotify monitor started (pid: $inotify_pid)"
 		echo "$inotify_pid" > $tmpdir/inotifywait.pid
 	fi
 	monitor_cycle >> /dev/null 2>&1 &
@@ -3021,9 +3018,9 @@ gensigs() {
 		if [ "$_ign_count" != "0" ]; then
 			local _tmpfilt
 			_tmpfilt=$(mktemp "$tmpdir/.sigfilt.XXXXXX")
-			grep -E -vf "$ignore_sigs" "$runtime_hexstrings" > "$_tmpfilt" || true
+			grep -E -vf "$ignore_sigs" "$runtime_hexstrings" > "$_tmpfilt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
 			cat "$_tmpfilt" > "$runtime_hexstrings"
-			grep -E -vf "$ignore_sigs" "$runtime_md5" > "$_tmpfilt" || true
+			grep -E -vf "$ignore_sigs" "$runtime_md5" > "$_tmpfilt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
 			cat "$_tmpfilt" > "$runtime_md5"
 			rm -f "$_tmpfilt"
 			if [ "$_silent" == "1" ] || [ "$hscan" == "1" ]; then

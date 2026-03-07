@@ -9,6 +9,7 @@ SAMPLES_DIR="/opt/tests/samples"
 TEST_SCAN_DIR="/tmp/lmd-test-sigs"
 
 setup() {
+    RESET_FULL=1
     source /opt/tests/helpers/reset-lmd.sh
     mkdir -p "$TEST_SCAN_DIR"
 }

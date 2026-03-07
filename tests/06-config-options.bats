@@ -24,22 +24,6 @@ teardown() {
     assert_output --partial "empty file list"
 }
 
-@test "lmd_set_config helper modifies config correctly" {
-    lmd_set_config email_alert 1
-    run grep '^email_alert="1"' "$LMD_INSTALL/conf.maldet"
-    assert_success
-}
-
-@test "lmd_set_config overwrites existing value" {
-    lmd_set_config email_alert 0
-    lmd_set_config email_alert 1
-    local count
-    count=$(grep -c '^email_alert=' "$LMD_INSTALL/conf.maldet")
-    [ "$count" -eq 1 ]
-    run grep '^email_alert="1"' "$LMD_INSTALL/conf.maldet"
-    assert_success
-}
-
 @test "compat.conf exists" {
     [ -f "$LMD_INSTALL/internals/compat.conf" ]
 }
@@ -61,13 +45,6 @@ teardown() {
     assert_output "1"
     run grep -c '^scan_clamscan=' "$LMD_INSTALL/conf.maldet"
     assert_output "1"
-}
-
-@test "reset-lmd restores clean config" {
-    lmd_set_config email_alert 1
-    source /opt/tests/helpers/reset-lmd.sh
-    run grep '^email_alert="0"' "$LMD_INSTALL/conf.maldet"
-    assert_success
 }
 
 @test "scan_user_access_minuid has default value 100" {

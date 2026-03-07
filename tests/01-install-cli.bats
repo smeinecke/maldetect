@@ -118,8 +118,8 @@ setup() {
     ! grep -rq 'OSTYPE.*FreeBSD' "$LMD_INSTALL/internals/" "$LMD_INSTALL/maldet"
 }
 
-@test "uninstall.sh uses uname for FreeBSD detection" {
-    grep -q 'uname -s' "$LMD_INSTALL/uninstall.sh"
+@test "uninstall.sh delegates service removal to pkg_service_uninstall" {
+    grep -q 'pkg_service_uninstall' "$LMD_INSTALL/uninstall.sh"
 }
 
 # Man page tests
@@ -171,7 +171,8 @@ setup() {
     grep -B2 'update-rc.d maldet defaults' /opt/lmd-src/install.sh | grep -q '_init_system.*!= "systemd"'
 }
 
-# F-086: systemd uninstall must remove leftover /etc/init.d/maldet
-@test "uninstall.sh systemd path cleans stale SysV init script" {
-    sed -n '/systemd/,/else/p' "$LMD_INSTALL/uninstall.sh" | grep -q 'rm -f /etc/init.d/maldet'
+# F-086: uninstall.sh delegates to pkg_service_uninstall which handles
+# systemd, SysV, chkconfig, update-rc.d, rc-update, and Slackware S-links
+@test "uninstall.sh uses pkg_service_uninstall for service removal" {
+    grep -q 'pkg_service_uninstall maldet' "$LMD_INSTALL/uninstall.sh"
 }

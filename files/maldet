@@ -56,7 +56,6 @@ fi
 
 # elog_lib constants — event taxonomy
 ELOG_EVT_CONFIG_LOADED="config_loaded"
-ELOG_EVT_CONFIG_ERROR="config_error"
 ELOG_EVT_SCAN_STARTED="scan_started"
 ELOG_EVT_SCAN_COMPLETED="scan_completed"
 ELOG_EVT_THREAT_DETECTED="threat_detected"

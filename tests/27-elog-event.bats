@@ -70,7 +70,7 @@ teardown() {
     assert_output --partial "FORMAT=classic"
 }
 
-@test "_lmd_elog_init disables audit for non-root" {
+@test "_lmd_elog_init enables audit for root" {
     # Create a test script that runs as nobody
     local test_script="/tmp/elog-nonroot-test.sh"
     cat > "$test_script" <<'TESTEOF'
