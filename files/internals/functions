@@ -137,10 +137,6 @@ prerun() {
 		cron_daily_scan=1
 	fi
 
-	if [ -z "$_LMD_CONFIG_LOADED_LOGGED" ]; then
-		_lmd_elog_event "$ELOG_EVT_CONFIG_LOADED" "info" "configuration loaded" "config=$cnf"
-		_LMD_CONFIG_LOADED_LOGGED=1
-	fi
 }
 
 eout() {
@@ -2638,6 +2634,7 @@ monitor_cycle() {
 			_build_scan_filters
 			_yara_bin="" _yara_type="" _yara_has_scan_list=""
 			eout "{mon} reloaded configuration data" 1
+			_lmd_elog_event "$ELOG_EVT_CONFIG_LOADED" "info" "configuration reloaded" "config=$cnf"
 		fi
 		sleep $inotify_sleep
 		inotify_cycle_runtime=$((inotify_sleep + inotify_cycle_runtime))
@@ -2881,6 +2878,7 @@ monitor_init() {
 		eout "{mon} inotify startup successful (pid: $inotify_pid)" 1
 		eout "{mon} inotify monitoring log: $inotify_log" 1
 		_lmd_elog_event "$ELOG_EVT_MONITOR_STARTED" "info" "inotify monitor started (pid: $inotify_pid)"
+		_lmd_elog_event "$ELOG_EVT_CONFIG_LOADED" "info" "configuration loaded" "config=$cnf"
 		echo "$inotify_pid" > $tmpdir/inotifywait.pid
 	fi
 	monitor_cycle >> /dev/null 2>&1 &

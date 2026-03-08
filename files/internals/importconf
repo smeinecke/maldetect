@@ -63,7 +63,7 @@ email_panel_alert_subj="$email_panel_alert_subj"
 # [0 = disabled, 1 = enabled]
 slack_alert="$slack_alert"
 
-# The file name of the file that will be uploaded to slack channel(s)
+# The file name and title for scan report uploads to Slack channel(s)
 slack_subj="$slack_subj"
 
 # Slack authentication token.
@@ -282,12 +282,12 @@ scan_tmpdir_paths="$scan_tmpdir_paths"
 # [0 = alert only, 1 = move to quarantine & alert]
 quarantine_hits="$quarantine_hits"
 
-# Try to clean string based malware injections
+# Try to clean malware injections using signature-matched clean rules
 # [NOTE: quarantine_hits=1 required]
 # [0 = disabled, 1 = clean]
 quarantine_clean="$quarantine_clean"
 
-# The default suspend action for users wih hits
+# The default suspend action for users with hits
 # Cpanel suspend or set shell /bin/false on non-Cpanel
 # [NOTE: quarantine_hits=1 required]
 # [0 = disabled, 1 = suspend account]
@@ -344,7 +344,7 @@ inotify_minuid="$inotify_minuid"
 inotify_docroot="$inotify_docroot"
 
 # Process CPU scheduling (nice) priority level for monitoring process.
-# [ -19 = high prio , 19 = low prio, default = 15 ]
+# [ -19 = high prio , 19 = low prio, default = 18 ]
 inotify_cpunice="$inotify_cpunice"
 
 # Process IO scheduling (ionice) priority levels for scan operations.
@@ -413,7 +413,7 @@ elk_index="$elk_index"
 
 ##
 # [ STATISTICAL ANALYSIS ]
-# This is a beta feature and as such should be used with caution.
+# This is an EXPERIMENTAL feature and should be used with caution.
 # Currently, this feature can have a substantially negative impact
 # on scan performance, especially with large file sets.
 ##

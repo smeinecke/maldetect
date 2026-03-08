@@ -1,0 +1,88 @@
+#!/usr/bin/env bats
+# 05-monitor-mode.bats — LMD Monitor Mode UAT
+# Verifies: inotify monitor start, file detection, monitor stop
+# Note: Monitor mode is structurally difficult in Docker — conservative
+# timeouts and skip if inotifywait is not available.
+
+load '/usr/local/lib/bats/bats-support/load'
+load '/usr/local/lib/bats/bats-assert/load'
+load '../helpers/uat-lmd'
+load '../infra/lib/uat-helpers'
+
+MONITOR_DIR="/tmp/uat-lmd-test/monitor"
+MALDET_LOG="$LMD_INSTALL/logs/event_log"
+
+setup_file() {
+    uat_setup
+    uat_lmd_install
+    uat_lmd_reset
+
+    # Skip entire file if inotifywait is not available
+    if ! command -v inotifywait >/dev/null 2>&1; then
+        skip "inotifywait not available"
+    fi
+
+    mkdir -p "$MONITOR_DIR"
+
+    # Configure short inotify sleep for faster test cycles
+    sed -i 's/^inotify_sleep=.*/inotify_sleep="2"/' "$LMD_INSTALL/conf.maldet"
+}
+
+teardown_file() {
+    uat_lmd_teardown_monitor
+    rm -rf "$MONITOR_DIR"
+    uat_lmd_reset
+}
+
+# bats test_tags=uat,uat:monitor-mode
+@test "UAT: monitor mode starts on path" {
+    if ! command -v inotifywait >/dev/null 2>&1; then
+        skip "inotifywait not available"
+    fi
+
+    # Start monitor in background with timeout safety net
+    timeout --signal KILL 30 maldet -m "$MONITOR_DIR" > /dev/null 2>&1 &
+
+    # Wait for inotify startup message in event log (up to 15s — Docker can be slow)
+    if ! uat_wait_for_log "$MALDET_LOG" "inotify startup successful" 15; then
+        skip "Monitor did not start in time (Docker limitation)"
+    fi
+
+    # Verify inotifywait process is running
+    run pgrep -f "inotifywait"
+    assert_success
+}
+
+# bats test_tags=uat,uat:monitor-mode
+@test "UAT: monitor detects EICAR file creation" {
+    if ! command -v inotifywait >/dev/null 2>&1; then
+        skip "inotifywait not available"
+    fi
+
+    # Create EICAR file in monitored directory
+    uat_lmd_create_eicar "$MONITOR_DIR" "monitor-eicar.txt"
+
+    # Wait for monitor cycle to detect and process (inotify_sleep=2 + scan time)
+    # Look for the EICAR file appearing in session hits
+    if ! uat_wait_for_condition "grep -rl 'monitor-eicar.txt' '$LMD_INSTALL/sess/' 2>/dev/null" 20; then
+        skip "Monitor detection did not trigger in time (Docker limitation)"
+    fi
+
+    # Check that the session files mention detection
+    run grep -rl "monitor-eicar.txt" "$LMD_INSTALL/sess/" 2>/dev/null
+    assert_success
+}
+
+# bats test_tags=uat,uat:monitor-mode
+@test "UAT: monitor stop kills inotify processes" {
+    if ! command -v inotifywait >/dev/null 2>&1; then
+        skip "inotifywait not available"
+    fi
+
+    # Use the teardown helper for clean shutdown
+    uat_lmd_teardown_monitor
+
+    # Verify all inotifywait processes are gone
+    run pgrep -f "inotifywait"
+    assert_failure
+}

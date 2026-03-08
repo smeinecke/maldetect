@@ -26,8 +26,9 @@ MD5 and HEX signature matching now use batch grep with Aho-Corasick parallel wor
 eliminating per-file pattern compilation overhead and ~500,000 subprocess forks per scan.
 Configure parallel worker count with `scan_workers` (default: auto).
 
-Other highlights: native YARA scanning (`scan_yara=1`), Slack/Telegram alerting fixes,
-ClamAV hex wildcard support in the native engine, and 200+ bug fixes across the codebase.
+Other highlights: native YARA scanning (`scan_yara=1`), Discord webhook alerting,
+Slack/Telegram alerting fixes, ClamAV hex wildcard support in the native engine,
+and 200+ bug fixes across the codebase.
 See [CHANGELOG](CHANGELOG) for full details.
 
 ---
@@ -365,7 +366,7 @@ QUARANTINE & RESTORE:
   -s, --restore FILE|SCANID     restore quarantined file(s)
 
 REPORTING:
-  -e, --report [SCANID] [email] view or email scan report
+  -e, --report [SCANID] [email] view or email scan report (use 'list' to show all)
   -E, --dump-report SCANID      dump report to stdout
   --alert-daily                 generate inotify monitor digest alert
   -l, --log                     view event log

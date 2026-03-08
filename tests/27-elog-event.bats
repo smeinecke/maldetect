@@ -90,8 +90,10 @@ TESTEOF
 }
 
 @test "elog_event writes to audit log" {
-    # Run a scan that produces config_loaded event
-    mkdir -p /var/log/maldet
+    # Run a scan with scannable content — produces scan_started/scan_completed events
+    mkdir -p /var/log/maldet "$TEST_SCAN_DIR"
+    echo "clean test content padding for minimum filesize check" > "$TEST_SCAN_DIR/clean-file.php"
+    lmd_set_config scan_ignore_root 0
     run "$LMD_INSTALL/maldet" -a "$TEST_SCAN_DIR"
     assert_success
     # Audit log should exist and contain JSONL
@@ -100,14 +102,16 @@ TESTEOF
     assert_success
 }
 
-@test "elog_event config_loaded has required fields" {
-    mkdir -p /var/log/maldet
+@test "elog_event scan_started has required fields" {
+    mkdir -p /var/log/maldet "$TEST_SCAN_DIR"
+    echo "clean test content padding for minimum filesize check" > "$TEST_SCAN_DIR/clean-file.php"
+    lmd_set_config scan_ignore_root 0
     run "$LMD_INSTALL/maldet" -a "$TEST_SCAN_DIR"
     assert_success
     [ -f "$AUDIT_LOG" ]
-    run grep '"config_loaded"' "$AUDIT_LOG"
+    run grep '"scan_started"' "$AUDIT_LOG"
     assert_success
-    assert_output --partial '"config":'
+    assert_output --partial '"path":'
 }
 
 @test "elog_event scan_completed has required fields" {

@@ -127,6 +127,12 @@ Core function library.
 .I /usr/local/maldetect/internals/alert_lib.sh
 Shared alerting library (email, Slack, Telegram, Discord delivery).
 .TP
+.I /usr/local/maldetect/internals/tlog_lib.sh
+Shared incremental log reading library.
+.TP
+.I /usr/local/maldetect/internals/elog_lib.sh
+Shared structured event logging library.
+.TP
 .I /usr/local/maldetect/sigs/
 Signature directory (MD5, HEX, YARA, ClamAV).
 .TP
@@ -150,20 +156,52 @@ Configuration is loaded from
 and can be overridden by system files and the
 .B \-co
 flag.
-Notable variables include
+Key variables by category:
+.PP
+.B Alerting:
 .BR email_alert ,
-.BR quarantine_hits ,
-.BR quarantine_clean ,
+.BR email_addr ,
+.BR slack_alert ,
+.BR slack_token ,
+.BR slack_channels ,
+.BR telegram_alert ,
+.BR telegram_bot_token ,
+.BR telegram_channel_id ,
+.BR discord_alert ,
+.BR discord_webhook_url .
+.PP
+.B Scanning:
 .BR scan_clamscan ,
 .BR scan_yara ,
-.BR scan_hexdepth ,
+.BR scan_yara_scope ,
 .BR scan_workers ,
+.BR scan_hexdepth ,
+.BR scan_max_filesize ,
 .BR scan_find_timeout ,
-.BR scan_days ,
-.BR string_length_scan ,
-.BR discord_alert ,
-and
-.BR discord_webhook_url .
+.BR scan_cpunice ,
+.BR scan_ignore_root ,
+.BR string_length_scan .
+.PP
+.B Quarantine:
+.BR quarantine_hits ,
+.BR quarantine_clean ,
+.BR quarantine_suspend_user ,
+.BR quarantine_suspend_user_minuid .
+.PP
+.B Monitoring:
+.BR default_monitor_mode ,
+.BR inotify_minuid ,
+.BR inotify_docroot ,
+.BR inotify_sleep ,
+.BR inotify_reloadtime ,
+.BR inotify_cpunice .
+.PP
+.B Maintenance:
+.BR autoupdate_signatures ,
+.BR autoupdate_version ,
+.BR cron_prune_days ,
+.BR cron_daily_scan ,
+.BR scan_days .
 .PP
 .B scan_workers
 sets the number of parallel workers for native MD5 and HEX scan passes.
@@ -189,6 +227,25 @@ Default: 1.
 See
 .I conf.maldet
 for the full list with descriptions.
+.SH EXAMPLES
+.TP
+Scan all files under user web roots:
+.B maldet \-a /home/?/public_html
+.TP
+Scan recent files with auto\-quarantine and YARA:
+.B maldet \-co quarantine_hits=1,scan_yara=1 \-r /home/?/public_html 2
+.TP
+View the most recent scan report:
+.B maldet \-e
+.TP
+List all scan reports:
+.B maldet \-e list
+.TP
+Quarantine all hits from a scan:
+.B maldet \-q SCANID
+.TP
+Start real\-time inotify monitoring:
+.B maldet \-m users
 .SH SEE ALSO
 .BR clamdscan (1),
 .BR clamscan (1),

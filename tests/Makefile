@@ -7,3 +7,9 @@ BATSMAN_RUN_TESTS := ./run-tests.sh
 BATSMAN_PROJECT   := lmd
 
 include infra/include/Makefile.tests
+
+# UAT override: --init reaps orphaned background processes (monitor mode tests),
+# --stop-timeout 3 ensures fast container shutdown when background maldet processes
+# linger after bats exits.
+uat:
+	BATSMAN_DOCKER_FLAGS="--init --stop-timeout 3" $(BATSMAN_RUN_TESTS) -- $(BATSMAN_UAT_PATH)

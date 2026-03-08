@@ -53,3 +53,37 @@ jobs:
           path: ${{ runner.temp }}/reports/
           retention-days: 14
           if-no-files-found: ignore
+
+  uat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@v3
+      - name: Build base image
+        uses: docker/build-push-action@v6
+        with:
+          context: tests/infra
+          file: tests/infra/dockerfiles/Dockerfile.debian12
+          tags: lmd-base-debian12
+          load: true
+          cache-from: type=gha,scope=base-debian12
+          cache-to: type=gha,mode=max,scope=base-debian12
+      - name: Build test image
+        run: |
+          docker build \
+            --build-arg BASE_IMAGE=lmd-base-debian12 \
+            -f tests/Dockerfile \
+            -t lmd-test-debian12 .
+      - name: Run UAT scenarios
+        run: make -C tests uat
+      - name: Upload UAT results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uat-results
+          path: /tmp/uat-*.log
+          retention-days: 14
+          if-no-files-found: ignore
