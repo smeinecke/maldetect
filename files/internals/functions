@@ -1098,16 +1098,326 @@ get_filestat() {
 	md5_hash="${_md5out%% *}"
 }
 
-record_hit() {
-	file="$1"
-	hitname="$2"
-	if [ -f "$file" ]; then
-		get_filestat "$file" 1
-		file_name="${file##*/}"
-		eout "{hit} malware hit $hitname found for $file"
-		_lmd_elog_event "$ELOG_EVT_THREAT_DETECTED" "warn" "malware hit $hitname found for $file" "file=$file" "sig=$hitname"
-		echo "${utime}:${hostid}:${hitname}:${md5_hash}:${file_size}:${file_owner}.${file_group}:${file_mode}:${file_times}:${file}" >> $hits_history
+## --- Batch Hit Processing Pipeline ---
+## All scan engines (native MD5/HEX, ClamAV, YARA, strlen) write hits to a
+## tab-delimited manifest and call _flush_hit_batch() for unified processing.
+## This replaces per-hit record_hit()+quarantine() loops that forked 12-15
+## subprocesses per hit.
+
+_batch_filter_ignore_sigs() {
+	# Bulk-filter a tab-delimited manifest against ignore_sigs patterns.
+	# Removes lines where signame (column 2) matches any ignore pattern.
+	# Input: $1 = manifest file (filepath\tsigname[\thash...])
+	# Modifies the manifest in-place (via temp file + mv).
+	local _manifest="$1"
+	if [ ! -s "$_manifest" ] || [ ! -s "$ignore_sigs" ]; then
+		return
 	fi
+	local _filtered
+	_filtered=$(mktemp "$tmpdir/.batch_igfilter.XXXXXX")
+	awk -F'\t' '
+	FILENAME == ARGV[1] {
+		pats[NR] = $0; np = NR; next
+	}
+	{
+		keep = 1
+		for (i = 1; i <= np; i++) {
+			if ($2 ~ pats[i]) { keep = 0; break }
+		}
+		if (keep) print
+	}
+	' "$ignore_sigs" "$_manifest" > "$_filtered"
+	mv "$_filtered" "$_manifest"
+}
+
+_batch_stat_gather() {
+	# Bulk-gather stat + md5sum for a manifest of hit files.
+	# Input:  $1 = raw manifest (filepath\tsigname[\thash])
+	# Output: $2 = enriched manifest (filepath\tsigname\thash\towner\tgroup\tmode\tsize\tatime:mtime:ctime)
+	local _manifest="$1" _enriched="$2"
+	local _paths _stat_out _md5_needed _md5_out _h
+
+	# Extract filepaths and filter to those that still exist
+	_paths=$(mktemp "$tmpdir/.batch_paths.XXXXXX")
+	_stat_out=$(mktemp "$tmpdir/.batch_stat.XXXXXX")
+	awk -F'\t' '{print $1}' "$_manifest" | while IFS= read -r _p; do
+		[ -f "$_p" ] && printf '%s\n' "$_p"
+	done > "$_paths"
+
+	if [ ! -s "$_paths" ]; then
+		rm -f "$_paths" "$_stat_out"
+		: > "$_enriched"
+		return
+	fi
+
+	# Bulk stat — one fork for all files
+	if [ "$os_freebsd" == "1" ]; then
+		# stat on vanished files is non-fatal
+		tr '\n' '\0' < "$_paths" | xargs -0 "$stat" -f '%N\t%Su\t%Sg\t%p\t%z\t%a:%m:%c' 2>/dev/null \
+			| while IFS=$'\t' read -r _n _su _sg _p _z _t; do
+				# FreeBSD %p includes file type prefix char; strip it
+				printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$_n" "$_su" "$_sg" "${_p#?}" "$_z" "$_t"
+			done > "$_stat_out"
+	else
+		# stat on vanished files is non-fatal; --printf interprets \t as tab
+		xargs -d '\n' "$stat" --printf '%n\t%U\t%G\t%a\t%s\t%X:%Y:%Z\n' < "$_paths" 2>/dev/null > "$_stat_out"
+	fi
+
+	# Identify files that need md5 hashing (those without hash in column 3)
+	_md5_needed=$(mktemp "$tmpdir/.batch_md5need.XXXXXX")
+	_md5_out=$(mktemp "$tmpdir/.batch_md5out.XXXXXX")
+	awk -F'\t' '($3 == "" || NF < 3) {print $1}' "$_manifest" > "$_md5_needed"
+
+	if [ -s "$_md5_needed" ]; then
+		if [ "$os_freebsd" == "1" ]; then
+			while IFS= read -r _fp; do
+				[ -f "$_fp" ] && [ -r "$_fp" ] || continue
+				_h=$($md5sum "$_fp")
+				printf '%s\t%s\n' "$_fp" "$_h"
+			done < "$_md5_needed" > "$_md5_out"
+		else
+			# md5sum on unreadable files is non-fatal
+			xargs -d '\n' "$md5sum" < "$_md5_needed" 2>/dev/null \
+				| awk '{h=$1; fpath=substr($0, length(h)+3); print fpath "\t" h}' > "$_md5_out"
+		fi
+	fi
+
+	# Single-pass awk join: manifest + stat + md5 → enriched
+	awk -F'\t' '
+	FILENAME == ARGV[1] {
+		# stat output: filepath owner group mode size times
+		stat_owner[$1] = $2; stat_group[$1] = $3
+		stat_mode[$1] = $4; stat_size[$1] = $5; stat_times[$1] = $6
+		next
+	}
+	FILENAME == ARGV[2] {
+		# md5 output: filepath hash
+		md5hash[$1] = $2
+		next
+	}
+	{
+		# manifest: filepath signame [hash]
+		fp = $1; sig = $2; hash = $3
+		if (!(fp in stat_owner)) next
+		if (hash == "") hash = md5hash[fp]
+		if (hash == "") hash = "unknown"
+		printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", \
+			fp, sig, hash, stat_owner[fp], stat_group[fp], \
+			stat_mode[fp], stat_size[fp], stat_times[fp]
+	}
+	' "$_stat_out" "$_md5_out" "$_manifest" > "$_enriched"
+
+	rm -f "$_paths" "$_stat_out" "$_md5_needed" "$_md5_out"
+}
+
+_batch_record_hits() {
+	# Bulk-generate hits_history and scan_session entries from enriched manifest.
+	# Input:  $1 = enriched manifest, $2 = stage name
+	# Enriched format: filepath\tsigname\thash\towner\tgroup\tmode\tsize\tatime:mtime:ctime
+	local _enriched="$1" _stage="$2"
+	local _hit_count _hist_block _sess_block
+
+	_hit_count=$($wc -l < "$_enriched")
+	if [ "$_hit_count" -eq 0 ]; then
+		return
+	fi
+
+	# Generate hits_history block and scan_session block in one awk pass
+	# Uses fd 3/4 redirects to split awk output into two files without a second pass
+	_hist_block=$(mktemp "$tmpdir/.batch_hist.XXXXXX")
+	_sess_block=$(mktemp "$tmpdir/.batch_sess.XXXXXX")
+	awk -F'\t' -v ut="$utime" -v hid="$hostid" '
+	{
+		# enriched: filepath signame hash owner group mode size times
+		fp=$1; sig=$2; hash=$3; own=$4; grp=$5; mode=$6; sz=$7; times=$8
+		printf "%s:%s:%s:%s:%s:%s.%s:%s:%s:%s\n", \
+			ut, hid, sig, hash, sz, own, grp, mode, times, fp > "/dev/fd/3"
+		printf "%s : %s\n", sig, fp > "/dev/fd/4"
+	}
+	' 3>"$_hist_block" 4>"$_sess_block" < "$_enriched"
+
+	# Append in bulk writes
+	cat "$_hist_block" >> "$hits_history"
+	if [ -n "$scan_session" ]; then
+		cat "$_sess_block" >> "$scan_session"
+	fi
+
+	# Summary eout — one line instead of N
+	eout "{hit} $_hit_count malware hits recorded [$_stage]"
+
+	# Per-hit elog for low volume (preserves audit trail and test contracts);
+	# summary event for high volume (performance win)
+	if [ "$_hit_count" -le 50 ]; then
+		while IFS=$'\t' read -r _fp _sig _hash _own _grp _mode _sz _times; do
+			_lmd_elog_event "$ELOG_EVT_THREAT_DETECTED" "warn" "malware hit $_sig found for $_fp" "file=$_fp" "sig=$_sig"
+		done < "$_enriched"
+	else
+		_lmd_elog_event "$ELOG_EVT_THREAT_DETECTED" "warn" "$_hit_count malware hits recorded [$_stage]" "count=$_hit_count" "stage=$_stage"
+	fi
+
+	rm -f "$_hist_block" "$_sess_block"
+}
+
+_batch_quarantine() {
+	# Bulk quarantine files from enriched manifest.
+	# Input:  $1 = enriched manifest, $2 = stage name
+	# Enriched format: filepath\tsigname\thash\towner\tgroup\tmode\tsize\tatime:mtime:ctime
+	local _enriched="$1" _stage="$2"
+	local _quar_count=0
+	local _quar_hist_block _quar_sess_block _inode_map _quar_dest_paths
+	local _fname _inode _dest _filtered_sess _ql _qsig _qfp _enriched_with_inode
+
+	if [ ! -s "$_enriched" ]; then
+		return
+	fi
+
+	_quar_hist_block=$(mktemp "$tmpdir/.batch_qhist.XXXXXX")
+	_quar_sess_block=$(mktemp "$tmpdir/.batch_qsess.XXXXXX")
+
+	# Bulk chattr -ia on all source files (one fork)
+	awk -F'\t' '{print $1}' "$_enriched" | xargs -d '\n' chattr -ia 2>/dev/null || true  # chattr may not exist or files may already lack attrs
+
+	# Batch stat for inode numbers (used for quarantine naming)
+	_inode_map=$(mktemp "$tmpdir/.batch_inodes.XXXXXX")
+	if [ "$os_freebsd" == "1" ]; then
+		awk -F'\t' '{print $1}' "$_enriched" \
+			| tr '\n' '\0' | xargs -0 "$stat" -f '%N\t%i' 2>/dev/null > "$_inode_map"
+	else
+		# stat on vanished files is non-fatal; --printf interprets \t as tab
+		awk -F'\t' '{print $1}' "$_enriched" \
+			| xargs -d '\n' "$stat" --printf '%n\t%i\n' 2>/dev/null > "$_inode_map"
+	fi
+
+	# Merge inode into enriched manifest as column 9 (single awk pass)
+	_enriched_with_inode=$(mktemp "$tmpdir/.batch_einode.XXXXXX")
+	awk -F'\t' 'NR==FNR {inode[$1]=$2; next} {print $0 "\t" inode[$1]}' \
+		"$_inode_map" "$_enriched" > "$_enriched_with_inode"
+	mv "$_enriched_with_inode" "$_enriched"
+
+	# Per-file loop: mv (unique src→dest) and .info creation
+	while IFS=$'\t' read -r _fp _sig _hash _own _grp _mode _sz _times _inode; do
+		_fname="${_fp##*/}"
+		[ -z "$_inode" ] && _inode="$$"
+		_dest="$quardir/$_fname.$_inode"
+
+		# Suspend user before quarantine if enabled
+		if [ "$quarantine_suspend_user" == "1" ]; then
+			file_owner="$_own"
+			quarantine_suspend_user "$_fp"
+		fi
+
+		if ! mv "$_fp" "$_dest" 2>/dev/null; then  # file may have vanished between stat and mv
+			continue
+		fi
+
+		# Write .info metadata
+		echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$_own:$_grp:$_mode:$_sz:$_hash:$_times:$_fp" > "$_dest.info"
+
+		# Collect quarantine history and session entries
+		printf '%s:%s:%s:%s:%s:%s:%s:%s\n' "$utime" "$_sig" "$_fp" "$_own" "$_grp" "$_hash" "$_sz" "$_dest" >> "$_quar_hist_block"
+		printf '%s : %s => %s\n' "$_sig" "$_fp" "$_dest" >> "$_quar_sess_block"
+		_quar_count=$((_quar_count + 1))
+	done < "$_enriched"
+
+	# Bulk permission/ownership changes on quarantine destinations
+	# Errors non-fatal (file may have been removed between mv and chmod)
+	if [ "$_quar_count" -gt 0 ]; then
+		# Extract quarantine dest paths once, reuse for all bulk ops
+		_quar_dest_paths=$(mktemp "$tmpdir/.batch_qdest.XXXXXX")
+		awk -F' => ' '{print $2}' "$_quar_sess_block" | tr '\n' '\0' > "$_quar_dest_paths"
+		if [ "$pub" == "1" ]; then
+			xargs -0 chmod 400 < "$_quar_dest_paths" 2>/dev/null  # safe perms for public scan user
+		else
+			xargs -0 chmod 000 < "$_quar_dest_paths" 2>/dev/null  # final lockdown
+			xargs -0 chown root:root < "$_quar_dest_paths" 2>/dev/null
+		fi
+		xargs -0 touch --no-create < "$_quar_dest_paths" 2>/dev/null  # suppress errors if flag unsupported
+		rm -f "$_quar_dest_paths"
+	fi
+
+	# Update quarantine history and scan_session (overwrite non-quarantine entries)
+	cat "$_quar_hist_block" >> "$quar_history"
+
+	# Replace plain session entries with quarantine entries
+	# Remove old "sig : path" lines and add "sig : path => quarpath" lines
+	if [ -n "$scan_session" ] && [ -s "$_quar_sess_block" ]; then
+		if [ -s "$scan_session" ]; then
+			_filtered_sess=$(mktemp "$tmpdir/.batch_fsess.XXXXXX")
+			grep -vFxf <(awk -F' : ' '{sub(/ =>.*/,"",$2); printf "%s : %s\n", $1, $2}' "$_quar_sess_block") "$scan_session" > "$_filtered_sess" 2>/dev/null || true  # grep returns 1 when all lines match
+			cat "$_filtered_sess" > "$scan_session"
+			rm -f "$_filtered_sess"
+		fi
+		cat "$_quar_sess_block" >> "$scan_session"
+	fi
+
+	# Summary logging
+	eout "{quar} $_quar_count files quarantined [$_stage]"
+	if [ "$_quar_count" -le 50 ] && [ -s "$_quar_sess_block" ]; then
+		# Emit per-file elog from quarantine session block (only successfully quarantined files)
+		# Format: "sig : path => quarpath"
+		while IFS= read -r _ql; do
+			_qsig="${_ql%% : *}"
+			_qfp="${_ql#* : }"; _qfp="${_qfp%% =>*}"
+			_lmd_elog_event "$ELOG_EVT_QUARANTINE_ADDED" "warn" "quarantined $_qfp" "file=$_qfp" "sig=$_qsig"
+		done < "$_quar_sess_block"
+	else
+		_lmd_elog_event "$ELOG_EVT_QUARANTINE_ADDED" "warn" "$_quar_count files quarantined [$_stage]" "count=$_quar_count" "stage=$_stage"
+	fi
+
+	# Run clean on quarantined files if enabled
+	if [ "$quarantine_clean" == "1" ] && [ "$clean_state" != "1" ]; then
+		while IFS=$'\t' read -r _fp _sig _hash _own _grp _mode _sz _times _inode; do
+			_fname="${_fp##*/}"
+			[ -z "$_inode" ] && _inode="$$"
+			_dest="$quardir/$_fname.$_inode"
+			if [ -f "$_dest" ]; then
+				hitname="$_sig"
+				file_owner="$_own"
+				file_group="$_grp"
+				file_mode="$_mode"
+				file_size="$_sz"
+				md5_hash="$_hash"
+				unset clean_state
+				clean "$_dest" "$_sig" "$_own.$_grp" "$_mode" "$_sz" "$_hash" "$_fp"
+			fi
+		done < "$_enriched"
+	fi
+
+	rm -f "$_quar_hist_block" "$_quar_sess_block" "$_inode_map"
+}
+
+_flush_hit_batch() {
+	# Orchestrator: stat-gather → record-hits → quarantine for a batch of hits.
+	# Input: $1 = raw hit manifest (filepath\tsigname[\thash]), $2 = stage name
+	local _manifest="$1" _stage="$2"
+	if [ ! -s "$_manifest" ]; then
+		return 0
+	fi
+
+	# Enrich with stat + md5
+	local _enriched
+	_enriched=$(mktemp "$tmpdir/.batch_enriched.XXXXXX")
+	_batch_stat_gather "$_manifest" "$_enriched"
+
+	if [ ! -s "$_enriched" ]; then
+		rm -f "$_enriched"
+		return 0
+	fi
+
+	# Record hits (hits_history, scan_session, eout, elog)
+	_batch_record_hits "$_enriched" "$_stage"
+
+	# Update progress counter
+	local _c
+	_c=$($wc -l < "$_enriched")
+	progress_hits=$(( ${progress_hits:-0} + _c ))
+
+	# Quarantine if enabled
+	if [ "$quarantine_hits" == "1" ] && [ -d "$quardir" ]; then
+		_batch_quarantine "$_enriched" "$_stage"
+	fi
+
+	rm -f "$_enriched"
 }
 
 _quarantine_file() {
@@ -1134,57 +1444,41 @@ _quarantine_file() {
 	_quar_dest="$quardir/$file_name.$rnd"
 }
 
-quarantine() {
-	file="$1"
-	hitname="$2"
-	if [ -d "$quardir" ]; then
-		if [ "$quarantine_hits" == "1" ]; then
-			if [ "$quarantine_suspend_user" == "1" ]; then
-				quarantine_suspend_user "$file"
-			fi
-			_quarantine_file "$file" "$hitname" || return 1
-			if [ -n "$scan_session" ]; then
-				echo "$hitname : $file => $_quar_dest" >> $scan_session
-				progress_hits=$((${progress_hits:-0} + 1))
-			fi
-			if [ "$quarantine_clean" == "1" ] && [ "$clean_state" != "1" ]; then
-				unset clean_state
-				clean "$_quar_dest" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
-			fi
-		else
-			if [ -n "$scan_session" ]; then
-				echo "$hitname : $file" >> $scan_session
-				progress_hits=$((${progress_hits:-0} + 1))
-			fi
-		fi
-	else
-		eout "{quar} fatal error handling '$file'"
-	fi
-}
-
 quar_hitlist() {
 	hitlist="$sessdir/session.hits.$1"
 	if [ -f "$hitlist" ]; then
-		lbreakifs set
-		while IFS= read -r file; do
-			if [ -f "$file" ]; then
-				get_filestat "$file" 1
-				file_hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
-				if [ -z "$file_hitname" ]; then
-					file_hitname="unknown"
+		if [ "$quarantine_clean" == "1" ]; then
+			# Serial path: clean requires per-file restore+rescan
+			while IFS= read -r file; do
+				if [ -f "$file" ]; then
+					get_filestat "$file" 1
+					file_hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
+					if [ -z "$file_hitname" ]; then
+						file_hitname="unknown"
+					fi
+					if [ "$quarantine_suspend_user" == "1" ]; then
+						quarantine_suspend_user "$file"
+					fi
+					_quarantine_file "$file" "$file_hitname" 1 || continue
+					if [ "$clean_state" != "1" ]; then
+						unset clean_state
+						hitname="$file_hitname"
+						clean "$_quar_dest" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
+					fi
 				fi
-				if [ "$quarantine_suspend_user" == "1" ]; then
-					quarantine_suspend_user "$file"
-				fi
-				_quarantine_file "$file" "$file_hitname" 1 || continue
-				if [ "$quarantine_clean" == "1" ] && [ "$clean_state" != "1" ]; then
-					unset clean_state
-					hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
-					clean "$_quar_dest" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
-				fi
-			fi
-		done < <(cut -d':' -f2- "$hitlist" | sed 's/.//')
-		lbreakifs unset
+			done < <(cut -d':' -f2- "$hitlist" | sed 's/.//')
+		else
+			# Batch path: bulk stat+quarantine via unified pipeline
+			local _qh_manifest
+			_qh_manifest=$(mktemp "$tmpdir/.qh_manifest.XXXXXX")
+			awk -F' : ' '{if ($2 != "") print $2 "\t" $1}' "$hitlist" > "$_qh_manifest"
+			# Force quarantine_hits=1 for this CLI path
+			local _saved_qh="$quarantine_hits"
+			quarantine_hits=1
+			_flush_hit_batch "$_qh_manifest" "quarantine"
+			quarantine_hits="$_saved_qh"
+			rm -f "$_qh_manifest"
+		fi
 	else
 		echo "{quar} invalid quarantine hit list, aborting."
 		exit 1
@@ -1340,7 +1634,14 @@ _scan_cleanup() {
 		"$tmpdir"/.hex_batch* "$tmpdir"/.hex_worker* "$tmpdir"/.hex_chunk* \
 		"$tmpdir"/.hex_md5hits* \
 		"$tmpdir"/.md5_batch_flist* "$tmpdir"/.md5_chunk* "$tmpdir"/.md5_worker* \
-		"$tmpdir"/.md5_linux* "$tmpdir"/.md5_fbsd* 2>/dev/null  # files may not exist depending on scan path
+		"$tmpdir"/.md5_linux* "$tmpdir"/.md5_fbsd* \
+		"$tmpdir"/.batch_* \
+		"$tmpdir"/.md5_manifest* "$tmpdir"/.hex_manifest* \
+		"$tmpdir"/.clam_manifest* "$tmpdir"/.clam_filtered* \
+		"$tmpdir"/.yara_manifest* "$tmpdir"/.yara_filtered* "$tmpdir"/.yara_existing* "$tmpdir"/.yara_deduped* \
+		"$tmpdir"/.strlen_manifest* "$tmpdir"/.stage_hit* \
+		2>/dev/null  # files may not exist depending on scan path
+	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* 2>/dev/null
 }
 
 # shellcheck disable=SC2154
@@ -1421,7 +1722,9 @@ _run_yara_scan() {
 		yara_filelist=$(_yara_filter_filelist "$1")
 		_yara_file_count=$($wc -l < "$yara_filelist")
 		_scan_progress "yara" "$_yara_file_count files"
+		_start_elapsed_timer "yara" "$_yara_file_count"
 		scan_stage_yara "$yara_filelist"
+		_stop_elapsed_timer
 		rm -f "$yara_filelist"
 	fi
 }
@@ -1451,35 +1754,118 @@ _clamd_retry_scan() {
 # shellcheck disable=SC2154
 _process_clamav_hits() {
 	local _results="$1" _progress="$2"
-	lbreakifs set
-	while IFS= read -r hit; do
-		file="${hit#*:}"
-		signame="${hit%%:*}"
-		if [[ "$signame" == *YARA* ]]; then
-			signame="${signame/YARA./{YARA\}}"
-		elif [[ "$signame" != *HEX* ]] && [[ "$signame" != *MD5* ]]; then
-			signame="{CAV}$signame"
+	local _clam_manifest _signame _file
+	_clam_manifest=$(mktemp "$tmpdir/.clam_manifest.XXXXXX")
+
+	# Parse clamscan output → filepath\tsigname manifest
+	while IFS=: read -r _signame _file; do
+		if [[ "$_signame" == *YARA* ]]; then
+			_signame="${_signame/YARA./{YARA\}}"
+		elif [[ "$_signame" != *HEX* ]] && [[ "$_signame" != *MD5* ]]; then
+			_signame="{CAV}$_signame"
 		fi
-		ignore_hit=$(echo $signame | grep -E -vf $ignore_sigs)
-		if [ -f "$file" ] && [ -n "$ignore_hit" ]; then
-			record_hit "$file" "$signame"
-			quarantine "$file" "$signame"
-			_scan_progress "clamav" "processing hits"
-			cnt="$tot_files"
-		fi
-		unset ignore_hit
-	done < <(grep -E -v 'ERROR$|lstat\(\)|no reply from clamd' "$_results" | sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' | awk -F':' '{print$2":"$1}' | sed 's/.//')
-	lbreakifs unset
+		[ -f "$_file" ] && printf '%s\t%s\n' "$_file" "$_signame"
+	done < <(grep -E -v 'ERROR$|lstat\(\)|no reply from clamd' "$_results" \
+		| sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' \
+		| awk -F':' '{print$2":"$1}' | sed 's/.//') > "$_clam_manifest"
+
+	# Bulk ignore_sigs filter
+	_batch_filter_ignore_sigs "$_clam_manifest"
+
+	_flush_hit_batch "$_clam_manifest" "clamav"
+	_scan_progress "clamav" "processing hits"
+	rm -f "$_clam_manifest"
 }
 
 _scan_progress() {
 	# Unified scan progress line for all engines and stages.
 	# Gated by _in_scan_context to prevent output in monitor/clean paths.
-	local _stage="$1" _fileinfo="$2"
+	# Args: stage fileinfo [workers elapsed]
+	local _stage="$1" _fileinfo="$2" _workers="$3" _elapsed="$4"
 	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
 	   [ "$set_background" != "1" ] && [ -z "$single_filescan" ]; then
-		echo -en "\\033[${res_col}G"
-		echo -n "maldet($$): {scan} [$_stage] $_fileinfo | $progress_hits hits $progress_cleaned cleaned"
+		local _status=""
+		if [ -n "$_workers" ] && [ -n "$_elapsed" ]; then
+			_status=" | ${_workers}w ${_elapsed}s"
+		elif [ -n "$_elapsed" ]; then
+			_status=" | ${_elapsed}s"
+		fi
+		echo -en "\\033[${res_col}G\\033[K"
+		echo -n "maldet($$): {scan} [$_stage] $_fileinfo${_status} | $progress_hits hits $progress_cleaned cleaned"
+	fi
+}
+
+_wait_workers_with_progress() {
+	# Poll background workers with periodic progress updates.
+	# Usage: _wait_workers_with_progress <stage> <file_count> <progress_dir> pids...
+	# Reads per-worker progress files from progress_dir to show file-level progress.
+	# Updates the scan progress line every 2s with elapsed time and worker count.
+	local _stage="$1" _file_count="$2" _progress_dir="$3" _poll_interval=2
+	shift 3
+	local _pids=("$@")
+	local _total=${#_pids[@]}
+	local _start_ts _elapsed _running _pid _processed _wpath _wval
+	_start_ts=$SECONDS
+	while true; do
+		_running=0
+		for _pid in "${_pids[@]}"; do
+			if kill -0 "$_pid" 2>/dev/null; then
+				_running=$((_running + 1))
+			fi
+		done
+		_elapsed=$(( SECONDS - _start_ts ))
+		# Sum per-worker progress files for file-level progress
+		_processed=0
+		if [ -d "$_progress_dir" ]; then
+			for _wpath in "$_progress_dir"/*; do
+				if [ -f "$_wpath" ]; then
+					_wval=$(cat "$_wpath" 2>/dev/null)
+					if [ -n "$_wval" ] && [ "$_wval" -gt 0 ] 2>/dev/null; then
+						_processed=$((_processed + _wval))
+					fi
+				fi
+			done
+		fi
+		if [ "$_processed" -gt 0 ]; then
+			_scan_progress "$_stage" "${_processed}/${_file_count} files" "$_total" "$_elapsed"
+		else
+			_scan_progress "$_stage" "$_file_count files" "$_total" "$_elapsed"
+		fi
+		if [ "$_running" -eq 0 ]; then
+			break
+		fi
+		sleep "$_poll_interval"
+	done
+	# Collect exit codes (non-critical)
+	for _pid in "${_pids[@]}"; do
+		wait "$_pid" 2>/dev/null || true  # worker exit code not critical
+	done
+	rm -rf "$_progress_dir" 2>/dev/null
+}
+
+_start_elapsed_timer() {
+	# Start a background elapsed-time progress ticker for single-process stages.
+	# Usage: _start_elapsed_timer <stage> <file_count>
+	# Sets _timer_pid to the background process PID.
+	# Caller must call _stop_elapsed_timer when the stage completes.
+	# No-op in background mode to avoid wasted wake-ups.
+	_timer_pid=""
+	[ "$set_background" == "1" ] && return
+	local _stage="$1" _file_count="$2" _start_ts
+	_start_ts=$SECONDS
+	while true; do
+		sleep 2
+		_scan_progress "$_stage" "$_file_count files" "" "$(( SECONDS - _start_ts ))"
+	done &
+	_timer_pid=$!
+}
+
+_stop_elapsed_timer() {
+	# Stop the background elapsed-time ticker started by _start_elapsed_timer.
+	if [ -n "${_timer_pid:-}" ]; then
+		kill "$_timer_pid" 2>/dev/null
+		wait "$_timer_pid" 2>/dev/null || true  # suppress "terminated" message
+		_timer_pid=""
 	fi
 }
 
@@ -1498,12 +1884,14 @@ _scan_run_clamav() {
 		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
 	fi
 	_scan_progress "clamav" "$tot_files files"
+	_start_elapsed_timer "clamav" "$tot_files"
 
 	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan start"  >> $clamscan_log
 	clamscan_results=$(mktemp "$tmpdir/.clamscan.XXXXXX")
 	chmod 600 "$clamscan_results"
 	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) executed: $nice_command $clamscan $clamopts --infected --no-summary -f $find_results" >> $clamscan_log
 	_clamd_retry_scan "$find_results"
+	_stop_elapsed_timer
 	if [ "$clamscan_return" == "2" ]; then
 		if [ "$quarantine_on_error" == "0" ] || [ -z "$quarantine_on_error" ]; then
 			quarantine_hits=0
@@ -1532,10 +1920,12 @@ _resolve_worker_count() {
 	# Resolve the number of parallel workers for scan passes.
 	# Arg 1: total file count (workers capped to file count).
 	# Outputs resolved count to stdout.
+	# Auto-detect: 2 workers per CPU core, capped at 8.
 	local _count="${scan_workers:-0}"
 	if [ "$_count" -le 0 ] 2>/dev/null; then  # suppress error if non-numeric
 		_count=$(nproc 2>/dev/null || grep -E -c '^processor' /proc/cpuinfo 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
-		if [ "$_count" -gt 4 ]; then _count=4; fi
+		_count=$((_count * 2))
+		if [ "$_count" -gt 8 ]; then _count=8; fi
 	fi
 	if [ "$_count" -gt 8 ]; then _count=8; fi
 	if [ "$1" -le "$_count" ]; then _count="$1"; fi
@@ -1548,17 +1938,23 @@ _md5_batch_worker() {
 	# Outputs tab-delimited filepath\thash\tsigname triples to stdout.
 	# Arg 1: chunk file (one filepath per line)
 	# Arg 2: runtime_md5 sig file (HASH:SIZE:{MD5}sig.name.N)
-	local _chunk="$1" _sigfile="$2"
+	# Arg 3: progress file (written every 500 files; empty = no progress)
+	local _chunk="$1" _sigfile="$2" _progress_file="${3:-}"
 	local _md5_out
 	if [ "$os_freebsd" == "1" ]; then
 		# FreeBSD md5 -q outputs hash only (no filename); loop to pair them
-		local _fbsd_out _fpath _fhash
+		local _fbsd_out _fpath _fhash _fbsd_count=0
 		_fbsd_out=$(mktemp "$tmpdir/.md5_fbsd.XXXXXX")
 		while IFS= read -r _fpath; do
 			[ -f "$_fpath" ] && [ -r "$_fpath" ] || continue
 			_fhash=$($md5sum "$_fpath")
 			printf '%s\t%s\n' "$_fhash" "$_fpath"
+			_fbsd_count=$((_fbsd_count + 1))
+			if [ -n "$_progress_file" ] && ((_fbsd_count % 500 == 0)); then
+				echo "$_fbsd_count" > "$_progress_file"
+			fi
 		done < "$_chunk" > "$_fbsd_out"
+		[ -n "$_progress_file" ] && echo "$_fbsd_count" > "$_progress_file"
 		# awk join: load sigs, match on hash field
 		awk -F'\t' -v sigfile="$_sigfile" '
 		BEGIN {
@@ -1579,10 +1975,11 @@ _md5_batch_worker() {
 	else
 		# Linux: xargs md5sum hashes all files in one process
 		_md5_out=$(mktemp "$tmpdir/.md5_linux.XXXXXX")
-		xargs -d '\n' $md5sum < "$_chunk" > "$_md5_out" 2>/dev/null  # suppress errors on unreadable files
-		# awk join: load sigs (hash→signame), scan md5sum output for matches
+		xargs -d '\n' "$md5sum" < "$_chunk" > "$_md5_out" 2>/dev/null  # suppress errors on unreadable files
+		# awk join: load sigs (hash->signame), scan md5sum output for matches
 		# md5sum output format: "hash  filepath" (two spaces)
-		awk -v sigfile="$_sigfile" '
+		# Writes progress every 500 files when progress file is set.
+		awk -v sigfile="$_sigfile" -v pfile="$_progress_file" '
 		BEGIN {
 			while ((getline line < sigfile) > 0) {
 				colon1 = index(line, ":")
@@ -1596,10 +1993,21 @@ _md5_batch_worker() {
 			close(sigfile)
 		}
 		{
+			count++
 			hash = $1
 			if (hash in sigs) {
 				fpath = substr($0, length(hash) + 3)
 				print fpath "\t" hash "\t" sigs[hash]
+			}
+			if (pfile != "" && count % 500 == 0) {
+				print count > pfile
+				close(pfile)
+			}
+		}
+		END {
+			if (pfile != "" && count > 0) {
+				print count > pfile
+				close(pfile)
 			}
 		}
 		' "$_md5_out"
@@ -1612,6 +2020,7 @@ _hex_batch_worker() {
 	# Runs in a subshell (backgrounded by caller).
 	# Outputs tab-delimited filepath\tsigname hit pairs to stdout.
 	local _chunk="$1" _depth="$2" _literals="$3" _regexes="$4" _sigmap="$5"
+	local _progress_file="${6:-}"
 	local _batch_hex _idx=0 _line _hit_line _hit_linenum _hit_pat _hit_name
 	_batch_hex=$(mktemp "$tmpdir/.hex_batch.XXXXXX")
 	# Build parallel arrays: _names[idx]=filepath, batch_hex has one hex line per file
@@ -1623,7 +2032,11 @@ _hex_batch_worker() {
 		_idx=$((_idx + 1))
 		_hex_extract_file "$_line" "$_depth"
 		printf '\n'
+		if [ -n "$_progress_file" ] && ((_idx % 100 == 0)); then
+			echo "$_idx" > "$_progress_file"
+		fi
 	done < "$_chunk" > "$_batch_hex"
+	[ -n "$_progress_file" ] && echo "$_idx" > "$_progress_file"
 	# Literal pass: grep -Fno finds first match per line, awk deduplicates by line number
 	if [ -s "$_literals" ]; then
 		while IFS=: read -r _hit_linenum _hit_pat; do
@@ -1659,7 +2072,10 @@ _hex_batch_worker() {
 
 # shellcheck disable=SC2154
 _scan_run_native() {
+	local _nworkers
+	_nworkers=$(_resolve_worker_count "$tot_files")
 	if [ -z "$hscan" ]; then
+		eout "{scan} using native scan engine ($_nworkers workers)..." 1
 		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
 	fi
 	if [ ! -f "$scan_session" ]; then
@@ -1667,7 +2083,7 @@ _scan_run_native() {
 	fi
 
 	# --- Pass 1: MD5 (batch parallel workers) ---
-	local rpath _md5_batch_flist _md5_file_count _nworkers
+	local rpath _md5_batch_flist _md5_file_count
 	_md5_batch_flist=$(mktemp "$tmpdir/.md5_batch_flist.XXXXXX")
 	# Build readable file list from find_results
 	while IFS= read -r rpath; do
@@ -1676,14 +2092,15 @@ _scan_run_native() {
 	_md5_file_count=$($wc -l < "$_md5_batch_flist")
 	if [ "$_md5_file_count" -gt 0 ] && [ -s "$runtime_md5" ]; then
 		_nworkers=$(_resolve_worker_count "$_md5_file_count")
-		_scan_progress "md5" "$_md5_file_count files ($_nworkers workers)"
+		_scan_progress "md5" "$_md5_file_count files"
 		if [ "$_nworkers" -le 1 ]; then
 			# Single worker: run inline (no subshell overhead)
 			_md5_batch_worker "$_md5_batch_flist" "$runtime_md5" > "$tmpdir/.md5_worker.$$.0"
 		else
 			# Multi-worker: round-robin split and background
-			local _md5_chunk_prefix _w
+			local _md5_chunk_prefix _w _md5_progress_dir _md5_pfile
 			_md5_chunk_prefix="$tmpdir/.md5_chunk.$$"
+			_md5_progress_dir=$(mktemp -d "$tmpdir/.md5_progress.$$.XXXXXX")
 			awk -v n="$_nworkers" -v prefix="$_md5_chunk_prefix" \
 				'{ print > (prefix "." ((NR-1) % n)) }' "$_md5_batch_flist"
 			local _md5_worker_pids
@@ -1691,36 +2108,36 @@ _scan_run_native() {
 			_w=0
 			while [ "$_w" -lt "$_nworkers" ]; do
 				if [ -f "$_md5_chunk_prefix.$_w" ]; then
+					# Skip progress writes in background mode for max throughput
+					_md5_pfile=""
+					[ "$set_background" != "1" ] && _md5_pfile="$_md5_progress_dir/$_w"
 					_md5_batch_worker "$_md5_chunk_prefix.$_w" "$runtime_md5" \
+						"$_md5_pfile" \
 						> "$tmpdir/.md5_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
 					_md5_worker_pids[_w]=$!
 				fi
 				_w=$((_w + 1))
 			done
-			for _w in "${!_md5_worker_pids[@]}"; do
-				wait "${_md5_worker_pids[$_w]}" 2>/dev/null || true  # worker exit code not critical
-			done
+			_wait_workers_with_progress "md5" "$_md5_file_count" "$_md5_progress_dir" "${_md5_worker_pids[@]}"
 			rm -f "$_md5_chunk_prefix".* 2>/dev/null
 		fi
-		# Process hits sequentially (state mutation in main process only)
+		# Merge worker outputs into single manifest and batch-process hits
 		_scan_progress "md5" "processing hits"
-		local _hit_file _hit_hash _hit_sig
+		local _md5_manifest
+		_md5_manifest=$(mktemp "$tmpdir/.md5_manifest.XXXXXX")
 		for _w in "$tmpdir"/.md5_worker."$$".*; do
 			if [ -f "$_w" ] && [ -s "$_w" ]; then
-				while IFS=$'\t' read -r _hit_file _hit_hash _hit_sig; do
-					if [ -f "$_hit_file" ] && [ -n "$_hit_sig" ]; then
-						record_hit "$_hit_file" "$_hit_sig"
-						quarantine "$_hit_file" "$_hit_sig"
-					fi
-				done < "$_w"
+				# Worker output: filepath\thash\tsigname → manifest: filepath\tsigname\thash
+				awk -F'\t' '{print $1 "\t" $3 "\t" $2}' "$_w" >> "$_md5_manifest"
 			fi
 		done
-		rm -f "$tmpdir"/.md5_worker."$$".* 2>/dev/null
+		_flush_hit_batch "$_md5_manifest" "md5"
+		rm -f "$_md5_manifest" "$tmpdir"/.md5_worker."$$".* 2>/dev/null
 	fi
 	rm -f "$_md5_batch_flist"
 
 	# --- Pass 2: HEX batch (parallel workers) ---
-	local _hex_filelist _nworkers _hex_depth
+	local _hex_filelist _hex_depth
 	_hex_filelist=$(mktemp "$tmpdir/.hex_batch_flist.XXXXXX")
 	# Build file list: skip files already hit by MD5 pass.
 	# Quarantined files are chmod 000 (not readable); non-quarantined hits
@@ -1748,46 +2165,46 @@ _scan_run_native() {
 		_hex_depth="${scan_hexdepth:-524288}"
 		# Resolve worker count
 		_nworkers=$(_resolve_worker_count "$_hex_file_count")
-		_scan_progress "hex" "$_hex_file_count files ($_nworkers workers)"
+		_scan_progress "hex" "$_hex_file_count files"
 		# Split file list into chunks via awk round-robin
 		local _chunk_prefix _w
 		_chunk_prefix="$tmpdir/.hex_chunk.$$"
 		awk -v n="$_nworkers" -v prefix="$_chunk_prefix" '{ print > (prefix "." ((NR-1) % n)) }' "$_hex_filelist"
 		# Launch workers and collect PIDs
-		local _worker_pids _worker_outputs _wout
+		local _worker_pids _worker_outputs _wout _hex_progress_dir _hex_pfile
 		_worker_pids=()
 		_worker_outputs=()
+		_hex_progress_dir=$(mktemp -d "$tmpdir/.hex_progress.$$.XXXXXX")
 		_w=0
 		while [ "$_w" -lt "$_nworkers" ]; do
 			_wout="$tmpdir/.hex_worker.$$.${_w}"
 			if [ -f "$_chunk_prefix.$_w" ]; then
+				# Skip progress writes in background mode for max throughput
+				_hex_pfile=""
+				[ "$set_background" != "1" ] && _hex_pfile="$_hex_progress_dir/$_w"
 				_hex_batch_worker "$_chunk_prefix.$_w" "$_hex_depth" \
 					"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
+					"$_hex_pfile" \
 					> "$_wout" 2>/dev/null &  # suppress worker file-access stderr
 				_worker_pids[_w]=$!
 				_worker_outputs[_w]="$_wout"
 			fi
 			_w=$((_w + 1))
 		done
-		# Wait for all workers
-		for _w in "${!_worker_pids[@]}"; do
-			wait "${_worker_pids[$_w]}" 2>/dev/null || true  # worker exit code not critical
-		done
-		# Process hits sequentially (state mutation in main process only)
+		# Wait for all workers with progress updates
+		_wait_workers_with_progress "hex" "$_hex_file_count" "$_hex_progress_dir" "${_worker_pids[@]}"
+		# Merge worker outputs into single manifest and batch-process hits
 		_scan_progress "hex" "processing hits"
-		local _hit_file _hit_sig
+		local _hex_manifest
+		_hex_manifest=$(mktemp "$tmpdir/.hex_manifest.XXXXXX")
 		for _wout in "${_worker_outputs[@]}"; do
 			if [ -f "$_wout" ] && [ -s "$_wout" ]; then
-				while IFS=$'\t' read -r _hit_file _hit_sig; do
-					if [ -f "$_hit_file" ] && [ -n "$_hit_sig" ]; then
-						record_hit "$_hit_file" "$_hit_sig"
-						quarantine "$_hit_file" "$_hit_sig"
-					fi
-				done < "$_wout"
+				cat "$_wout" >> "$_hex_manifest"
 			fi
 		done
-		# Cleanup chunk and worker output files
-		rm -f "$_chunk_prefix".* "$tmpdir"/.hex_worker."$$".* 2>/dev/null
+		_flush_hit_batch "$_hex_manifest" "hex"
+		# Cleanup chunk, worker output, and manifest files
+		rm -f "$_hex_manifest" "$_chunk_prefix".* "$tmpdir"/.hex_worker."$$".* 2>/dev/null
 	fi
 
 	# --- Pass 3: strlen (per-file, on MD5-miss files) ---
@@ -2011,20 +2428,30 @@ scan_strlen() {
 	if [ "$string_length_scan" == "1" ] && [ "$type" == "file" ]; then
 		flen=$($wc -L "$file" 2> /dev/null | awk '{print$1}')
 		if [ "$flen" -ge "$string_length" ]; then
-			eout "{strlen} malware string length hit on $file"
-			quarantine "$file" "{SA}stat.strlength"
+			eout "{strlen} malware string length hit ${flen}b on $file" 1
+			local _strlen_manifest
+			_strlen_manifest=$(mktemp "$tmpdir/.strlen_manifest.XXXXXX")
+			printf '%s\t{SA}stat.strlength\n' "$file" > "$_strlen_manifest"
+			_flush_hit_batch "$_strlen_manifest" "strlen"
+			rm -f "$_strlen_manifest"
 		fi
 	elif [ "$string_length_scan" == "1" ] && [ "$type" == "list" ]; then
 		list=$(mktemp "$tmpdir/.strlen.flist.XXXXXX")
 		cp "$file" "$list"
 		xargs -d '\n' $wc -L < "$list" 2> /dev/null | grep -vw total >> "$list.strlen"
 		awk "{if (\$1>=$string_length) print\$2}" "$list.strlen" >> "$list.hits"
-		while IFS= read -r i; do
-			if [ -f "$i" ]; then
-				eout "{strlen} malware string length hit on $i"
-				quarantine "$i" "{SA}stat.strlength"
-			fi
-		done < "$list.hits"
+		if [ -s "$list.hits" ]; then
+			while IFS= read -r i; do
+				[ -f "$i" ] && eout "{strlen} malware string length hit on $i" 1
+			done < "$list.hits"
+			local _strlen_manifest
+			_strlen_manifest=$(mktemp "$tmpdir/.strlen_manifest.XXXXXX")
+			while IFS= read -r i; do
+				[ -f "$i" ] && printf '%s\t{SA}stat.strlength\n' "$i"
+			done < "$list.hits" > "$_strlen_manifest"
+			_flush_hit_batch "$_strlen_manifest" "strlen"
+			rm -f "$_strlen_manifest"
+		fi
 		rm -f "$list" "$list.strlen" "$list.hits"
 	fi
 }
@@ -2048,8 +2475,11 @@ scan_stage1() {
 			if [ "$clean_check" == "1" ]; then
 				clean_failed=1
 			else
-	                        record_hit "$file" "$md5_hitname"
-				quarantine "$file" "$md5_hitname"
+				local _hit_manifest
+				_hit_manifest=$(mktemp "$tmpdir/.stage_hit.XXXXXX")
+				printf '%s\t%s\t%s\n' "$file" "$md5_hitname" "$hash" > "$_hit_manifest"
+				_flush_hit_batch "$_hit_manifest" "md5"
+				rm -f "$_hit_manifest"
 			fi
 			unset val_hash md5_hit md5_hitname md5_hash
 		else
@@ -2141,8 +2571,11 @@ scan_stage2() {
 		if [ "$clean_check" == "1" ]; then
 			clean_failed=1
 		else
-			record_hit "$file" "$hex_hitname"
-			quarantine "$file" "$hex_hitname"
+			local _hit_manifest
+			_hit_manifest=$(mktemp "$tmpdir/.stage_hit.XXXXXX")
+			printf '%s\t%s\n' "$file" "$hex_hitname" > "$_hit_manifest"
+			_flush_hit_batch "$_hit_manifest" "hex"
+			rm -f "$_hit_manifest"
 		fi
 	fi
 }
@@ -2248,34 +2681,42 @@ _yara_scan_rules() {
 		eout "{yara} warning: $log_label exited with code $yara_rc"
 	fi
 
-	# Parse results: format is "RULE_NAME FILEPATH"
+	# Parse results into manifest and batch-process
 	if [ -s "$yara_results" ]; then
-		local yara_line rule_name match_file signame ignore_hit
-		while IFS= read -r yara_line; do
-			rule_name="${yara_line%% *}"
-			match_file="${yara_line#* }"
-			if [ -z "$rule_name" ] || [ -z "$match_file" ]; then
-				continue
+		local _yara_manifest
+		_yara_manifest=$(mktemp "$tmpdir/.yara_manifest.XXXXXX")
+
+		# Parse: "RULE_NAME FILEPATH" → filepath\t{YARA}RULE_NAME
+		awk '{rule=$1; $1=""; sub(/^ /,"",$0); print $0 "\t{YARA}" rule}' \
+			"$yara_results" > "$_yara_manifest"
+
+		# Bulk ignore_sigs filter on signames (column 2)
+		_batch_filter_ignore_sigs "$_yara_manifest"
+
+		# Bulk dedup against scan_session (skip files already recorded by prior stages)
+		if [ "$clean_state" != "1" ] && [ -n "$scan_session" ] && [ -s "$scan_session" ]; then
+			local _existing_paths _yd
+			_existing_paths=$(mktemp "$tmpdir/.yara_existing.XXXXXX")
+			awk -F' : ' '{ sub(/ =>.*/, "", $2); if ($2 != "") print $2 }' "$scan_session" > "$_existing_paths"
+			if [ -s "$_existing_paths" ]; then
+				_yd=$(mktemp "$tmpdir/.yara_deduped.XXXXXX")
+				# Remove manifest lines whose filepath (col 1) matches an existing path
+				awk -F'\t' 'NR==FNR{seen[$0];next} !($1 in seen)' \
+					"$_existing_paths" "$_yara_manifest" > "$_yd"
+				mv "$_yd" "$_yara_manifest"
 			fi
-			signame="{YARA}$rule_name"
-			ignore_hit=$(echo "$signame" | grep -E -vf "$ignore_sigs")
-			if [ -n "$ignore_hit" ] && [ -f "$match_file" ]; then
-				# Skip if file already recorded by a prior scan stage (skip during clean verification)
-				if [ "$clean_state" != "1" ]; then
-					local esc_match_file
-					esc_match_file=$(printf '%s' "$match_file" | sed 's/[][.\\*^$()+?{|]/\\&/g')
-					if [ -n "$scan_session" ] && [ -f "$scan_session" ] && grep -qE " : ${esc_match_file}( =>|$)" "$scan_session"; then
-						continue
-					fi
-				fi
-				if [ "$clean_check" == "1" ]; then
-					clean_failed=1
-				else
-					record_hit "$match_file" "$signame"
-					quarantine "$match_file" "$signame"
-				fi
+			rm -f "$_existing_paths"
+		fi
+
+		if [ "$clean_check" == "1" ]; then
+			# Clean verification mode — just set flag if any hits remain
+			if [ -s "$_yara_manifest" ]; then
+				clean_failed=1
 			fi
-		done < "$yara_results"
+		else
+			_flush_hit_batch "$_yara_manifest" "yara"
+		fi
+		rm -f "$_yara_manifest"
 	fi
 }
 

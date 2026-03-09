@@ -153,8 +153,8 @@ import_custsigs_yara_url=""
 # [ SCAN OPTIONS ]
 ##
 # Number of parallel workers for native scan passes (MD5 and HEX).
-# A value of 0 uses automatic detection: min(nproc, 4).
-# [ 0 = auto, 1 = single-threaded, max recommended = 8 ]
+# A value of 0 uses automatic detection: 2 workers per CPU core, up to 8.
+# [ 0 = auto, 1 = single-threaded, max = 8 ]
 scan_workers="0"
 
 # If installed, use ClamAV clamscan binary as default scan engine which

@@ -1,4 +1,4 @@
-v2.0.1 | Mar 08 2026:
+v2.0.1 | Mar 09 2026:
 
   -- New Features --
 
@@ -8,7 +8,18 @@ v2.0.1 | Mar 08 2026:
       removed; batch parallel MD5 scanning reduces ~100,000 subprocess forks
       to ~10; ClamAV hex wildcard support (??, (aa|bb), *, nibble) for custom
       signatures; scan_workers controls worker count (default: auto);
-      multi-pass pipeline (MD5, HEX, strlen, YARA) with unified progress
+      multi-pass pipeline (MD5, HEX, strlen, YARA) with unified progress;
+      live scan progress with per-file throughput from workers (MD5 every
+      500 files, HEX every 100 files) and elapsed timers for ClamAV/YARA;
+      auto worker count changed to 2 per core (up to 8); progress
+      suppressed in background mode for maximum throughput
+[New] batch hit processing pipeline: replaces per-hit record_hit()+quarantine()
+      fork loops with unified bulk operations across all scan engines (native
+      MD5/HEX, ClamAV, YARA, string length); bulk stat+md5sum via xargs,
+      single-pass awk for hits_history and scan_session generation, batched
+      chattr/chmod/chown for quarantine; eliminates ~12-15 subprocess forks
+      per hit; CLI quarantine (-q) also uses batch path when quarantine_clean
+      is disabled
 [New] native YARA scanning: scan_yara=1 enables YARA as an independent scan
       stage with yara or yr (YARA-X) binary; supports custom rules via
       custom.yara and custom.yara.d/ drop-in directory; scan_yara_scope
@@ -170,6 +181,8 @@ v2.0.1 | Mar 08 2026:
 [Change] vendored libraries updated: tlog_lib.sh v2.0.3, elog_lib.sh v1.0.2,
       alert_lib.sh v1.0.3, pkg_lib.sh v1.0.1
 [Change] vendored libraries: batsman submodule updated to v1.2.0
+[Change] batch quarantine: extract dest paths once for bulk chmod/chown/touch;
+      pre-load inode map into enriched manifest to eliminate per-file awk lookups
 
 v1.6.6.1 | Feb 25 2025:
 [Fix] find_recentopts incorrectly escaping find options to the right of ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442

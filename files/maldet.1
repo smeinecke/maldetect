@@ -205,9 +205,9 @@ Key variables by category:
 .PP
 .B scan_workers
 sets the number of parallel workers for native MD5 and HEX scan passes.
-A value of 0 (default) uses automatic detection: min(nproc, 4).
+A value of 0 (default) uses automatic detection: 2 workers per CPU core, up to 8.
 Set to 1 for single\-threaded operation.
-Maximum recommended value: 8.
+Maximum value: 8.
 .PP
 .B scan_find_timeout
 sets the maximum execution time in seconds for the
