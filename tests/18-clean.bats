@@ -139,3 +139,17 @@ teardown() {
     run grep "legitimate content" "$TEST_SCAN_DIR/infected-base64.php"
     assert_success
 }
+
+# F-005: clean() derives clean rule name from arg2, not global $hitname
+@test "clean uses file_signame parameter not global hitname for rule lookup" {
+    lmd_set_config quarantine_hits 1
+    lmd_set_config quarantine_clean 1
+    cp "$SAMPLES_DIR/infected-base64.php" "$TEST_SCAN_DIR/"
+    maldet -a "$TEST_SCAN_DIR" || true
+    # The auto-clean should have used the correct sig name from arg2
+    # Verify the log references base64.inject.unclassed (from the custom sig)
+    # and not some stale or wrong name
+    run grep "base64.inject.unclassed" "$LMD_INSTALL/logs/event_log"
+    assert_success
+    assert_output --partial "clean"
+}

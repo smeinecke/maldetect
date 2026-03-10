@@ -379,6 +379,12 @@ _safe_source_conf() {
 					continue
 					;;
 			esac
+			# Reject dangerous environment variable overrides
+			local _ssc_dangerous_pat='^(PATH|LD_[A-Z_]+|BASH_ENV|ENV|IFS|CDPATH|GLOBIGNORE)$'
+			if [[ "$_ssc_var" =~ $_ssc_dangerous_pat ]]; then
+				eout "{importconf} WARNING: rejected blocked variable in remote config: $_ssc_var"
+				continue
+			fi
 			printf -v "$_ssc_var" '%s' "$_ssc_val"
 		else
 			eout "{importconf} WARNING: skipped non-assignment line in remote config"
@@ -639,7 +645,7 @@ clean() {
 	file_size="$5"
 	file_md5="$6"
 
-	sh_hitname=$(echo $hitname | sed -E -e 's/\{(HEX|MD5|CAV|YARA)\}//' -e 's/\.[0-9]+$//')
+	sh_hitname=$(echo "$file_signame" | sed -E -e 's/\{(HEX|MD5|CAV|YARA)\}//' -e 's/\.[0-9]+$//')
 	if [ -d "$cldir" ] && [ "$quarantine_clean" == "1" ] && [ "$quarantine_hits" == "1" ] && [ -f "$file" ]; then
 		if { [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ]; } && [ -f "${file}.info" ]; then
 			file_path=$(grep -E -v '\#' "${file}.info" | cut -d':' -f9-)
@@ -782,6 +788,7 @@ restore() {
 		_lmd_elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
 	else
 		eout "{restore} '$file' is not eligible for restore or could not be found" 1
+		return 1
 	fi
 }
 
@@ -806,6 +813,7 @@ restore_hitlist() {
 		lbreakifs unset
 	else
 		eout "{restore} could not find a valid hit list to restore." 1
+		return 1
 	fi
 }
 
@@ -848,6 +856,13 @@ _lmd_alert_init() {
 	export ALERT_CURL_TIMEOUT="${remote_uri_timeout:-30}"
 	export ALERT_CURL_MAX_TIME="120"
 	export ALERT_TMPDIR="$tmpdir"
+
+	# Email format and SMTP relay
+	export ALERT_EMAIL_FORMAT="${email_format:-html}"
+	export ALERT_SMTP_RELAY="${smtp_relay:-}"
+	export ALERT_SMTP_FROM="${smtp_from:-}"
+	export ALERT_SMTP_USER="${smtp_user:-}"
+	export ALERT_SMTP_PASS="${smtp_pass:-}"
 
 	# Slack — bot mode only (LMD uses file upload, requires Bot API)
 	export ALERT_SLACK_MODE="bot"
@@ -919,25 +934,80 @@ _lmd_elog_event() {
 	command -v elog_event >/dev/null 2>&1 && elog_event "$@"
 }
 
-_lmd_dispatch_messaging() {
-	local file="$1" subject="$2"
-	local _any_enabled=0 _ch
-	for _ch in slack telegram discord; do
-		if alert_channel_enabled "$_ch"; then
-			_any_enabled=1; break
-		fi
-	done
-	[ "$_any_enabled" = "1" ] || return 0
+# _parse_session_metadata session_file — parse text session header into shell vars
+# Populates scan metadata variables (scanid, scan_start_hr, scan_end_hr, scan_et,
+# file_list_et, hrspath, days, tot_files, tot_hits, tot_cl) from a previously
+# rendered text session file. Called before on-demand HTML rendering so that
+# _lmd_set_global_vars() has the data it needs.
+# shellcheck disable=SC2034
+_parse_session_metadata() {
+	local _sess_file="$1"
+	[ -f "$_sess_file" ] || return 1
+	local _line _key _val
+	while IFS= read -r _line; do
+		# Stop at the first hit entry (sig : filepath) or FILE HIT LIST marker
+		case "$_line" in
+			"FILE HIT LIST:"*) break ;;
+			*" : "*)           break ;;
+		esac
+		# Strip leading/trailing whitespace from value after the label
+		_key="${_line%%:*}"
+		_val="${_line#*:}"
+		# Trim leading spaces from value
+		_val="${_val#"${_val%%[![:space:]]*}"}"
+		case "$_key" in
+			"SCAN ID")
+				scanid="$_val"
+				# Derive datestamp (portion before the dot-separated PID)
+				datestamp="${scanid%%.*}"
+				;;
+			"STARTED")   scan_start_hr="$_val" ;;
+			"COMPLETED") scan_end_hr="$_val" ;;
+			"ELAPSED")
+				# Format: "285s [find: 1s]"
+				local _elapsed_pat='^([0-9]+)s[[:space:]]*\[find:[[:space:]]*([0-9]+)s\]'
+				if [[ "$_val" =~ $_elapsed_pat ]]; then
+					scan_et="${BASH_REMATCH[1]}"
+					file_list_et="${BASH_REMATCH[2]}"
+				fi
+				;;
+			"PATH")          hrspath="$_val" ;;
+			"RANGE")
+				# Strip trailing non-numeric (e.g., "1 days" -> "1")
+				days="${_val%% *}"
+				;;
+			"TOTAL FILES")   tot_files="$_val" ;;
+			"TOTAL HITS")    tot_hits="$_val" ;;
+			"TOTAL CLEANED") tot_cl="$_val" ;;
+		esac
+	done < "$_sess_file"
+}
 
-	local _tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
-	export SUBJECT="$subject"
-	export HOSTNAME; HOSTNAME=$(hostname)
-
-	if ! alert_dispatch "$_tpl_dir" "$subject" "all" "$file"; then
-		eout "{alert} one or more messaging channels failed" 1
-		return 1
+# _resolve_html_for_session session_file — render HTML on-demand from current templates
+# Sets caller's _html to a temp file path, or "" if text session unavailable.
+# Always renders fresh using current templates (no persistent HTML storage).
+# Handles both clean scans (empty manifest) and dirty scans (hits in manifest).
+# Usage: local _html=""; _resolve_html_for_session "$sessdir/session.$rid"
+_resolve_html_for_session() {
+	local _sess="$1"
+	_html=""
+	if [ ! -f "$_sess" ]; then
+		return 0
 	fi
-	return 0
+	# Populate scan metadata from text session before rendering HTML
+	_parse_session_metadata "$_sess"
+	local _hits="${_sess/session./session.hits.}"
+	local _manifest _tpl_dir
+	_tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
+	_manifest=$(mktemp "$tmpdir/.alert_manifest.XXXXXX")
+	# Parse hits if available (empty manifest for clean scans is valid)
+	if [ -f "$_hits" ] && [ -s "$_hits" ]; then
+		_lmd_parse_hitlist "$_hits" > "$_manifest"
+	fi
+	# Render HTML to temp file — clean scans get celebration, dirty get stat blocks
+	_html=$(mktemp "$tmpdir/.alert_html.XXXXXX")
+	_lmd_render_html "$_manifest" "scan" "$_tpl_dir" > "$_html"
+	rm -f "$_manifest"
 }
 
 view_report() {
@@ -992,7 +1062,13 @@ view_report() {
 	fi
 	# Email report if second argument contains @
 	if [[ "$2" == *@* ]]; then
-		if ! _alert_deliver_email "$2" "$email_subj" "$sessdir/session.$rid" "" "text"; then
+		local _html="" _fmt="${email_format:-html}"
+		_resolve_html_for_session "$sessdir/session.$rid"
+		# Downgrade format when HTML unavailable and cannot be rendered
+		if [ -z "$_html" ] && [ "$_fmt" != "text" ]; then
+			_fmt="text"
+		fi
+		if ! _alert_deliver_email "$2" "$email_subj" "$sessdir/session.$rid" "$_html" "$_fmt"; then
 			eout "{report} no \$mail or \$sendmail binaries found, e-mail alerts disabled." 1
 			exit 1
 		fi
@@ -1790,8 +1866,14 @@ _scan_progress() {
 		elif [ -n "$_elapsed" ]; then
 			_status=" | ${_elapsed}s"
 		fi
-		echo -en "\\033[${res_col}G\\033[K"
-		echo -n "maldet($$): {scan} [$_stage] $_fileinfo${_status} | $progress_hits hits $progress_cleaned cleaned"
+		local _line="maldet($$): {scan} [$_stage] $_fileinfo${_status} | $progress_hits hits $progress_cleaned cleaned"
+		if [ -t 1 ]; then
+			# TTY: overwrite current line with cursor-to-column-1 and erase-to-EOL
+			echo -en "\\033[${res_col}G\\033[K${_line}"
+		else
+			# Non-TTY (cron, pipe, docker exec): plain newline-terminated output
+			echo "$_line"
+		fi
 	fi
 }
 
@@ -2408,6 +2490,8 @@ scan() {
 	fi
 	_lmd_elog_event "$ELOG_EVT_SCAN_COMPLETED" "info" "scan completed on $hrspath" "hits=$tot_hits" "files=$tot_files" "cleaned=$tot_cl" "time=${scan_et}s"
 
+	mv "$scan_session" "$nsess_hits"
+
 	if [ "$tot_hits" != "0" ]; then
 		if [ "$email_ignore_clean" == "1" ] && [ "$tot_hits" != "$tot_cl" ]; then
 			genalert file "$nsess"
@@ -2418,7 +2502,6 @@ scan() {
 			genalert panel "$nsess"
 		fi
 	fi
-	mv "$scan_session" "$nsess_hits"
 	_scan_cleanup
 }
 
@@ -2737,7 +2820,8 @@ scan_stage_yara() {
 	local yara_type="$_yara_type"
 
 	# Build list of rule files to scan
-	local yara_rules_list=$(mktemp "$tmpdir/.yara_rules.XXXXXX")
+	local yara_rules_list
+	yara_rules_list=$(mktemp "$tmpdir/.yara_rules.XXXXXX")
 	chmod 600 "$yara_rules_list"
 
 	# Include rfxn.yara if scope allows (when ClamAV disabled or scope=all)
@@ -2827,10 +2911,23 @@ gen_report() {
 	if [ -f "$scan_session" ]; then
 		tot_hits=$($wc -l < "$scan_session")
 		nsess_hits="$sessdir/session.hits.$datestamp.$$"
-		echo "$datestamp.$$" > $sessdir/session.last
+		echo "$datestamp.$$" > "$sessdir/session.last"
 		nsess="$sessdir/session.$datestamp.$$"
-		tmpf="$nsess"
-		. $email_template
+
+		local _manifest _tpl_dir
+		_manifest=$(mktemp "$tmpdir/.alert_manifest.XXXXXX")
+		_tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
+		_lmd_parse_hitlist "$scan_session" > "$_manifest"
+
+		# Always render text (session file for view_report, fallback)
+		_lmd_render_text "$_manifest" "scan" "$_tpl_dir" > "$nsess"
+
+		# HTML is rendered on-demand at email send time from current templates
+		# via _resolve_html_for_session() — no persistent .html file stored
+
+		# ELK posting
+		_lmd_elk_post_hits "$_manifest"
+		rm -f "$_manifest"
 	fi
 }
 
@@ -2841,7 +2938,8 @@ trim_log() {
 		log_size=$($wc -l < "$log")
 		if [ "$log_size" -gt "$logtrim" ] 2>/dev/null; then
 			trim=$((logtrim/10))
-			local tmplog=$(mktemp "${log}.trim.XXXXXX")
+			local tmplog
+			tmplog=$(mktemp "${log}.trim.XXXXXX")
 			tail -n +"$((trim + 1))" "$log" > "$tmplog" 2>/dev/null
 			cat "$tmplog" > "$log" 2>/dev/null
 			rm -f "$tmplog"
@@ -2856,9 +2954,20 @@ genalert() {
 	local hit_pat_plain='^(.*)[[:space:]]:[[:space:]](.*)$'
 	type="$1"
 	file="$2"
+	local _tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
+	local _fmt="${email_format:-html}"
+	local _html=""
+	local digest_tmpf=""
+
 	if [ "$email_alert" == "1" ] || [ "$type" == "digest" ] || [ "$type" == "daily" ]; then
 		if [ "$type" == "file" ] && [ -f "$file" ]; then
-			if ! _alert_deliver_email "$email_addr" "$email_subj" "$file" "" "text"; then
+			# Resolve or render HTML companion for scan session file
+			_resolve_html_for_session "$file"
+			# Downgrade format when HTML unavailable and cannot be rendered
+			if [ -z "$_html" ] && [ "$_fmt" != "text" ]; then
+				_fmt="text"
+			fi
+			if ! _alert_deliver_email "$email_addr" "$email_subj" "$file" "$_html" "$_fmt"; then
 				eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
 			else
 				_lmd_elog_event "$ELOG_EVT_ALERT_SENT" "info" "scan report emailed" "recipients=$email_addr"
@@ -2882,7 +2991,14 @@ genalert() {
 			if [ "$control_panel" == "error" ] || [ "$control_panel" == "unknown" ]; then
 				eout "{panel} Failed to set control panel. Will not send alerts to control panel account contacts." 1
 			else
-				# Sort malware hits from $file and map the detected files to their system user owner
+				# Parse raw hits from scan_session (not rendered report)
+				local _panel_src="$scan_session"
+				if [ ! -f "$_panel_src" ]; then
+					# Fallback: parse FILE HIT LIST from rendered session file
+					_panel_src=$(mktemp "$tmpdir/.panel_src.XXXXXX")
+					awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag' "$file" > "$_panel_src"
+				fi
+				# Sort malware hits and map to system user owner
 				while IFS= read -r hit_line; do
 					[ -z "$hit_line" ] && continue
 					if [[ "$hit_line" =~ $hit_pat_quar ]]; then
@@ -2904,9 +3020,13 @@ genalert() {
 						continue
 					fi
 					echo "$file_owner : $hit_sig : $hit_file" >> "$tmpdir/.panel_alert.hits"
-				done < <(awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag' "$file")
+				done < "$_panel_src"
+				# Clean up fallback temp if used
+				if [ "$_panel_src" != "$scan_session" ]; then
+					rm -f "$_panel_src"
+				fi
 				# Sort cleaned files too
-				if [ "$quarantine_clean" == "1" ]; then
+				if [ "$quarantine_clean" == "1" ] && [ -f "$sessdir/clean.$$" ]; then
 					while IFS= read -r clean_file; do
 						if [ -f "$clean_file" ]; then
 							clean_owner=$(stat -c "%U" "$clean_file")
@@ -2914,32 +3034,41 @@ genalert() {
 						echo "$clean_owner : $clean_file" >> "$tmpdir/.panel_alert.clean"
 					done < "$sessdir/clean.$$"
 				fi
-				# Determine control panel, noop if error or none detected
 				eout "{panel} Detected control panel $control_panel. Will send alerts to control panel account contacts." 1
 				user_list=$(awk '{print $1}' "$tmpdir/.panel_alert.hits" | sort | uniq)
 				if [ -n "$user_list" ]; then
 					for sys_user in $user_list; do
 						contact_emails=""
-						get_panel_contacts $control_panel $sys_user
+						get_panel_contacts "$control_panel" "$sys_user"
 
 						grep "^$sys_user " "$tmpdir/.panel_alert.hits" | awk -F' : ' '{print $2" : "$3}' > "$tmpdir/.${sys_user}.hits"
 						user_tot_hits=$($wc -l < "$tmpdir/.${sys_user}.hits")
+						user_tot_cl=0
 						if [ -f "$tmpdir/.panel_alert.clean" ]; then
 							grep "^$sys_user " "$tmpdir/.panel_alert.clean" | awk '{print $3}' > "$tmpdir/.${sys_user}.clean"
 							user_tot_cl=$($wc -l < "$tmpdir/.${sys_user}.clean")
 						fi
 
-						tmpf="$tmpdir/.${sys_user}.alert"
-						. "$email_panel_alert_etpl"
-						# Use shared lib for delivery with custom From/Reply-To
+						# Render per-user panel alert via template engine
+						local _user_manifest _user_text _user_html=""
+						_user_manifest=$(mktemp "$tmpdir/.panel_manifest.XXXXXX")
+						_lmd_parse_hitlist "$tmpdir/.${sys_user}.hits" > "$_user_manifest"
+						_user_text=$(mktemp "$tmpdir/.panel_text.XXXXXX")
+						_lmd_render_text "$_user_manifest" "panel" "$_tpl_dir" > "$_user_text"
+						if [ "$_fmt" = "html" ] || [ "$_fmt" = "both" ]; then
+							_user_html=$(mktemp "$tmpdir/.panel_html.XXXXXX")
+							_lmd_render_html "$_user_manifest" "panel" "$_tpl_dir" > "$_user_html"
+						fi
+						# Deliver with custom From/Reply-To
 						ALERT_SMTP_FROM="$email_panel_from" \
 						ALERT_EMAIL_REPLY_TO="$email_panel_replyto" \
-						_alert_deliver_email "$contact_emails" "$email_panel_alert_subj" "$tmpf" "" "text"
+						_alert_deliver_email "$contact_emails" "$email_panel_alert_subj" "$_user_text" "$_user_html" "$_fmt"
+						rm -f "$_user_manifest" "$_user_text" "$_user_html"
 					done
 				fi
 				rm -f "$tmpdir/.panel_alert.hits" "$tmpdir/.panel_alert.clean"
 				for sys_user in $user_list; do
-					rm -f "$tmpdir/.${sys_user}.hits" "$tmpdir/.${sys_user}.clean" "$tmpdir/.${sys_user}.alert"
+					rm -f "$tmpdir/.${sys_user}.hits" "$tmpdir/.${sys_user}.clean"
 				done
 			fi
 		elif [ "$type" == "daily" ] || [ "$type" == "digest" ]; then
@@ -2947,7 +3076,7 @@ genalert() {
 				eout "{alert} no active monitor session found, digest alert skipped"
 				return
 			fi
-			inotify_start_time=$(ps -p $(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1) -o lstart= 2> /dev/null)
+			inotify_start_time=$(ps -p "$(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1)" -o lstart= 2> /dev/null)
 			scan_start_hr=$(date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z")
 			scan_start_elapsed=$(($(date +'%s')-$(date -d "$scan_start_hr" +'%s')))
 			inotify_run_time="$(($scan_start_elapsed/86400))d:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))/3600))h:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%3600/60))m:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%60))s"
@@ -2967,9 +3096,9 @@ genalert() {
 			tot_files=$($wc -l < "$tmpdir/.digest.monitor.alert")
 			tot_susp=$($wc -l < "$tmpdir/.digest.susp.hits")
 
-			trim_log $monitor_scanned_history 50000
-			trim_log $clean_history 50000
-			trim_log $suspend_history 50000
+			trim_log "$monitor_scanned_history" 50000
+			trim_log "$clean_history" 50000
+			trim_log "$suspend_history" 50000
 
 			tlog_read "$sessdir/session.hits.$datestamp.$$" "digest.alert" "$tmpdir" "lines" >> /dev/null 2>&1
 			tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" >> /dev/null 2>&1
@@ -2977,23 +3106,43 @@ genalert() {
 			tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" >> /dev/null 2>&1
 
 			if [ -s "$tmpdir/.digest.alert.hits" ]; then
-				tmpf=$(mktemp "$tmpdir/.alert.XXXXXX")
 				if [ "$tot_hits" -gt "$tot_files" ]; then
 					tot_files="$tot_hits"
 				fi
-				. "$email_template"
-				cp "$tmpf" "$sessdir/session.$scanid"
-				grep -E '^{.*}' "$sessdir/session.$scanid" > "$sessdir/session.hits.$scanid"
+
+				# Render digest via template engine
+				local _digest_manifest
+				_digest_manifest=$(mktemp "$tmpdir/.digest_manifest.XXXXXX")
+				_lmd_parse_hitlist "$tmpdir/.digest.alert.hits" > "$_digest_manifest"
+
+				local _digest_text _digest_html=""
+				_digest_text=$(mktemp "$tmpdir/.digest_text.XXXXXX")
+				_lmd_render_text "$_digest_manifest" "digest" "$_tpl_dir" > "$_digest_text"
+				if [ "$_fmt" = "html" ] || [ "$_fmt" = "both" ]; then
+					_digest_html=$(mktemp "$tmpdir/.digest_html.XXXXXX")
+					_lmd_render_html "$_digest_manifest" "digest" "$_tpl_dir" > "$_digest_html"
+				fi
+
+				# ELK posting
+				_lmd_elk_post_hits "$_digest_manifest"
+
+				# Save session files
+				cp "$_digest_text" "$sessdir/session.$scanid"
+				grep -E '^\{.*\}' "$sessdir/session.$scanid" > "$sessdir/session.hits.$scanid"
 				echo "$scanid" > "$sessdir/session.last"
+				# HTML rendered on-demand — no persistent .html stored
+
 				local digest_subj="${email_subj}: monitor summary"
-				if _alert_deliver_email "$email_addr" "$digest_subj" "$tmpf" "" "text"; then
+				if _alert_deliver_email "$email_addr" "$digest_subj" "$_digest_text" "$_digest_html" "$_fmt"; then
 					eout "{alert} sent $type alert to $email_addr"
 				else
 					eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
 				fi
-				# set file for messaging alerts below
-				file="$tmpf"
-				digest_tmpf="$tmpf"
+				# Set file for messaging alerts below
+				file="$_digest_text"
+				digest_tmpf="$_digest_text"
+
+				rm -f "$_digest_manifest" "$_digest_html"
 				rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
 			fi
 		else
@@ -3002,14 +3151,29 @@ genalert() {
 
 	fi
 
-	# Dispatch to messaging channels (Slack, Telegram, Discord) via shared alert_lib
+	# Dispatch to messaging channels (Slack, Telegram, Discord) via lmd_alert.sh
 	# Only for file and digest types — panel alerts are per-user email only
-	if [ "$type" != "panel" ] && [ -f "$file" ]; then
-		_lmd_dispatch_messaging "$file" "${slack_subj:-$email_subj}"
+	if [ "$type" != "panel" ] && [ -f "${file:-}" ]; then
+		# Determine source for hit list parsing
+		local _msg_src=""
+		if [ -f "${scan_session:-}" ]; then
+			_msg_src="$scan_session"
+		elif [ -f "$sessdir/session.hits.${scanid:-}" ]; then
+			_msg_src="$sessdir/session.hits.$scanid"
+		fi
+		if [ -n "$_msg_src" ] && [ -f "$_msg_src" ] && [ -s "$_msg_src" ]; then
+			local _msg_manifest
+			_msg_manifest=$(mktemp "$tmpdir/.msg_manifest.XXXXXX")
+			_lmd_parse_hitlist "$_msg_src" > "$_msg_manifest"
+			if [ -s "$_msg_manifest" ]; then
+				_lmd_render_messaging "$_msg_manifest" "${slack_subj:-$email_subj}" "$_tpl_dir" "$file"
+			fi
+			rm -f "$_msg_manifest"
+		fi
 	fi
 
-	# clean up digest report temp file if generated
-	if [ "$digest_tmpf" ] && [ -f "$digest_tmpf" ]; then
+	# Clean up digest report temp file if generated
+	if [ -n "$digest_tmpf" ] && [ -f "$digest_tmpf" ]; then
 		rm -f "$digest_tmpf"
 	fi
 }
@@ -3666,8 +3830,8 @@ sigup() {
 		get_remote_file "${sig_clpack_url}.md5" "sigup" "1" "$tmpwd/maldet-clean.tgz.md5"
 		
 		if [ -f "$tmpwd/maldet-sigpack.tgz.md5" ]; then
-			sigpack_md5=$($md5sum maldet-sigpack.tgz | awk '{print$1}')
-			sigpack_goodmd5=$(awk '{print$1}' maldet-sigpack.tgz.md5)
+			sigpack_md5=$($md5sum "$tmpwd/maldet-sigpack.tgz" | awk '{print$1}')
+			sigpack_goodmd5=$(awk '{print$1}' "$tmpwd/maldet-sigpack.tgz.md5")
 			if [ "$sigpack_md5" != "$sigpack_goodmd5" ]; then
 				eout "{sigup} unable to verify md5sum of maldet-sigpack.tgz, please try again or contact proj@rfxn.com" 1
 				sigpackfail=1
@@ -3700,8 +3864,8 @@ sigup() {
 		fi
 		
 		if [ -f "$tmpwd/maldet-clean.tgz.md5" ]; then
-			clpack_md5=$($md5sum maldet-clean.tgz | awk '{print$1}')
-			clpack_goodmd5=$(awk '{print$1}' maldet-clean.tgz.md5)
+			clpack_md5=$($md5sum "$tmpwd/maldet-clean.tgz" | awk '{print$1}')
+			clpack_goodmd5=$(awk '{print$1}' "$tmpwd/maldet-clean.tgz.md5")
 			if [ "$clpack_md5" != "$clpack_goodmd5" ]; then
 				eout "{sigup} unable to verify md5sum of maldet-clean.tgz, please try again or contact proj@rfxn.com" 1
 				clpackfail=1

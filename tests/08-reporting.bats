@@ -3,6 +3,7 @@
 load '/usr/local/lib/bats/bats-support/load'
 load '/usr/local/lib/bats/bats-assert/load'
 source /opt/tests/helpers/assert-scan.bash
+source /opt/tests/helpers/lmd-config.sh
 
 LMD_INSTALL="/usr/local/maldetect"
 SAMPLES_DIR="/opt/tests/samples"
@@ -73,4 +74,15 @@ teardown() {
     local scanid
     scanid=$(get_last_scanid)
     [ -f "$LMD_INSTALL/sess/session.$scanid" ]
+}
+
+@test "no persistent HTML session file after scan" {
+    lmd_set_config email_format "html"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    # Text session always created; HTML rendered on-demand, not stored
+    [ -f "$LMD_INSTALL/sess/session.$scanid" ]
+    [ ! -f "$LMD_INSTALL/sess/session.${scanid}.html" ]
 }

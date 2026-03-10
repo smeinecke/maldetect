@@ -123,6 +123,16 @@ teardown() {
     [ -f "$TEST_SCAN_DIR/eicar2.com" ]
 }
 
+@test "restore with invalid scanid returns non-zero exit" {
+    run maldet -s "999999.99999"
+    assert_failure
+}
+
+@test "restore with nonexistent file returns non-zero exit" {
+    run maldet -s "/nonexistent/path/file.txt"
+    assert_failure
+}
+
 @test "clean file is not quarantined" {
     source /opt/tests/helpers/reset-lmd.sh
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"

@@ -117,11 +117,11 @@ LMD focuses on the malware classes that traditional AV products frequently miss:
 - Full file restoration (content, owner, permissions, mtime)
 
 **Alerting & Reporting**
-- Email alerts per scan or daily digest
-- Slack alerting via Bot API (files.getUploadURLExternal)
-- Telegram alerting via Bot API (sendDocument)
-- Discord alerting via webhook (multipart file upload)
-- Scan reports with per-file hit details
+- HTML + text email alerts with unified rfxn design (teal brand, card entries)
+- SMTP relay support (TLS/SSL) for environments without local MTA
+- Slack Block Kit, Telegram MarkdownV2, Discord embed per-entry alerts
+- Customizable alert templates via `alert/custom.d/` overrides
+- Scan reports with per-file hit details, color-coded hit types
 
 **Infrastructure**
 - Automatic ClamAV signature linking for dual-engine coverage
@@ -210,6 +210,11 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `email_panel_from` | From header for panel user alerts | `you@example.com` |
 | `email_panel_replyto` | Reply-To header for panel user alerts | `you@example.com` |
 | `email_panel_alert_subj` | Subject line for panel user alerts | `maldet alert from $(hostname)` |
+| `email_format` | Email format: `text`, `html`, or `both` | `html` |
+| `smtp_relay` | SMTP relay URL (e.g., `smtps://smtp.gmail.com:465`) | — |
+| `smtp_from` | Sender address for SMTP relay delivery | — |
+| `smtp_user` | SMTP authentication username | — |
+| `smtp_pass` | SMTP authentication password | — |
 | `slack_alert` | Enable Slack file upload alerts | `0` |
 | `slack_subj` | File name for Slack upload | `maldet alert from $(hostname)` |
 | `slack_token` | Slack Bot API token (scopes: `files:write`, `files:read`) | — |

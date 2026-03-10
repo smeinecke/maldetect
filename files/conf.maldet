@@ -50,6 +50,23 @@ email_panel_replyto="you@example.com"
 # The subject that will be used on alerts to control panel account contacts
 email_panel_alert_subj="maldet alert from $(hostname)"
 
+# The format for e-mail alerts. HTML emails include a professionally designed
+# template with color-coded threat types and scan summary.
+# [ text = plain text only, html = HTML with text fallback, both = multipart ]
+email_format="html"
+
+# SMTP relay for email delivery. When set, emails are sent via this relay
+# instead of the local MTA (mail/sendmail). Supports TLS/SSL.
+# Examples: smtps://smtp.gmail.com:465, smtp://relay.example.com:587
+smtp_relay=""
+
+# Sender address for SMTP relay delivery. Required when smtp_relay is set.
+smtp_from=""
+
+# SMTP authentication credentials. Required for authenticated relay delivery.
+smtp_user=""
+smtp_pass=""
+
 # Enable or disable slack alerts, this will upload the scan report as a file
 # into one or more slack channels
 # [0 = disabled, 1 = enabled]

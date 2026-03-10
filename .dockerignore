@@ -13,8 +13,5 @@ audit-output/
 # Benchmark/dev scripts
 bench-*.sh
 
-# Downloaded signatures (runtime data, not source)
-files/sigs/
-
 # Reference documentation (dev-only)
 reference/

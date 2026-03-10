@@ -127,6 +127,15 @@ Core function library.
 .I /usr/local/maldetect/internals/alert_lib.sh
 Shared alerting library (email, Slack, Telegram, Discord delivery).
 .TP
+.I /usr/local/maldetect/internals/lmd_alert.sh
+LMD-specific alert functions (data preparation, rendering pipeline).
+.TP
+.I /usr/local/maldetect/internals/alert/
+Alert template directory (HTML, text, and messaging templates).
+Custom overrides go in
+.I alert/custom.d/
+and are preserved across upgrades.
+.TP
 .I /usr/local/maldetect/internals/tlog_lib.sh
 Shared incremental log reading library.
 .TP
@@ -161,6 +170,11 @@ Key variables by category:
 .B Alerting:
 .BR email_alert ,
 .BR email_addr ,
+.BR email_format ,
+.BR smtp_relay ,
+.BR smtp_from ,
+.BR smtp_user ,
+.BR smtp_pass ,
 .BR slack_alert ,
 .BR slack_token ,
 .BR slack_channels ,
@@ -223,6 +237,27 @@ daily cron scans.
 This value is passed as the \fIDAYS\fR argument to
 .BR "maldet \-r" .
 Default: 1.
+.PP
+.B email_format
+sets the format for email alerts.
+Values: \fBtext\fR (plain text only), \fBhtml\fR (HTML with text fallback),
+\fBboth\fR (multipart alternative with both formats).
+Default: html.
+.PP
+.B smtp_relay
+sets an SMTP relay for email delivery instead of the local MTA.
+When set, emails are sent via this relay using curl.
+Examples: \fBsmtps://smtp.gmail.com:465\fR, \fBsmtp://relay.example.com:587\fR.
+Requires \fBsmtp_from\fR to be set.
+.PP
+.B smtp_from
+sets the sender address for SMTP relay delivery.
+Required when \fBsmtp_relay\fR is set.
+.PP
+.B smtp_user
+and
+.B smtp_pass
+set SMTP authentication credentials for relay delivery.
 .PP
 See
 .I conf.maldet

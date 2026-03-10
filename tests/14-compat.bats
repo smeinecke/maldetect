@@ -130,6 +130,13 @@ _source_compat() {
     [ "$scan_workers" = "3" ]
 }
 
+@test "scan_hex_workers overrides default scan_workers value" {
+    scan_workers="0"
+    scan_hex_workers=4
+    _source_compat
+    [ "$scan_workers" = "4" ]
+}
+
 @test "deprecated pubuser_minuid maps to scan_user_access_minuid" {
     unset scan_user_access_minuid
     pubuser_minuid=500

@@ -49,6 +49,14 @@ else
 	exit 1
 fi
 
+if [ -f "$lmd_alert_lib" ]; then
+	source "$lmd_alert_lib"
+else
+	header
+	echo "maldet($$): {glob} \$lmd_alert_lib not found, aborting." >&2
+	exit 1
+fi
+
 # shellcheck disable=SC1090,SC1091
 if [ -f "$elog_lib" ]; then
 	. "$elog_lib"
@@ -371,9 +379,9 @@ else
 					exit 1
 				fi
 				if [ -f "$sessdir/session.hits.$1" ]; then
-					restore_hitlist "$1"
+					restore_hitlist "$1" || exit 1
 				else
-					restore "$1"
+					restore "$1" || exit 1
 				fi
 			;;
 			-q|--quarantine)

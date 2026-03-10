@@ -169,6 +169,50 @@ _source_lmd_stack() {
     rm -f "$tmpfile"
 }
 
+# F-004: _safe_source_conf blocks dangerous environment variable overrides
+@test "_safe_source_conf rejects PATH override from remote config" {
+    local tmpfile
+    tmpfile=$(mktemp)
+    local orig_path="$PATH"
+    printf 'PATH=/attacker/bin\nemail_alert=1\n' > "$tmpfile"
+    _source_lmd_stack
+    _safe_source_conf "$tmpfile"
+    # PATH must NOT be overwritten
+    [ "$PATH" = "$orig_path" ]
+    # Normal variable must still work
+    [ "$email_alert" = "1" ]
+    rm -f "$tmpfile"
+}
+
+@test "_safe_source_conf rejects LD_PRELOAD override from remote config" {
+    local tmpfile
+    tmpfile=$(mktemp)
+    printf 'LD_PRELOAD=/evil.so\nscan_max_filesize=768k\n' > "$tmpfile"
+    _source_lmd_stack
+    _safe_source_conf "$tmpfile"
+    # LD_PRELOAD must NOT be set
+    [ -z "$LD_PRELOAD" ]
+    # Normal variable must still work
+    [ "$scan_max_filesize" = "768k" ]
+    rm -f "$tmpfile"
+}
+
+@test "_safe_source_conf rejects BASH_ENV and IFS overrides" {
+    local tmpfile
+    tmpfile=$(mktemp)
+    local orig_ifs="$IFS"
+    printf 'BASH_ENV=/evil.sh\nIFS=x\nemail_alert=1\n' > "$tmpfile"
+    _source_lmd_stack
+    _safe_source_conf "$tmpfile"
+    # BASH_ENV must NOT be set
+    [ -z "$BASH_ENV" ]
+    # IFS must NOT be changed
+    [ "$IFS" = "$orig_ifs" ]
+    # Normal variable must still work
+    [ "$email_alert" = "1" ]
+    rm -f "$tmpfile"
+}
+
 # F-033: restore path traversal validation
 @test "restore rejects path with .. traversal in .info" {
     lmd_set_config quarantine_hits 1

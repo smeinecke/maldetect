@@ -1,7 +1,20 @@
-v2.0.1 | Mar 09 2026:
+v2.0.1 | Mar 10 2026:
 
   -- New Features --
 
+[New] email alert system reimagined: HTML+text dual-format email alerts with
+      unified rfxn design language (teal brand bar, card-based threat entries,
+      color-coded hit types); new template engine using {{TOKEN}} placeholders
+      via alert_lib's _alert_tpl_render(); lmd_alert.sh dedicated alert library
+      with data preparation (_lmd_parse_hitlist, _lmd_set_global_vars,
+      _lmd_set_entry_vars, _lmd_compute_summary), rendering pipeline
+      (_lmd_render_text, _lmd_render_html), and messaging dispatch; scan,
+      panel, and digest alert types all support HTML+text; SMTP relay support
+      (smtp_relay, smtp_from, smtp_user, smtp_pass config vars); email_format
+      config var (text/html/both); per-entry formatted Slack Block Kit, Telegram
+      MarkdownV2, and Discord embed messaging templates replace trivial
+      one-liners; legacy .etpl sourced-as-shell templates removed; custom
+      template overrides via alert/custom.d/ preserved
 [New] native batch scan engine: 43x faster end-to-end (1,217s to 28s on
       ~10,000 files); batch grep -F Aho-Corasick hex matching with parallel
       workers replaces per-file Perl hexfifo.pl/hexstring.pl; Perl dependency
@@ -55,6 +68,13 @@ v2.0.1 | Mar 09 2026:
 
   -- Bug Fixes --
 
+[Fix] scan-time HTML email: move hits file into place before genalert renders
+      template; dirty scans were showing "No Threats Detected" clean-scan
+      celebration because _resolve_html_for_session() could not find the hits
+      file (mv happened after genalert, not before)
+[Fix] messaging dispatch: pass scan report as attachment to Slack file
+      upload and Telegram sendDocument; capture handler stderr for diagnostic
+      logging (API errors, curl failures now visible in event_log)
 [Fix] Slack alerting: migrate from deprecated files.upload API to
       files.getUploadURLExternal + files.completeUploadExternal; fix
       multi-channel support; check curl exit codes and API responses;
@@ -155,8 +175,82 @@ v2.0.1 | Mar 09 2026:
       install.sh exit code; checkout() FTP double domain suffix
 [Fix] CI: UAT job Docker build context set to project root with
       -f tests/Dockerfile; fixes COPY paths that require project root
+[Fix] alert rendering: hit type regex /^\{[A-Z]+\}/ fails to match {MD5}
+      signatures (digit not in [A-Z]); 84% of signatures produce empty
+      hit_type, blank badges, and missing by-type summary entries
+[Fix] alert rendering: empty quarpath produces consecutive tabs in manifest;
+      bash read IFS=$'\t' collapses them, shifting hit_type into quarpath
+      field; text reports show false quarantine paths for unquarantined hits
+[Fix] alert rendering: JSON injection in Slack/Discord messaging templates;
+      HIT_FILE and HIT_SIGNATURE exported as raw strings into JSON contexts;
+      filenames with quotes, backslashes, or newlines break JSON payloads;
+      add HIT_FILE_JSON/HIT_SIGNATURE_JSON escaped variants
+[Fix] alert rendering: empty SUMMARY_* tokens in single-hit messaging;
+      _lmd_compute_summary() skipped when total==1 but message templates
+      reference {{SUMMARY_*}} unconditionally; produces garbled summary line
+[Fix] restore() and restore_hitlist() return exit 0 on failure (invalid scan
+      ID or nonexistent file); automated recovery scripts checking $? see false
+      success; now returns exit 1 on all error paths
+[Fix] compat.conf scan_hex_workers mapping silently ignored: conf.maldet sets
+      scan_workers="0" as default, so the guard condition always fails; users
+      setting deprecated scan_hex_workers via -co see no effect; condition
+      changed to unconditionally map when scan_hex_workers is set
+[Fix] local var=$(mktemp) masks exit code in _yara_scan_rules() and
+      trim_log(); split into separate declaration and assignment per project
+      convention
+[Fix] email alert delivery fails with "No such file or directory" when
+      email_format is html/both but no HTML session file exists (pre-2.0.1
+      scan sessions); _resolve_html_for_session() renders HTML on demand
+      from preserved hits file; falls back to text only when hits file is
+      also missing; view_report() and genalert() share the same helper;
+      regression tests for on-demand rendering and text fallback
+[Fix] on-demand HTML rendering for older scan sessions produces empty scan
+      metadata fields (scan ID, dates, path, totals); _parse_session_metadata()
+      extracts metadata from the text session header before rendering
+[Fix] sigup() md5 verification uses bare relative filenames; if cwd shifts
+      before hash check, md5sum and awk read wrong files or fail; use absolute
+      $tmpwd/ paths for all four hash operations
+[Fix] _safe_source_conf() permits PATH, LD_PRELOAD, BASH_ENV, IFS and other
+      dangerous environment variable overrides from remote config; values pass
+      the metacharacter guard (no shell chars) but overwrite inherited env;
+      add variable name blocklist before printf -v assignment
+[Fix] clean() uses global $hitname instead of $file_signame parameter for
+      clean rule lookup; wrong clean rule selected when global is stale or
+      differs from the value passed as arg2; use $file_signame parameter
 
   -- Changes --
+
+[Change] HTML email rendered on-demand at send time from current templates;
+      persistent .html session files no longer stored; old scan reports
+      always use the latest email design; eliminates the empty-file-path
+      bug class (base64 < "") and simplifies session file management;
+      _resolve_html_for_session() renders to temp file for both clean and
+      dirty scans; gen_report() and genalert() digest no longer write .html
+[Change] clean scan emails show celebration block: green checkmark with
+      "No Threats Detected" and file count summary instead of empty stat
+      blocks and orphaned "Threat Details" heading; scan header template
+      refactored to use pre-rendered {{SCAN_RESULT_HTML}} token with
+      separate result-clean.tpl and result-dirty.tpl sub-templates;
+      {{THREAT_BADGE_HTML}} token replaces hardcoded threat badge (green
+      "All Clear" for clean, red count for dirty); _lmd_compute_summary()
+      handles empty manifests by setting SUMMARY_* tokens to zero
+[Change] HTML email templates: responsive fluid hybrid layout with Outlook
+      conditional tables (mso), progressive CSS media queries for mobile
+      (480px breakpoint), and text-size-adjust for iOS/Android; summary data
+      merged into header as colored stat blocks (threats/cleaned/quarantined)
+      with by-type breakdown; scan, panel, and digest headers redesigned;
+      HTML summary templates replaced (content now in header); render pipeline
+      computes summary before header for token availability
+[Change] HTML email templates widened from 600px to 700px for better
+      readability of long YARA signatures and file paths
+[Change] HTML entry card layout redesigned: signature name spans full width
+      with counter right-aligned, type badge moved to detail row below for
+      more efficient use of horizontal space
+[Change] HTML summary card reflowed from cramped 4-column to 2x2 stacked
+      pairs (hits/quarantined, cleaned/status) for clearer readability
+[Change] HTML template label columns standardized to consistent widths
+      (100px headers, 80px entry details) across scan, panel, and digest
+[Change] HTML meta bar date field uses word-break for long date strings
 
 [Change] Performance: eliminate ~500,000 fork/exec operations by replacing
       external command pipelines with Bash builtins and consolidating
@@ -183,6 +277,21 @@ v2.0.1 | Mar 09 2026:
 [Change] vendored libraries: batsman submodule updated to v1.2.0
 [Change] batch quarantine: extract dest paths once for bulk chmod/chown/touch;
       pre-load inode map into enriched manifest to eliminate per-file awk lookups
+[Change] _scan_progress(): emit plain newline-terminated output in non-TTY
+      contexts (cron, pipe, docker exec); ANSI escape sequences (\033[1G,
+      \033[K) now gated behind [ -t 1 ] TTY check
+[Change] alert rendering: merge _lmd_render_text and _lmd_render_html into
+      parameterized _lmd_render() helper; thin wrappers preserve API
+[Change] install.sh: show header and copyright before any operations; organize
+      output into labeled sections (backup, install, config import, signatures)
+      using pkg_lib section primitives; distinguish upgrade vs fresh install;
+      end with success summary matching BFD installer conventions
+[Change] alert entry rendering: replace per-entry bash loop (O(N) forks) with
+      single-pass awk _lmd_render_entries(); eliminates ~8 process forks per hit
+      for all render paths (text, html, slack, telegram, discord); type registry
+      moved into _lmd_parse_hitlist awk BEGIN block (6-field enriched manifest);
+      html/json escaping computed in awk; removes _lmd_set_entry_vars,
+      _lmd_hit_type_color, _lmd_hit_type_label (dead code after refactor)
 
 v1.6.6.1 | Feb 25 2025:
 [Fix] find_recentopts incorrectly escaping find options to the right of ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442

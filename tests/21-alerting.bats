@@ -208,6 +208,78 @@ run_maldet_with_mocks() {
     assert_success
 }
 
+@test "email report renders HTML on demand from hits file" {
+    # HTML is always rendered on-demand from current templates — no persistent storage
+    create_mock_sendmail
+    lmd_set_config email_format "html"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    # No persistent HTML after scan — only text + hits files
+    [ ! -f "$LMD_INSTALL/sess/session.${scanid}.html" ]
+    [ -f "$LMD_INSTALL/sess/session.hits.${scanid}" ]
+    # Email delivery should succeed — HTML rendered on demand
+    run_maldet_with_mocks -e "$scanid" "test@example.com"
+    assert_success
+    refute_output --partial "No such file or directory"
+    [ -f /tmp/mock-sendmail.body ]
+    # No cached HTML written back to session dir
+    [ ! -f "$LMD_INSTALL/sess/session.${scanid}.html" ]
+}
+
+@test "email report renders HTML for clean scan on demand" {
+    # Clean scans (0 hits) should render HTML celebration block, not downgrade
+    create_mock_sendmail
+    lmd_set_config email_format "html"
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    maldet -a "$TEST_SCAN_DIR"
+    local scanid
+    scanid=$(get_last_scanid)
+    run_maldet_with_mocks -e "$scanid" "test@example.com"
+    assert_success
+    refute_output --partial "No such file or directory"
+    [ -f /tmp/mock-sendmail.body ]
+}
+
+@test "email report falls back to text when session file missing" {
+    # Edge case: session file itself missing — must downgrade to text
+    create_mock_sendmail
+    lmd_set_config email_format "html"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    # Remove both session and hits files to simulate worst-case
+    rm -f "$LMD_INSTALL/sess/session.${scanid}"
+    rm -f "$LMD_INSTALL/sess/session.hits.${scanid}"
+    # Report for missing session should error, not crash
+    run_maldet_with_mocks -e "$scanid" "test@example.com"
+    refute_output --partial "No such file or directory"
+}
+
+@test "scan-time HTML email contains threat details not clean template" {
+    # F-001: verify the scan-time auto-email path renders hits (not clean celebration)
+    create_mock_sendmail
+    lmd_set_config email_alert 1
+    lmd_set_config email_addr "test@example.com"
+    lmd_set_config email_format "html"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run_maldet_with_mocks -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    [ -f /tmp/mock-sendmail.body ]
+    # HTML format uses base64 Content-Transfer-Encoding — decode for inspection
+    local decoded
+    decoded=$(sed '1,/^$/d' /tmp/mock-sendmail.body | base64 -d 2>/dev/null)
+    # Decoded HTML must contain the eicar signature name (dirty scan)
+    echo "$decoded" | grep -iq "eicar"
+    # Decoded HTML must contain the scanned file path
+    echo "$decoded" | grep -qF "$TEST_SCAN_DIR"
+    # Decoded HTML must NOT contain the clean-scan celebration text
+    run grep -q "No Threats Detected" <<< "$decoded"
+    assert_failure
+}
+
 @test "no email sent when email_alert=0" {
     create_mock_mail
     create_mock_sendmail
