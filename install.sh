@@ -81,21 +81,10 @@ _install_cron_service() {
 				chkconfig --level 2345 maldet on
 			fi
 		fi
-		# Migrate default_monitor_mode to MONITOR_MODE in sysconfig for systemd
+		# Read old default_monitor_mode for migration (applied after sysconfig install)
+		_old_dmm=""
 		if [ -n "${bkpath:-}" ] && [ -f "$bkpath/conf.maldet" ]; then
 			_old_dmm=$(grep '^default_monitor_mode=' "$bkpath/conf.maldet" 2>/dev/null | tail -1 | sed 's/^default_monitor_mode=//' | tr -d '"')
-			if [ -n "$_old_dmm" ] && [ "$_old_dmm" != "users" ]; then
-				for _scf in /etc/sysconfig/maldet /etc/default/maldet; do
-					if [ -f "$_scf" ]; then
-						if grep -q '^MONITOR_MODE=' "$_scf"; then
-							sed -i "s|^MONITOR_MODE=.*|MONITOR_MODE=\"$_old_dmm\"|" "$_scf"
-						else
-							echo "MONITOR_MODE=\"$_old_dmm\"" >> "$_scf"
-						fi
-					fi
-				done
-			fi
-			unset _old_dmm
 		fi
 		# Install sysconfig/default override file
 		if [ "$_PKG_OS_FAMILY" = "rhel" ]; then
@@ -116,15 +105,29 @@ _install_cron_service() {
 			fi
 		elif [ "$_PKG_OS_FAMILY" = "slackware" ]; then
 			if [ "$_init_system" != "systemd" ]; then
-				ln -sf /etc/init.d/maldet /etc/rc.d/rc3.d/S70maldet
-				ln -sf /etc/init.d/maldet /etc/rc.d/rc4.d/S70maldet
-				ln -sf /etc/init.d/maldet /etc/rc.d/rc5.d/S70maldet
+				# Slackware uses /etc/rc.d/rc.NAME; executable scripts are auto-started by rc.M
+				ln -sf /etc/init.d/maldet /etc/rc.d/rc.maldet
+				chmod +x /etc/rc.d/rc.maldet 2>/dev/null  # safe: symlink may point to newly installed init script
 			fi
 		else
 			if [ ! -f "/etc/sysconfig/maldet" ]; then
 				cp -f ./files/service/maldet.sysconfig /etc/sysconfig/maldet 2>/dev/null  # safe: dir may not exist
 			fi
 		fi
+		# Apply default_monitor_mode migration now that sysconfig file is guaranteed to exist
+		if [ -n "${_old_dmm:-}" ] && [ "$_old_dmm" != "users" ]; then
+			for _scf in /etc/sysconfig/maldet /etc/default/maldet; do
+				if [ -f "$_scf" ]; then
+					if grep -q '^MONITOR_MODE=' "$_scf"; then
+						sed -i "s|^MONITOR_MODE=.*|MONITOR_MODE=\"$_old_dmm\"|" "$_scf"
+					else
+						echo "MONITOR_MODE=\"$_old_dmm\"" >> "$_scf"
+					fi
+					break
+				fi
+			done
+		fi
+		unset _old_dmm
 		unset _init_system
 	fi
 

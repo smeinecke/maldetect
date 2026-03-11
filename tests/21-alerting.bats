@@ -291,6 +291,26 @@ run_maldet_with_mocks() {
     [ ! -f /tmp/mock-sendmail.log ]
 }
 
+@test "messaging fires when email_alert=0 (genalert file mode)" {
+    # Verify behavioral contract: _genalert_messaging is called unconditionally
+    # in _genalert_scan regardless of email_alert setting
+    create_mock_mail
+    create_mock_curl
+    lmd_set_config email_alert 0
+    lmd_set_config slack_alert 1
+    lmd_set_config slack_token "xoxb-test-token-123"
+    lmd_set_config slack_channels "C12345"
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    run_maldet_with_mocks -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    # Email must NOT have been sent
+    [ ! -f /tmp/mock-mail.log ]
+    # Slack messaging must still fire despite email_alert=0
+    [ -f /tmp/mock-curl.log ]
+    run grep "getUploadURLExternal" /tmp/mock-curl.log
+    assert_success
+}
+
 # ---------------------------------------------------------------------------
 # Slack alerts (via shared alert_lib _alert_slack_upload)
 # ---------------------------------------------------------------------------

@@ -243,6 +243,13 @@ _lmd_elk_post_hits() {
 	fi
 
 	local elk_url="${elk_host}:${elk_port}"
+	# Guard: prepend http:// if no scheme present — bare host:port URLs
+	# cause curl to silently fail (e.g., elk_host="192.168.1.1")
+	local _scheme_pat='^https?://'
+	if ! [[ "$elk_url" =~ $_scheme_pat ]]; then
+		eout "{elk} WARNING: elk_host missing URL scheme, prepending http://"
+		elk_url="http://${elk_url}"
+	fi
 	if [ -n "${elk_index:-}" ]; then
 		elk_url="${elk_url}/${elk_index}/message"
 	fi

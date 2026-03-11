@@ -256,6 +256,30 @@ _source_lmd_stack() {
     assert_failure
 }
 
+# S-002: F-007 combined scenario — -co override survives import_config_url re-source
+# Without the _lmd_cli_co_applied guard, import_conf re-sources base config
+# (internals.conf + conf.maldet), resetting ALL variables to defaults before
+# applying the remote config cache. This destroys any -co overrides for variables
+# NOT mentioned in the remote config. The guard skips base re-source when -co
+# was used, so -co values survive for variables the remote config does not set.
+@test "import_conf preserves -co override when import_config_url cache exists" {
+    _source_lmd_stack
+    local sessdir="$LMD_INSTALL/sess"
+    # Remote config cache sets email_alert=1 but does NOT mention scan_cpunice
+    echo 'email_alert=1' > "$sessdir/.import_conf.cache"
+    echo "999999999" > "$sessdir/.import_conf.utime"
+    # Set import_config_url so import_conf processes the cache
+    import_config_url="http://127.0.0.1/fake"
+    # Simulate -co override: user set scan_cpunice=10 via CLI
+    _lmd_cli_co_applied=1
+    scan_cpunice=10
+    # Call import_conf — with guard, base config is NOT re-sourced,
+    # so scan_cpunice stays 10. Without guard, base re-source would
+    # reset scan_cpunice to conf.maldet default (19).
+    import_conf
+    [ "$scan_cpunice" = "10" ]
+}
+
 @test "restore succeeds with valid .info path" {
     lmd_set_config quarantine_hits 1
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/test-restore-valid.txt"

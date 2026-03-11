@@ -418,8 +418,10 @@ import_conf() {
 			fi
 		fi
 		if [ -f "$sessdir/.import_conf.cache" ]; then
-			source "$intcnf"
-			source "$cnf"
+			if [ -z "$_lmd_cli_co_applied" ]; then
+				source "$intcnf"
+				source "$cnf"
+			fi
 			_safe_source_conf "$sessdir/.import_conf.cache"
 			if [ "$import_conf_cached" ]; then
 				eout "{importconf} imported configuration from $import_config_url (cached)"
@@ -914,7 +916,7 @@ _lmd_elog_init() {
 	# Audit trail — disabled for non-root users
 	if [ "$(id -u)" -eq 0 ]; then
 		ELOG_AUDIT_FILE="/var/log/maldet/audit.log"
-		[ -d "/var/log/maldet" ] || mkdir -p "/var/log/maldet" 2>/dev/null
+		[ -d "/var/log/maldet" ] || mkdir -m 750 "/var/log/maldet" 2>/dev/null  # safe: dir may exist from concurrent run
 	else
 		unset ELOG_AUDIT_FILE
 	fi
@@ -1016,13 +1018,14 @@ view_report() {
 		tmpf=$(mktemp "$tmpdir/.areps.XXXXXX")
 		for file in "$sessdir"/session.[0-9]*; do
 		[ -f "$file" ] || continue
-			SCANID=$(grep "SCAN ID" "$file" | sed 's/SCAN ID/SCANID/')
-			FILES=$(grep "TOTAL FILES" "$file" | sed 's/TOTAL //')
-			HITS=$(grep "TOTAL HITS" "$file" | sed 's/TOTAL //')
-			CLEAN=$(grep "TOTAL CLEANED" "$file" | sed 's/TOTAL //')
-			TIME=$(grep -E "^TIME|^STARTED" "$file" | sed -e 's/TIME: //' -e 's/STARTED: //' | awk '{print$1,$2,$3,$4}')
-			TIME_U=$(date -d "$TIME" "+%s" 2> /dev/null)
-			ETIME=$(grep "ELAPSED" "$file" | awk '{print$1,$2}' | sed 's/ELAPSED/RUNTIME/')
+			_meta=$(grep -E "^SCAN ID|^TOTAL FILES|^TOTAL HITS|^TOTAL CLEANED|^TIME:|^STARTED:|^ELAPSED" "$file")
+			SCANID=$(grep "SCAN ID" <<< "$_meta" | sed 's/SCAN ID/SCANID/')
+			FILES=$(grep "TOTAL FILES" <<< "$_meta" | sed 's/TOTAL //')
+			HITS=$(grep "TOTAL HITS" <<< "$_meta" | sed 's/TOTAL //')
+			CLEAN=$(grep "TOTAL CLEANED" <<< "$_meta" | sed 's/TOTAL //')
+			TIME=$(grep -E "^TIME|^STARTED" <<< "$_meta" | sed -e 's/TIME: //' -e 's/STARTED: //' | awk '{print$1,$2,$3,$4}')
+			TIME_U=$(date -d "$TIME" "+%s" 2>/dev/null)
+			ETIME=$(grep "ELAPSED" <<< "$_meta" | awk '{print$1,$2}' | sed 's/ELAPSED/RUNTIME/')
 			if [ -z "$ETIME" ]; then
 				ETIME="RUNTIME: unknown"
 			fi
@@ -1066,6 +1069,7 @@ view_report() {
 		_resolve_html_for_session "$sessdir/session.$rid"
 		# Downgrade format when HTML unavailable and cannot be rendered
 		if [ -z "$_html" ] && [ "$_fmt" != "text" ]; then
+			eout "{report} HTML rendering unavailable, sending text format report" 1
 			_fmt="text"
 		fi
 		if ! _alert_deliver_email "$2" "$email_subj" "$sessdir/session.$rid" "$_html" "$_fmt"; then
@@ -1298,19 +1302,17 @@ _batch_record_hits() {
 		return
 	fi
 
-	# Generate hits_history block and scan_session block in one awk pass
-	# Uses fd 3/4 redirects to split awk output into two files without a second pass
+	# Generate hits_history block and scan_session block in two portable awk passes
+	# Avoids /dev/fd which may not exist on FreeBSD
 	_hist_block=$(mktemp "$tmpdir/.batch_hist.XXXXXX")
 	_sess_block=$(mktemp "$tmpdir/.batch_sess.XXXXXX")
-	awk -F'\t' -v ut="$utime" -v hid="$hostid" '
-	{
+	awk -F'\t' -v ut="$utime" -v hid="$hostid" '{
 		# enriched: filepath signame hash owner group mode size times
 		fp=$1; sig=$2; hash=$3; own=$4; grp=$5; mode=$6; sz=$7; times=$8
 		printf "%s:%s:%s:%s:%s:%s.%s:%s:%s:%s\n", \
-			ut, hid, sig, hash, sz, own, grp, mode, times, fp > "/dev/fd/3"
-		printf "%s : %s\n", sig, fp > "/dev/fd/4"
-	}
-	' 3>"$_hist_block" 4>"$_sess_block" < "$_enriched"
+			ut, hid, sig, hash, sz, own, grp, mode, times, fp
+	}' "$_enriched" > "$_hist_block"
+	awk -F'\t' '{printf "%s : %s\n", $2, $1}' "$_enriched" > "$_sess_block"
 
 	# Append in bulk writes
 	cat "$_hist_block" >> "$hits_history"
@@ -1525,13 +1527,16 @@ quar_hitlist() {
 	if [ -f "$hitlist" ]; then
 		if [ "$quarantine_clean" == "1" ]; then
 			# Serial path: clean requires per-file restore+rescan
-			while IFS= read -r file; do
+			local _qh_line
+			while IFS= read -r _qh_line; do
+				[ -z "$_qh_line" ] && continue
+				file_hitname="${_qh_line%% : *}"
+				file="${_qh_line#* : }"
+				if [ -z "$file_hitname" ] || [ "$file_hitname" = "$_qh_line" ]; then
+					file_hitname="unknown"
+				fi
 				if [ -f "$file" ]; then
 					get_filestat "$file" 1
-					file_hitname=$(grep -F -m1 "$file" "$hitlist" | awk '{print$1}')
-					if [ -z "$file_hitname" ]; then
-						file_hitname="unknown"
-					fi
 					if [ "$quarantine_suspend_user" == "1" ]; then
 						quarantine_suspend_user "$file"
 					fi
@@ -1542,7 +1547,7 @@ quar_hitlist() {
 						clean "$_quar_dest" "$hitname" "$file_owner.$file_group" "$file_mode" "$file_size" "$md5_hash" "$file"
 					fi
 				fi
-			done < <(cut -d':' -f2- "$hitlist" | sed 's/.//')
+			done < "$hitlist"
 		else
 			# Batch path: bulk stat+quarantine via unified pipeline
 			local _qh_manifest
@@ -1746,7 +1751,7 @@ _scan_build_filelist() {
 		fi
 		if [ "$scan_find_timeout" -ge "60" ]; then
 			lmd_find_sleep=$(mktemp "$tmpdir/.lmd_find_sleep.XXXXXX")
-			echo -e "sleep $scan_find_timeout\ntouch $tmpdir/.find_killed.$scanid\npkill -f lmd_find" > "$lmd_find_sleep"
+			echo -e "sleep $scan_find_timeout\ntouch $tmpdir/.find_killed.$scanid\npkill -f lmd_find_$scanid" > "$lmd_find_sleep"
 			sh -c "sh $lmd_find_sleep >> /dev/null 2>&1 &" >> /dev/null 2>&1 &
 			rm -f "$lmd_find_sleep" 2> /dev/null
 			eout "{scan} setting maximum execution time for 'find' file list: ${scan_find_timeout}sec" 1
@@ -1767,10 +1772,10 @@ _scan_build_filelist() {
 		fi
 		if [ "$days" == "all" ]; then
 			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs ${find_prune_args[*]} -maxdepth $scan_max_depth $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize ${include_regex_args[*]} -not -perm 000 ${exclude_regex_args[*]} ${ignore_fext_args[*]} $ignore_root $ignore_user $ignore_group"
-			$nice_command $find /lmd_find/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
+			$nice_command $find /lmd_find_$scanid/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
 		else
 			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs ${find_prune_args[*]} -maxdepth $scan_max_depth $find_opts \( -mtime -${days} -o -ctime -${days} \) -type f -size +${scan_min_filesize}c -size -$scan_max_filesize ${include_regex_args[*]} -not -perm 000 ${exclude_regex_args[*]} ${ignore_fext_args[*]} $ignore_root $ignore_user $ignore_group"
-			$nice_command $find /lmd_find/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts  \( -mtime -${days} -o -ctime -${days} \) -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
+			$nice_command $find /lmd_find_$scanid/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts  \( -mtime -${days} -o -ctime -${days} \) -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
 		fi
 
 		cd $tmpdir
@@ -1806,12 +1811,12 @@ _run_yara_scan() {
 }
 
 _clamd_retry_scan() {
-	local _filelist="$1" _cleanup="$2"
+	local _filelist="$1" _cleanup="$2" _results="${3:-$clamscan_results}"
 	if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
 		local try=0
 		while [ $try -le $remote_clamd_max_retry ]; do
 			[ "$_cleanup" == "1" ] && cleanup_scanlist "$_filelist"
-			$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$clamscan_results" 2>> "$clamscan_log"
+			$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$_results" 2>> "$clamscan_log"
 			clamscan_return=$?
 			if [ "$clamscan_return" == "2" ]; then
 				((try++))
@@ -1822,7 +1827,7 @@ _clamd_retry_scan() {
 			fi
 		done
 	else
-		$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$clamscan_results" 2>> "$clamscan_log"
+		$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$_results" 2>> "$clamscan_log"
 		clamscan_return=$?
 	fi
 }
@@ -1843,7 +1848,7 @@ _process_clamav_hits() {
 		[ -f "$_file" ] && printf '%s\t%s\n' "$_file" "$_signame"
 	done < <(grep -E -v 'ERROR$|lstat\(\)|no reply from clamd' "$_results" \
 		| sed -e 's/.UNOFFICIAL//' -e 's/ FOUND$//' \
-		| awk -F':' '{print$2":"$1}' | sed 's/.//') > "$_clam_manifest"
+		| sed -n 's/^\(.*\): \(.*\)$/\2:\1/p') > "$_clam_manifest"
 
 	# Bulk ignore_sigs filter
 	_batch_filter_ignore_sigs "$_clam_manifest"
@@ -2358,7 +2363,6 @@ scan() {
 		spath="\"$file_list\""
 	elif [ ! -f "$find" ]; then
 		eout "{scan} could not locate find command" 1
-		clean_exit
 		exit 1
 	fi
 	if [ -f "$spath" ] && [ -z "$file_list" ]; then
@@ -2367,12 +2371,10 @@ scan() {
 	
 	if [ ! -f "$sig_md5_file" ]; then
 		eout "{scan} required signature file not found ($sig_md5_file), try running -u|--update, aborting!" 1
-		clean_exit
 		exit 1
 	fi
 	if [ ! -f "$sig_hex_file" ]; then
 		eout "{scan} required signature file not found ($sig_hex_file), try running -u|--update, aborting!" 1
-		clean_exit
 		exit 1
 	fi
 	if [ ! -f "$ignore_paths" ]; then
@@ -2706,13 +2708,22 @@ _yara_init_cache() {
 
 _yara_scan_rules() {
 	# Scan files with YARA using given rules argument and log label.
-	# Uses dynamic scoping to access parent locals from scan_stage_yara():
-	#   yara_bin, yara_type, has_scan_list, file_list,
-	#   yara_timeout_opts, yara_warn_opts, yara_results, yara_stderr,
-	#   yara_rc_file, nice_command, clean_check, clean_state,
-	#   scan_session, ignore_sigs
+	# Explicit parameters from scan_stage_yara(); globals used directly:
+	#   nice_command (process priority), clean_state (scan config),
+	#   scan_session (session path), ignore_sigs (sig filter),
+	#   clean_failed (output flag), tmpdir (temp directory)
 	local rules_arg="$1"
 	local log_label="$2"
+	local yara_bin="$3"
+	local yara_type="$4"
+	local has_scan_list="$5"
+	local file_list="$6"
+	local yara_timeout_opts="$7"
+	local yara_warn_opts="$8"
+	local yara_results="$9"
+	local yara_stderr="${10}"
+	local yara_rc_file="${11}"
+	local clean_check="${12}"
 
 	> "$yara_results"
 	> "$yara_stderr"
@@ -2895,12 +2906,18 @@ scan_stage_yara() {
 
 	# Scan with text rules
 	while IFS= read -r rules_file; do
-		_yara_scan_rules "$rules_file" "$rules_file"
+		_yara_scan_rules "$rules_file" "$rules_file" \
+			"$yara_bin" "$yara_type" "$has_scan_list" "$file_list" \
+			"$yara_timeout_opts" "$yara_warn_opts" "$yara_results" \
+			"$yara_stderr" "$yara_rc_file" "$clean_check"
 	done < "$yara_rules_list"
 
 	# Scan with compiled rules if available
 	if [ "$has_compiled" == "1" ]; then
-		_yara_scan_rules "-C $compiled_rules" "compiled rules"
+		_yara_scan_rules "-C $compiled_rules" "compiled rules" \
+			"$yara_bin" "$yara_type" "$has_scan_list" "$file_list" \
+			"$yara_timeout_opts" "$yara_warn_opts" "$yara_results" \
+			"$yara_stderr" "$yara_rc_file" "$clean_check"
 	fi
 
 	rm -f "$yara_rules_list" "$yara_results" "$yara_stderr" "$yara_rc_file"
@@ -2949,233 +2966,281 @@ trim_log() {
 	fi
 }
 
-genalert() {
-	local hit_pat_quar='^(.*)[[:space:]]:[[:space:]](.*)[[:space:]]=>[[:space:]](.*)$'
-	local hit_pat_plain='^(.*)[[:space:]]:[[:space:]](.*)$'
-	type="$1"
-	file="$2"
-	local _tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
-	local _fmt="${email_format:-html}"
-	local _html=""
-	local digest_tmpf=""
+# _genalert_messaging file tpl_dir — dispatch to Slack/Telegram/Discord channels
+# Shared by _genalert_scan and _genalert_digest; not used by _genalert_panel.
+_genalert_messaging() {
+	local _file="$1" _tpl_dir="$2"
+	[ -f "${_file:-}" ] || return 0
+	# Determine source for hit list parsing
+	local _msg_src=""
+	if [ -f "${scan_session:-}" ]; then
+		_msg_src="$scan_session"
+	elif [ -f "$sessdir/session.hits.${scanid:-}" ]; then
+		_msg_src="$sessdir/session.hits.$scanid"
+	fi
+	if [ -n "$_msg_src" ] && [ -f "$_msg_src" ] && [ -s "$_msg_src" ]; then
+		local _msg_manifest
+		_msg_manifest=$(mktemp "$tmpdir/.msg_manifest.XXXXXX")
+		_lmd_parse_hitlist "$_msg_src" > "$_msg_manifest"
+		if [ -s "$_msg_manifest" ]; then
+			_lmd_render_messaging "$_msg_manifest" "${slack_subj:-$email_subj}" "$_tpl_dir" "$_file"
+		fi
+		rm -f "$_msg_manifest"
+	fi
+}
 
-	if [ "$email_alert" == "1" ] || [ "$type" == "digest" ] || [ "$type" == "daily" ]; then
-		if [ "$type" == "file" ] && [ -f "$file" ]; then
+# _genalert_scan file fmt tpl_dir — scan report email + messaging dispatch
+_genalert_scan() {
+	local _file="$1" _fmt="$2" _tpl_dir="$3"
+	local _html=""
+	if [ ! -f "$_file" ]; then
+		[ "$email_alert" == "1" ] && eout "{alert} file input error, alert discarded."
+		return 0
+	fi
+	if [ "$email_alert" == "1" ]; then
+		if [ "$_fmt" != "text" ]; then
 			# Resolve or render HTML companion for scan session file
-			_resolve_html_for_session "$file"
+			_resolve_html_for_session "$_file"
 			# Downgrade format when HTML unavailable and cannot be rendered
-			if [ -z "$_html" ] && [ "$_fmt" != "text" ]; then
+			if [ -z "$_html" ]; then
+				eout "{alert} HTML rendering unavailable, sending text format report" 1
 				_fmt="text"
 			fi
-			if ! _alert_deliver_email "$email_addr" "$email_subj" "$file" "$_html" "$_fmt"; then
-				eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
+		fi
+		if ! _alert_deliver_email "$email_addr" "$email_subj" "$_file" "$_html" "$_fmt"; then
+			eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
+		else
+			_lmd_elog_event "$ELOG_EVT_ALERT_SENT" "info" "scan report emailed" "recipients=$email_addr"
+		fi
+		if [ "$(whoami)" != "root" ] && [[ "$_file" != *@* ]]; then
+			if [ -z "$hscan" ]; then
+				eout "{alert} sent scan report to config default $email_addr" 1
+				eout "{alert} send scan report to an alternate address with: maldet --report $datestamp.$$ you@domain.com" 1
 			else
-				_lmd_elog_event "$ELOG_EVT_ALERT_SENT" "info" "scan report emailed" "recipients=$email_addr"
-			fi
-			if [ "$(whoami)" != "root" ] && [[ "$2" != *@* ]]; then
-				if [ -z "$hscan" ]; then
-					eout "{alert} sent scan report to config default $email_addr" 1
-					eout "{alert} send scan report to an alternate address with: maldet --report $datestamp.$$ you@domain.com" 1
-				else
-					eout "{alert} sent scan report to config default $email_addr"
-				fi
-			else
-				if [ -z "$hscan" ]; then
-					eout "{alert} sent scan report to $email_addr" 1
-				fi
-			fi
-		elif [ "$type" == "panel" ] && [ -f "$file" ]; then
-			eout "{panel} Detecting control panel and sending alerts..." 1
-			control_panel=""
-			detect_control_panel
-			if [ "$control_panel" == "error" ] || [ "$control_panel" == "unknown" ]; then
-				eout "{panel} Failed to set control panel. Will not send alerts to control panel account contacts." 1
-			else
-				# Parse raw hits from scan_session (not rendered report)
-				local _panel_src="$scan_session"
-				if [ ! -f "$_panel_src" ]; then
-					# Fallback: parse FILE HIT LIST from rendered session file
-					_panel_src=$(mktemp "$tmpdir/.panel_src.XXXXXX")
-					awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag' "$file" > "$_panel_src"
-				fi
-				# Sort malware hits and map to system user owner
-				while IFS= read -r hit_line; do
-					[ -z "$hit_line" ] && continue
-					if [[ "$hit_line" =~ $hit_pat_quar ]]; then
-						hit_sig="${BASH_REMATCH[1]}"
-						hit_file="${BASH_REMATCH[2]}"
-						quarantined_file="${BASH_REMATCH[3]}"
-					elif [[ "$hit_line" =~ $hit_pat_plain ]]; then
-						hit_sig="${BASH_REMATCH[1]}"
-						hit_file="${BASH_REMATCH[2]}"
-						quarantined_file=""
-					else
-						continue
-					fi
-					if [ -f "$hit_file" ]; then
-						file_owner=$(stat -c "%U" "$hit_file")
-					elif [ -n "$quarantined_file" ] && [ -f "${quarantined_file}.info" ]; then
-						file_owner=$(awk -F':' '/^[^#]/{print $1}' "${quarantined_file}.info")
-					else
-						continue
-					fi
-					echo "$file_owner : $hit_sig : $hit_file" >> "$tmpdir/.panel_alert.hits"
-				done < "$_panel_src"
-				# Clean up fallback temp if used
-				if [ "$_panel_src" != "$scan_session" ]; then
-					rm -f "$_panel_src"
-				fi
-				# Sort cleaned files too
-				if [ "$quarantine_clean" == "1" ] && [ -f "$sessdir/clean.$$" ]; then
-					while IFS= read -r clean_file; do
-						if [ -f "$clean_file" ]; then
-							clean_owner=$(stat -c "%U" "$clean_file")
-						fi
-						echo "$clean_owner : $clean_file" >> "$tmpdir/.panel_alert.clean"
-					done < "$sessdir/clean.$$"
-				fi
-				eout "{panel} Detected control panel $control_panel. Will send alerts to control panel account contacts." 1
-				user_list=$(awk '{print $1}' "$tmpdir/.panel_alert.hits" | sort | uniq)
-				if [ -n "$user_list" ]; then
-					for sys_user in $user_list; do
-						contact_emails=""
-						get_panel_contacts "$control_panel" "$sys_user"
-
-						grep "^$sys_user " "$tmpdir/.panel_alert.hits" | awk -F' : ' '{print $2" : "$3}' > "$tmpdir/.${sys_user}.hits"
-						user_tot_hits=$($wc -l < "$tmpdir/.${sys_user}.hits")
-						user_tot_cl=0
-						if [ -f "$tmpdir/.panel_alert.clean" ]; then
-							grep "^$sys_user " "$tmpdir/.panel_alert.clean" | awk '{print $3}' > "$tmpdir/.${sys_user}.clean"
-							user_tot_cl=$($wc -l < "$tmpdir/.${sys_user}.clean")
-						fi
-
-						# Render per-user panel alert via template engine
-						local _user_manifest _user_text _user_html=""
-						_user_manifest=$(mktemp "$tmpdir/.panel_manifest.XXXXXX")
-						_lmd_parse_hitlist "$tmpdir/.${sys_user}.hits" > "$_user_manifest"
-						_user_text=$(mktemp "$tmpdir/.panel_text.XXXXXX")
-						_lmd_render_text "$_user_manifest" "panel" "$_tpl_dir" > "$_user_text"
-						if [ "$_fmt" = "html" ] || [ "$_fmt" = "both" ]; then
-							_user_html=$(mktemp "$tmpdir/.panel_html.XXXXXX")
-							_lmd_render_html "$_user_manifest" "panel" "$_tpl_dir" > "$_user_html"
-						fi
-						# Deliver with custom From/Reply-To
-						ALERT_SMTP_FROM="$email_panel_from" \
-						ALERT_EMAIL_REPLY_TO="$email_panel_replyto" \
-						_alert_deliver_email "$contact_emails" "$email_panel_alert_subj" "$_user_text" "$_user_html" "$_fmt"
-						rm -f "$_user_manifest" "$_user_text" "$_user_html"
-					done
-				fi
-				rm -f "$tmpdir/.panel_alert.hits" "$tmpdir/.panel_alert.clean"
-				for sys_user in $user_list; do
-					rm -f "$tmpdir/.${sys_user}.hits" "$tmpdir/.${sys_user}.clean"
-				done
-			fi
-		elif [ "$type" == "daily" ] || [ "$type" == "digest" ]; then
-			if [ ! -f "$sessdir/session.monitor.current" ]; then
-				eout "{alert} no active monitor session found, digest alert skipped"
-				return
-			fi
-			inotify_start_time=$(ps -p "$(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1)" -o lstart= 2> /dev/null)
-			scan_start_hr=$(date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z")
-			scan_start_elapsed=$(($(date +'%s')-$(date -d "$scan_start_hr" +'%s')))
-			inotify_run_time="$(($scan_start_elapsed/86400))d:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))/3600))h:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%3600/60))m:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%60))s"
-
-			rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
-
-			scanid="$datestamp.$$"
-			scan_session=$(cat "$sessdir/session.monitor.current")
-
-			tlog_read "$scan_session" "digest.alert" "$tmpdir" "lines" > "$tmpdir/.digest.alert.hits"
-			tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" > "$tmpdir/.digest.clean.hits"
-			tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" > "$tmpdir/.digest.monitor.alert"
-			tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" > "$tmpdir/.digest.susp.hits"
-
-			tot_hits=$($wc -l < "$tmpdir/.digest.alert.hits")
-			tot_cl=$($wc -l < "$tmpdir/.digest.clean.hits")
-			tot_files=$($wc -l < "$tmpdir/.digest.monitor.alert")
-			tot_susp=$($wc -l < "$tmpdir/.digest.susp.hits")
-
-			trim_log "$monitor_scanned_history" 50000
-			trim_log "$clean_history" 50000
-			trim_log "$suspend_history" 50000
-
-			tlog_read "$sessdir/session.hits.$datestamp.$$" "digest.alert" "$tmpdir" "lines" >> /dev/null 2>&1
-			tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" >> /dev/null 2>&1
-			tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" >> /dev/null 2>&1
-			tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" >> /dev/null 2>&1
-
-			if [ -s "$tmpdir/.digest.alert.hits" ]; then
-				if [ "$tot_hits" -gt "$tot_files" ]; then
-					tot_files="$tot_hits"
-				fi
-
-				# Render digest via template engine
-				local _digest_manifest
-				_digest_manifest=$(mktemp "$tmpdir/.digest_manifest.XXXXXX")
-				_lmd_parse_hitlist "$tmpdir/.digest.alert.hits" > "$_digest_manifest"
-
-				local _digest_text _digest_html=""
-				_digest_text=$(mktemp "$tmpdir/.digest_text.XXXXXX")
-				_lmd_render_text "$_digest_manifest" "digest" "$_tpl_dir" > "$_digest_text"
-				if [ "$_fmt" = "html" ] || [ "$_fmt" = "both" ]; then
-					_digest_html=$(mktemp "$tmpdir/.digest_html.XXXXXX")
-					_lmd_render_html "$_digest_manifest" "digest" "$_tpl_dir" > "$_digest_html"
-				fi
-
-				# ELK posting
-				_lmd_elk_post_hits "$_digest_manifest"
-
-				# Save session files
-				cp "$_digest_text" "$sessdir/session.$scanid"
-				grep -E '^\{.*\}' "$sessdir/session.$scanid" > "$sessdir/session.hits.$scanid"
-				echo "$scanid" > "$sessdir/session.last"
-				# HTML rendered on-demand — no persistent .html stored
-
-				local digest_subj="${email_subj}: monitor summary"
-				if _alert_deliver_email "$email_addr" "$digest_subj" "$_digest_text" "$_digest_html" "$_fmt"; then
-					eout "{alert} sent $type alert to $email_addr"
-				else
-					eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
-				fi
-				# Set file for messaging alerts below
-				file="$_digest_text"
-				digest_tmpf="$_digest_text"
-
-				rm -f "$_digest_manifest" "$_digest_html"
-				rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
+				eout "{alert} sent scan report to config default $email_addr"
 			fi
 		else
-			eout "{alert} file input error, alert discarded."
-		fi
-
-	fi
-
-	# Dispatch to messaging channels (Slack, Telegram, Discord) via lmd_alert.sh
-	# Only for file and digest types — panel alerts are per-user email only
-	if [ "$type" != "panel" ] && [ -f "${file:-}" ]; then
-		# Determine source for hit list parsing
-		local _msg_src=""
-		if [ -f "${scan_session:-}" ]; then
-			_msg_src="$scan_session"
-		elif [ -f "$sessdir/session.hits.${scanid:-}" ]; then
-			_msg_src="$sessdir/session.hits.$scanid"
-		fi
-		if [ -n "$_msg_src" ] && [ -f "$_msg_src" ] && [ -s "$_msg_src" ]; then
-			local _msg_manifest
-			_msg_manifest=$(mktemp "$tmpdir/.msg_manifest.XXXXXX")
-			_lmd_parse_hitlist "$_msg_src" > "$_msg_manifest"
-			if [ -s "$_msg_manifest" ]; then
-				_lmd_render_messaging "$_msg_manifest" "${slack_subj:-$email_subj}" "$_tpl_dir" "$file"
+			if [ -z "$hscan" ]; then
+				eout "{alert} sent scan report to $email_addr" 1
 			fi
-			rm -f "$_msg_manifest"
 		fi
+	fi
+	# Messaging dispatch runs regardless of email_alert setting
+	_genalert_messaging "$_file" "$_tpl_dir"
+}
+
+# _genalert_panel file fmt tpl_dir — per-user control panel email alerts
+# No messaging channel dispatch — panel alerts are email-only.
+_genalert_panel() {
+	local _file="$1" _fmt="$2" _tpl_dir="$3"
+	local hit_pat_quar='^(.*)[[:space:]]:[[:space:]](.*)[[:space:]]=>[[:space:]](.*)$'
+	local hit_pat_plain='^(.*)[[:space:]]:[[:space:]](.*)$'
+	if [ "$email_alert" != "1" ]; then
+		return 0
+	fi
+	if [ ! -f "$_file" ]; then
+		eout "{alert} file input error, alert discarded."
+		return 0
+	fi
+	eout "{panel} Detecting control panel and sending alerts..." 1
+	control_panel=""
+	detect_control_panel
+	if [ "$control_panel" == "error" ] || [ "$control_panel" == "unknown" ]; then
+		eout "{panel} Failed to set control panel. Will not send alerts to control panel account contacts." 1
+	else
+		# Parse raw hits from scan_session (not rendered report)
+		local _panel_src="$scan_session"
+		if [ ! -f "$_panel_src" ]; then
+			# Fallback: parse FILE HIT LIST from rendered session file
+			_panel_src=$(mktemp "$tmpdir/.panel_src.XXXXXX")
+			awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag' "$_file" > "$_panel_src"
+		fi
+		# Sort malware hits and map to system user owner
+		# Loop vars intentionally non-local: behavioral parity with original genalert() — scoping cleanup deferred
+		while IFS= read -r hit_line; do
+			[ -z "$hit_line" ] && continue
+			if [[ "$hit_line" =~ $hit_pat_quar ]]; then
+				hit_sig="${BASH_REMATCH[1]}"
+				hit_file="${BASH_REMATCH[2]}"
+				quarantined_file="${BASH_REMATCH[3]}"
+			elif [[ "$hit_line" =~ $hit_pat_plain ]]; then
+				hit_sig="${BASH_REMATCH[1]}"
+				hit_file="${BASH_REMATCH[2]}"
+				quarantined_file=""
+			else
+				continue
+			fi
+			if [ -f "$hit_file" ]; then
+				file_owner=$(stat -c "%U" "$hit_file")
+			elif [ -n "$quarantined_file" ] && [ -f "${quarantined_file}.info" ]; then
+				file_owner=$(awk -F':' '/^[^#]/{print $1}' "${quarantined_file}.info")
+			else
+				continue
+			fi
+			echo "$file_owner : $hit_sig : $hit_file" >> "$tmpdir/.panel_alert.hits"
+		done < "$_panel_src"
+		# Clean up fallback temp if used
+		if [ "$_panel_src" != "$scan_session" ]; then
+			rm -f "$_panel_src"
+		fi
+		# Sort cleaned files too
+		if [ "$quarantine_clean" == "1" ] && [ -f "$sessdir/clean.$$" ]; then
+			while IFS= read -r clean_file; do
+				if [ -f "$clean_file" ]; then
+					clean_owner=$(stat -c "%U" "$clean_file")
+				fi
+				echo "$clean_owner : $clean_file" >> "$tmpdir/.panel_alert.clean"
+			done < "$sessdir/clean.$$"
+		fi
+		eout "{panel} Detected control panel $control_panel. Will send alerts to control panel account contacts." 1
+		user_list=$(awk '{print $1}' "$tmpdir/.panel_alert.hits" | sort | uniq)
+		if [ -n "$user_list" ]; then
+			for sys_user in $user_list; do
+				contact_emails=""
+				get_panel_contacts "$control_panel" "$sys_user"
+
+				grep "^$sys_user " "$tmpdir/.panel_alert.hits" | awk -F' : ' '{print $2" : "$3}' > "$tmpdir/.${sys_user}.hits"
+				user_tot_hits=$($wc -l < "$tmpdir/.${sys_user}.hits")
+				user_tot_cl=0
+				if [ -f "$tmpdir/.panel_alert.clean" ]; then
+					grep "^$sys_user " "$tmpdir/.panel_alert.clean" | awk '{print $3}' > "$tmpdir/.${sys_user}.clean"
+					user_tot_cl=$($wc -l < "$tmpdir/.${sys_user}.clean")
+				fi
+
+				# Render per-user panel alert via template engine
+				local _user_manifest _user_text _user_html=""
+				_user_manifest=$(mktemp "$tmpdir/.panel_manifest.XXXXXX")
+				_lmd_parse_hitlist "$tmpdir/.${sys_user}.hits" > "$_user_manifest"
+				_user_text=$(mktemp "$tmpdir/.panel_text.XXXXXX")
+				_lmd_render_text "$_user_manifest" "panel" "$_tpl_dir" > "$_user_text"
+				if [ "$_fmt" = "html" ] || [ "$_fmt" = "both" ]; then
+					_user_html=$(mktemp "$tmpdir/.panel_html.XXXXXX")
+					_lmd_render_html "$_user_manifest" "panel" "$_tpl_dir" > "$_user_html"
+				fi
+				# Deliver with custom From/Reply-To
+				ALERT_SMTP_FROM="$email_panel_from" \
+				ALERT_EMAIL_REPLY_TO="$email_panel_replyto" \
+				_alert_deliver_email "$contact_emails" "$email_panel_alert_subj" "$_user_text" "$_user_html" "$_fmt"
+				rm -f "$_user_manifest" "$_user_text" "$_user_html"
+			done
+		fi
+		rm -f "$tmpdir/.panel_alert.hits" "$tmpdir/.panel_alert.clean"
+		for sys_user in $user_list; do
+			rm -f "$tmpdir/.${sys_user}.hits" "$tmpdir/.${sys_user}.clean"
+		done
+	fi
+}
+
+# _genalert_digest fmt tpl_dir type — monitor digest email + messaging dispatch
+# Type parameter preserves "daily" vs "digest" distinction for log messages.
+_genalert_digest() {
+	local _fmt="$1" _tpl_dir="$2" _type="$3"
+	local digest_tmpf=""
+	if [ ! -f "$sessdir/session.monitor.current" ]; then
+		eout "{alert} no active monitor session found, digest alert skipped"
+		return
+	fi
+	inotify_start_time=$(ps -p "$(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1)" -o lstart= 2> /dev/null)
+	scan_start_hr=$(date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z")
+	scan_start_elapsed=$(($(date +'%s')-$(date -d "$scan_start_hr" +'%s')))
+	inotify_run_time="$(($scan_start_elapsed/86400))d:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))/3600))h:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%3600/60))m:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%60))s"
+
+	rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
+
+	scanid="$datestamp.$$"
+	scan_session=$(cat "$sessdir/session.monitor.current")
+
+	tlog_read "$scan_session" "digest.alert" "$tmpdir" "lines" > "$tmpdir/.digest.alert.hits"
+	tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" > "$tmpdir/.digest.clean.hits"
+	tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" > "$tmpdir/.digest.monitor.alert"
+	tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" > "$tmpdir/.digest.susp.hits"
+
+	tot_hits=$($wc -l < "$tmpdir/.digest.alert.hits")
+	tot_cl=$($wc -l < "$tmpdir/.digest.clean.hits")
+	tot_files=$($wc -l < "$tmpdir/.digest.monitor.alert")
+	tot_susp=$($wc -l < "$tmpdir/.digest.susp.hits")
+
+	trim_log "$monitor_scanned_history" 50000
+	trim_log "$clean_history" 50000
+	trim_log "$suspend_history" 50000
+
+	tlog_read "$sessdir/session.hits.$datestamp.$$" "digest.alert" "$tmpdir" "lines" >> /dev/null 2>&1
+	tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" >> /dev/null 2>&1
+	tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" >> /dev/null 2>&1
+	tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" >> /dev/null 2>&1
+
+	if [ -s "$tmpdir/.digest.alert.hits" ]; then
+		if [ "$tot_hits" -gt "$tot_files" ]; then
+			tot_files="$tot_hits"
+		fi
+
+		# Render digest via template engine
+		local _digest_manifest
+		_digest_manifest=$(mktemp "$tmpdir/.digest_manifest.XXXXXX")
+		_lmd_parse_hitlist "$tmpdir/.digest.alert.hits" > "$_digest_manifest"
+
+		local _digest_text _digest_html=""
+		_digest_text=$(mktemp "$tmpdir/.digest_text.XXXXXX")
+		_lmd_render_text "$_digest_manifest" "digest" "$_tpl_dir" > "$_digest_text"
+		if [ "$_fmt" = "html" ] || [ "$_fmt" = "both" ]; then
+			_digest_html=$(mktemp "$tmpdir/.digest_html.XXXXXX")
+			_lmd_render_html "$_digest_manifest" "digest" "$_tpl_dir" > "$_digest_html"
+		fi
+
+		# ELK posting
+		_lmd_elk_post_hits "$_digest_manifest"
+
+		# Save session files
+		cp "$_digest_text" "$sessdir/session.$scanid"
+		grep -E '^\{.*\}' "$sessdir/session.$scanid" > "$sessdir/session.hits.$scanid"
+		echo "$scanid" > "$sessdir/session.last"
+		# HTML rendered on-demand — no persistent .html stored
+
+		local digest_subj
+		digest_subj="${email_subj}: monitor summary"
+		if _alert_deliver_email "$email_addr" "$digest_subj" "$_digest_text" "$_digest_html" "$_fmt"; then
+			eout "{alert} sent $_type alert to $email_addr"
+		else
+			eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
+		fi
+		# Alias for outer cleanup guard: _digest_text is scoped inside the if-block
+		digest_tmpf="$_digest_text"
+
+		rm -f "$_digest_manifest" "$_digest_html"
+		rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
+
+		# Messaging dispatch must run before digest temp file cleanup
+		_genalert_messaging "$_digest_text" "$_tpl_dir"
 	fi
 
 	# Clean up digest report temp file if generated
 	if [ -n "$digest_tmpf" ] && [ -f "$digest_tmpf" ]; then
 		rm -f "$digest_tmpf"
 	fi
+}
+
+genalert() {
+	local type="$1"
+	local file="$2"
+	local _tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
+	local _fmt="${email_format:-html}"
+
+	case "$type" in
+		file)
+			_genalert_scan "$file" "$_fmt" "$_tpl_dir"
+			;;
+		panel)
+			_genalert_panel "$file" "$_fmt" "$_tpl_dir"
+			;;
+		daily|digest)
+			_genalert_digest "$_fmt" "$_tpl_dir" "$type"
+			;;
+		*)
+			if [ "$email_alert" == "1" ]; then
+				eout "{alert} file input error, alert discarded."
+			fi
+			;;
+	esac
 }
 
 
@@ -3285,7 +3350,7 @@ cleanup_scanlist() {
 monitor_check() {
 	monitor_scanlist=$(mktemp "$tmpdir/.monitor.scan.XXXXXX")
 	chmod 600 "$monitor_scanlist"
-	tlog_read "$inotify_log" "inotify" "$tmpdir" "bytes" | grep -E " CREATE| MODIFY| MOVED_TO" | awk -F" CREATE| MODIFY| MOVED_TO" '{print $1}' | sort -u | grep -vf $ignore_paths> $monitor_scanlist
+	tlog_read "$inotify_log" "inotify" "$tmpdir" "bytes" | grep -E " CREATE| MODIFY| MOVED_TO" | awk -F" CREATE| MODIFY| MOVED_TO" '{print $1}' | sort -u | grep -vf "$ignore_paths" > "$monitor_scanlist"
 		scanned_count=$($wc -l < "$monitor_scanlist")
 		if [ "$scanned_count" -eq 0 ] 2>/dev/null; then
 			rm -f "$monitor_scanlist"
@@ -3312,21 +3377,47 @@ monitor_check() {
 			_run_yara_scan "$monitor_scanlist"
 			rm -f $clamscan_results $monitor_scanlist
 		else
+			# Build expanded file list for the batch native engine.
+			# monitor_scanlist contains inotify event paths (dirs/files);
+			# expand each entry with the same find filter used in scan() to
+			# get actual scan targets for _scan_run_native().
+			local _mon_find_results
+			_mon_find_results=$(mktemp "$tmpdir/.mon_find.XXXXXX")
+			if [ -z "$_mon_find_results" ]; then
+				eout "{mon} error creating temp file for monitor scan, skipping cycle"
+				rm -f "$monitor_scanlist"
+				return
+			fi
+			# Set find_results (global input for _scan_run_native); monitor_cycle() does not
+			# read find_results after this function returns, so no save/restore is needed.
+			find_results="$_mon_find_results"
 			while IFS= read -r file; do
 				if [ -f "$file" ]; then
-					while IFS= read -r fscan; do
-						if [ "$inotify_verbose" == "1" ]; then
-							eout "{mon} inotify native file scan on $file"
-						fi
-						echo "$file" >> $monitor_scanned_history
-						scan_stage1 "$fscan" >> /dev/null 2>&1
-					done < <($nice_command $find "$file" -maxdepth 1 $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize -not -perm 000 "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2> /dev/null)
+					# Write once per inotify event path (not per expanded
+					# file) to eliminate duplicate history entries.
+					echo "$file" >> "$monitor_scanned_history"
+					$nice_command $find "$file" -maxdepth 1 $find_opts -type f \
+						-size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" \
+						-not -perm 000 "${ignore_fext_args[@]}" \
+						$ignore_root $ignore_user $ignore_group 2>/dev/null >> "$_mon_find_results"
 				fi
 			done < "$monitor_scanlist"
+			tot_files=$($wc -l < "$_mon_find_results")
+			hrspath="monitor"
+			if [ "$tot_files" -gt 0 ]; then
+				if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ]; then
+					gensigs
+				fi
+				# Note: inotify_verbose per-file logging applies only to the ClamAV
+				# branch above; the batch native path uses engine-level {scan} log
+				# messages instead (progress ticker suppressed — _in_scan_context unset).
+				_scan_run_native
+			fi
 			scanned_count=$($wc -l < "$monitor_scanlist")
 			eout "{mon} scanned ${scanned_count} new/changed files with native engine"
-			_run_yara_scan "$monitor_scanlist"
-			rm -f $clamscan_results $monitor_scanlist
+			# Clean stale clamscan_results if scan_clamscan was toggled off mid-run
+			[ -n "$clamscan_results" ] && rm -f "$clamscan_results"
+			rm -f "$_mon_find_results" "$monitor_scanlist"
 		fi
 }
 
@@ -3373,7 +3464,7 @@ monitor_init() {
 		eout "{mon} could not find fs.inotify.max_user_instances|watches tunable files, aborting." 1
 		exit 1
 	fi
-	users_tot=$(grep -ic home /etc/passwd)
+	users_tot=$(awk -F: -v min="$inotify_minuid" '$3 >= min {n++} END {print n+0}' /etc/passwd)
 	inotify_user_watches=$((inotify_base_watches * users_tot))
 	
 	if [ "$cur_user_instances" -lt "$inotify_user_instances" ]; then
@@ -3608,7 +3699,9 @@ gensigs() {
 			cp $sig_cav_hex_file $runtime_ndb
 		fi
 		if [ -s "$sig_user_md5_file" ]; then
-			grep -h -vE "^\s*$" "$sig_user_md5_file" "$sig_md5_file" | sort -u > "$runtime_hdb"
+			# Convert user MD5 sigs from LMD format (HASH:SIZE:{MD5}name) to ClamAV .hdb format (HASH:SIZE:name)
+			sed 's/{MD5}//' "$sig_user_md5_file" | grep -vE "^\s*$" > "$runtime_hdb"
+			cat "$sig_cav_md5_file" >> "$runtime_hdb"
 		else
 			cp "$sig_cav_md5_file" "$runtime_hdb"
 		fi
@@ -3675,7 +3768,14 @@ lmdup() {
 		if [ "$(echo $installedver | $wc -L)" -eq "2" ]; then
 			installedver="${installedver}0"
 		fi
-		upstreamver_readable=$(cat $upstreamver)
+		upstreamver_readable=$(tr -d '[:space:]' < "$upstreamver")
+		local _ver_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+		if ! [[ "$upstreamver_readable" =~ $_ver_re ]]; then
+			eout "{update} upstream version string failed format validation: '$upstreamver_readable'" 1
+			cd "$inspath" ; rm -rf "$tmpwd"
+			clean_exit
+			exit 1
+		fi
 		upstreamver=$(tr -d '.' < "$upstreamver")
 		if [ "$(echo $upstreamver | $wc -L)" -eq "2" ]; then
 			upstreamver="${upstreamver}0"

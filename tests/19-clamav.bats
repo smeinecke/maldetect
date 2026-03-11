@@ -85,3 +85,57 @@ teardown() {
     assert_scan_completed
     assert_output --partial "malware hits 1"
 }
+
+# Helper: source LMD config stack for unit-level function tests.
+# Disables errexit and nounset because internals.conf has command -v
+# calls that return non-zero for missing binaries.
+_source_lmd_stack_clamav() {
+    set +eu
+    source "$LMD_INSTALL/internals/internals.conf"
+    source "$LMD_INSTALL/conf.maldet"
+    source "$LMD_INSTALL/internals/functions"
+}
+
+# S-003: F-006 unit test — _process_clamav_hits() colon-path parsing
+# ClamAV output uses ": " (colon-space) as the filepath/signame separator.
+# Filepaths containing colons must not be truncated at the first colon.
+# The greedy sed in _process_clamav_hits() ensures the full filepath
+# (including colons) is captured.
+@test "_process_clamav_hits parses filepath containing colons" {
+    _source_lmd_stack_clamav
+
+    # Create a file with a colon in its path for the [ -f ] check
+    local colon_dir="$TEST_SCAN_DIR/path:with:colons"
+    mkdir -p "$colon_dir"
+    echo "malicious content for testing" > "$colon_dir/evil.php"
+
+    # Set up minimal infrastructure for _process_clamav_hits
+    local scan_session_file
+    scan_session_file=$(mktemp "$tmpdir/.scan_session.XXXXXX")
+    scan_session="$scan_session_file"
+    hits_history=$(mktemp "$tmpdir/.hits_hist.XXXXXX")
+    progress_hits=0
+    quarantine_hits=0
+    _in_scan_context=""
+
+    # Create mock ClamAV results in the format clamscan produces:
+    #   /path/to/file: Sig.Name FOUND
+    local mock_results
+    mock_results=$(mktemp "$tmpdir/.mock_clam_results.XXXXXX")
+    echo "$colon_dir/evil.php: Php.Malware.TestSig-1 FOUND" > "$mock_results"
+
+    # Call the function under test
+    _process_clamav_hits "$mock_results" ""
+
+    # Verify the full colon-containing filepath appears in scan_session
+    run grep -F "$colon_dir/evil.php" "$scan_session_file"
+    assert_success
+
+    # Verify the signature was recorded with {CAV} prefix
+    run grep -F "{CAV}Php.Malware.TestSig-1" "$scan_session_file"
+    assert_success
+
+    # Cleanup
+    rm -f "$mock_results" "$scan_session_file" "$hits_history"
+    rm -rf "$colon_dir"
+}

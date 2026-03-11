@@ -68,6 +68,23 @@ v2.0.1 | Mar 10 2026:
 
   -- Bug Fixes --
 
+[Fix] genalert(): declare type and file as local to prevent global state
+      clobber on every genalert() call
+[Change] _genalert_digest()/_genalert_panel(): add inline comments clarifying
+      digest_tmpf alias scoping and intentionally non-local loop variables;
+      add test for messaging dispatch when email_alert=0 (genalert file mode)
+[Fix] _process_clamav_hits(): use greedy sed to handle colons in filepaths;
+      awk -F':' split corrupted paths containing colons, silently missing hits
+[Fix] _clamd_retry_scan(): add explicit output file parameter with
+      backward-compat default; callers without pre-set $clamscan_results no
+      longer get a broken redirect
+[Fix] import_conf(): guard base config re-source when CLI -co overrides
+      applied; without guard, source "$intcnf" and source "$cnf" reset all
+      variables to defaults, silently discarding -co overrides
+[Fix] Slack API token: write token to chmod 600 temp file and pass via
+      curl -K to prevent exposure in /proc/PID/cmdline; affects
+      chat.postMessage, files.getUploadURLExternal, and
+      files.completeUploadExternal calls; Telegram already used this pattern
 [Fix] scan-time HTML email: move hits file into place before genalert renders
       template; dirty scans were showing "No Threats Detected" clean-scan
       celebration because _resolve_html_for_session() could not find the hits
@@ -217,6 +234,57 @@ v2.0.1 | Mar 10 2026:
 [Fix] clean() uses global $hitname instead of $file_signame parameter for
       clean rule lookup; wrong clean rule selected when global is stale or
       differs from the value passed as arg2; use $file_signame parameter
+[Fix] gensigs(): ClamAV MD5 merge (runtime_hdb) used wrong format when
+      custom user MD5 sigs present; merged LMD-native format (HASH:SIZE:{MD5}name)
+      into ClamAV .hdb file, omitting rfxn.hdb entirely; fix converts user sigs
+      via sed to ClamAV format (HASH:SIZE:name) then appends rfxn.hdb
+[Fix] scan(): three pre-mktemp validation exits called clean_exit() before
+      scan_session/find_results were assigned; clean_exit attempted mv/rm on
+      empty paths; replaced with direct exit 1
+[Fix] _scan_build_filelist(): find-timeout pkill used generic pattern
+      pkill -f lmd_find, killing find processes from all concurrent scans;
+      scope to current scan by embedding scanid in dummy marker path
+      (/lmd_find_$scanid/) and pkill target (pkill -f lmd_find_$scanid)
+[Fix] _lmd_elog_init(): /var/log/maldet created with default umask 755;
+      audit log directory should not be world-readable; use mkdir -m 750
+[Fix] install.sh Slackware init: created symlinks in SysV runlevel dirs
+      (rc3.d/, rc4.d/, rc5.d/) that do not exist on Slackware; use
+      /etc/rc.d/rc.maldet with chmod +x per Slackware rc.NAME convention
+[Fix] _genalert_scan(): called _resolve_html_for_session unconditionally
+      even when email_format=text; HTML rendering is wasted work for text
+      recipients; guard behind $_fmt != text check
+[Fix] quar_hitlist() serial path (quarantine_clean=1): used grep -F inside
+      loop to look up sig name from hitlist on each iteration, O(N*M) forks;
+      read hitlist directly and extract signame/filepath per line via
+      parameter expansion, eliminating all inner-loop greps and the broken
+      cut -d: pipeline that misparsed colon-containing paths
+[Fix] view_report() list mode: read session file 6 times with separate grep
+      forks per entry; cache relevant lines in single grep -E pass, then grep
+      from in-memory herestring to eliminate 5 redundant file reads per session
+[Fix] monitor_init(): grep -ic home /etc/passwd miscounts monitored users;
+      overcounts when "home" appears in GECOS fields, undercounts non-/home/
+      users; replaced with awk UID threshold check (field 3 >= inotify_minuid)
+[Fix] _batch_record_hits(): used awk > /dev/fd/3 and > /dev/fd/4 to split
+      output into two files; /dev/fd/ may not be available on FreeBSD without
+      fdescfs; replaced with two portable awk passes writing to tmpfiles
+[Fix] CI: UAT artifact upload path /tmp/uat-*.log never matched; logs land
+      in /tmp/uat-output/ subdirectory; if-no-files-found: ignore masked the
+      empty upload silently; corrected path to /tmp/uat-output/
+[Fix] install.sh: MONITOR_MODE migration ran before sysconfig file was
+      installed; on first upgrade, neither sysconfig file existed yet so
+      migration was silently skipped and non-default monitor mode was lost;
+      read old value early but apply after sysconfig install block
+[Fix] conf.maldet: correct stale comment claiming systemd service reads
+      $default_monitor_mode; service reads MONITOR_MODE from sysconfig env
+      files; init script (maldet.sh) reads $default_monitor_mode as fallback
+[Fix] lmdup(): strip whitespace and validate upstream version string against
+      semver format before path construction; prevents directory traversal via
+      malicious version file content (cd maldetect-${version} -> install.sh)
+[Fix] monitor_check(): quote $ignore_paths in grep -vf pipeline; unquoted
+      variable is subject to word splitting if path contains spaces
+[Fix] view_report() and _genalert_scan(): log diagnostic via eout when
+      HTML-to-text email format downgrade occurs; previously silent fallback
+      made troubleshooting email rendering failures difficult
 
   -- Changes --
 
@@ -272,6 +340,9 @@ v2.0.1 | Mar 10 2026:
       surfaces
 [Change] internals.conf: remove 6 orphaned variables; add usermod and
       column binary discovery
+[Change] elog_lib.sh updated to v1.0.3: host field in JSON and syslog UDP
+      output now resolves FQDN via hostname -f with short-name fallback; aligns
+      with RFC 5424 HOSTNAME recommendation for multi-domain log aggregation
 [Change] vendored libraries updated: tlog_lib.sh v2.0.3, elog_lib.sh v1.0.2,
       alert_lib.sh v1.0.3, pkg_lib.sh v1.0.1
 [Change] vendored libraries: batsman submodule updated to v1.2.0
@@ -292,6 +363,31 @@ v2.0.1 | Mar 10 2026:
       moved into _lmd_parse_hitlist awk BEGIN block (6-field enriched manifest);
       html/json escaping computed in awk; removes _lmd_set_entry_vars,
       _lmd_hit_type_color, _lmd_hit_type_label (dead code after refactor)
+[Change] genalert(): decompose 228-line monolith into thin dispatcher + four
+      private helpers (_genalert_scan, _genalert_panel, _genalert_digest,
+      _genalert_messaging); each helper owns its email_alert gate and local
+      variables; no behavior change
+[Change] _yara_scan_rules(): convert 10 dynamic-scoped caller-local variables
+      to explicit positional parameters; function is now callable from any
+      context, not just scan_stage_yara(); globals (nice_command, clean_state,
+      scan_session, ignore_sigs, tmpdir) remain as direct references
+[Fix] _lmd_elk_post_hits(): add URL scheme guard — prepend http:// when
+      elk_host lacks scheme; update conf.maldet example to include http://
+[Change] add test for import_conf() -co override preservation when
+      import_config_url cache is active (F-007 combined scenario)
+[Change] add unit test for _process_clamav_hits() colon-containing filepath
+      parsing (F-006 regression coverage)
+[Change] monitor_check(): migrate native scan from serial per-file
+      scan_stage1() loop to _scan_run_native() batch path with parallel
+      MD5/HEX workers, batch YARA, and strlen; monitor_scanned_history
+      now writes once per inotify event (eliminates duplicates);
+      inotify_verbose per-file logging now applies only to ClamAV engine
+      path; stale clamscan_results temp file cleaned on engine toggle
+[Fix] monitor_check() batch path: guard mktemp failure to prevent
+      empty-path redirect on _mon_find_results; document find_results
+      lifecycle and inotify_verbose scope
+[Change] conf.maldet: document Slack token scope change for users upgrading
+      from v1.x (files.upload replaced by files.getUploadURLExternal)
 
 v1.6.6.1 | Feb 25 2025:
 [Fix] find_recentopts incorrectly escaping find options to the right of ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442

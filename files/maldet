@@ -176,6 +176,7 @@ else
 					rm -f "$tmpco"
 				else
 					. "$tmpco"
+					_lmd_cli_co_applied=1
 					rm -f "$tmpco"
 				fi
 				if [ -f "$compatcnf" ]; then

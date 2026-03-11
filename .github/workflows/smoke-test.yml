@@ -84,6 +84,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: uat-results
-          path: /tmp/uat-*.log
+          path: /tmp/uat-output/
           retention-days: 14
           if-no-files-found: ignore
