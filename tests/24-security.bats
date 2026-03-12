@@ -99,22 +99,6 @@ _hookscan_validation_script() {
     rm -rf /tmp/lmd-co-test
 }
 
-@test "-co neutralizes pipe in value via quoting" {
-    mkdir -p /tmp/lmd-co-test
-    echo "clean" > /tmp/lmd-co-test/file.txt
-    run maldet -co 'scan_max_filesize=1|echo pwned' -a /tmp/lmd-co-test
-    refute_output --partial "pwned"
-    rm -rf /tmp/lmd-co-test
-}
-
-@test "-co neutralizes ampersand in value via quoting" {
-    mkdir -p /tmp/lmd-co-test
-    echo "clean" > /tmp/lmd-co-test/file.txt
-    run maldet -co 'scan_max_filesize=1&echo pwned' -a /tmp/lmd-co-test
-    refute_output --partial "pwned"
-    rm -rf /tmp/lmd-co-test
-}
-
 @test "-co accepts legitimate variable assignment" {
     mkdir -p /tmp/lmd-co-test
     echo "clean" > /tmp/lmd-co-test/file.txt

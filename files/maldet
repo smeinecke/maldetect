@@ -298,6 +298,12 @@ else
 					spath=/home
 					hrspath="$spath"
 				fi
+				# Only validate non-glob, non-comma-separated literal paths —
+				# glob expansions and comma-separated multi-path lists are handled by find/scan
+				if [[ "$spath" != *[\*\?\[,]* ]] && [ ! -e "$spath" ]; then
+					eout "{scan} error: scan path does not exist: $spath" 1
+					exit 1
+				fi
 				if [ "$set_background" == "1" ]; then
 					eout "{scan} launching scan of $spath to background, see $maldet_log for progress" 1
 					scan "$spath" all >> /dev/null 2>&1 &
@@ -402,6 +408,9 @@ else
 					exit 1
 				fi
 				clean_hitlist "$1"
+			;;
+			-v|--version)
+				header
 			;;
 			-h|--help)
 				header

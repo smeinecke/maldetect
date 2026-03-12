@@ -4,17 +4,12 @@ v2.0.1 | Mar 10 2026:
 
 [New] email alert system reimagined: HTML+text dual-format email alerts with
       unified rfxn design language (teal brand bar, card-based threat entries,
-      color-coded hit types); new template engine using {{TOKEN}} placeholders
-      via alert_lib's _alert_tpl_render(); lmd_alert.sh dedicated alert library
-      with data preparation (_lmd_parse_hitlist, _lmd_set_global_vars,
-      _lmd_set_entry_vars, _lmd_compute_summary), rendering pipeline
-      (_lmd_render_text, _lmd_render_html), and messaging dispatch; scan,
-      panel, and digest alert types all support HTML+text; SMTP relay support
-      (smtp_relay, smtp_from, smtp_user, smtp_pass config vars); email_format
-      config var (text/html/both); per-entry formatted Slack Block Kit, Telegram
-      MarkdownV2, and Discord embed messaging templates replace trivial
-      one-liners; legacy .etpl sourced-as-shell templates removed; custom
-      template overrides via alert/custom.d/ preserved
+      color-coded hit types); template engine with {{TOKEN}} placeholders;
+      scan, panel, and digest alert types; SMTP relay support (smtp_relay,
+      smtp_from, smtp_user, smtp_pass); email_format config var (text/html/both);
+      per-entry Slack Block Kit, Telegram MarkdownV2, and Discord embed
+      messaging templates; legacy .etpl templates removed; custom overrides
+      via alert/custom.d/ preserved
 [New] native batch scan engine: 43x faster end-to-end (1,217s to 28s on
       ~10,000 files); batch grep -F Aho-Corasick hex matching with parallel
       workers replaces per-file Perl hexfifo.pl/hexstring.pl; Perl dependency
@@ -65,16 +60,26 @@ v2.0.1 | Mar 10 2026:
 [New] BATS test suite with 27 test files and UAT acceptance suite (103+
       scenarios covering YARA, ClamAV, alerting, signatures, cron, and
       monitor); GitHub Actions CI with 9-target matrix
+[New] -v/--version flag displays version information and exits 0
 
   -- Bug Fixes --
 
+[Fix] lmdup(): validate upstream version string against semver format and
+      strip whitespace before path construction; prevents directory traversal
+      via malicious version file content; quote all cd targets and add error
+      guards to prevent silent cd failure after tar extraction; sigup():
+      quote cd commands and use absolute paths for md5 verification to
+      prevent wrong-file hash when cwd shifts
+[Fix] _genalert_panel(): use direct portable stat for owner lookup instead
+      of get_filestat(); avoids unnecessary md5sum on every hit file and
+      is FreeBSD-compatible
+[Fix] get_panel_contacts(): replace python JSON parser with portable awk
+      accumulator for Interworx siteworx user listing; handles any field
+      ordering in JSON output; removes python dependency
 [Fix] genalert(): declare type and file as local to prevent global state
       clobber on every genalert() call
-[Change] _genalert_digest()/_genalert_panel(): add inline comments clarifying
-      digest_tmpf alias scoping and intentionally non-local loop variables;
-      add test for messaging dispatch when email_alert=0 (genalert file mode)
-[Fix] _process_clamav_hits(): use greedy sed to handle colons in filepaths;
-      awk -F':' split corrupted paths containing colons, silently missing hits
+[Fix] _process_clamav_hits(): use greedy sed for colon-safe ClamAV path
+      parsing; colon-split silently missed hits in files with colons in path
 [Fix] _clamd_retry_scan(): add explicit output file parameter with
       backward-compat default; callers without pre-set $clamscan_results no
       longer get a broken redirect
@@ -89,18 +94,14 @@ v2.0.1 | Mar 10 2026:
       template; dirty scans were showing "No Threats Detected" clean-scan
       celebration because _resolve_html_for_session() could not find the hits
       file (mv happened after genalert, not before)
-[Fix] messaging dispatch: pass scan report as attachment to Slack file
-      upload and Telegram sendDocument; capture handler stderr for diagnostic
-      logging (API errors, curl failures now visible in event_log)
 [Fix] Slack alerting: migrate from deprecated files.upload API to
-      files.getUploadURLExternal + files.completeUploadExternal; fix
-      multi-channel support; check curl exit codes and API responses;
-      issue #458
+      files.getUploadURLExternal + files.completeUploadExternal; pass scan
+      report as attachment; fix multi-channel support; check curl exit codes
+      and API responses; capture handler stderr for diagnostic logging; alerts
+      now fire in monitor mode digest/daily reports; issue #387, #458
 [Fix] Telegram alerting: add missing /bot prefix before token in Bot API
       URL causing all alerts to fail; hide bot token from /proc/PID/cmdline
       using curl -K config file; check sendDocument exit code; issue #461
-[Fix] Slack and Telegram alerts now fire in monitor mode digest/daily
-      reports, not just single-file scan alerts; issue #387
 [Fix] panel alerts: include signature name; fix hit parsing for paths with
       spaces; fix temp file cleanup leak; restrict messaging dispatch to
       file and digest alert types only; InterWorx empty master_domain guard;
@@ -114,8 +115,8 @@ v2.0.1 | Mar 10 2026:
       shell metacharacters, non-printable characters, and non-existent files;
       replace hardcoded paths with variables
 [Fix] file permissions hardened: conf.maldet 0644 to 0640; sigdir, logdir,
-      tmpdir from 755 to 750; custom signature files restricted to 640/750
-      when pubscan disabled
+      tmpdir, and audit log directory from 755 to 750; custom signature files
+      restricted to 640/750 when pubscan disabled
 [Fix] --user flag validates username (empty, path traversal, non-existent);
       restore() validates .info file paths against traversal
 [Fix] JSON injection in ELK and Slack payloads via _json_escape() helper;
@@ -125,7 +126,8 @@ v2.0.1 | Mar 10 2026:
       branches; issue #454, #447, #459
 [Fix] monitor_kill() and monitor_cycle(): guard empty PID; reload sources
       compat.conf matching startup order; fix unbounded accumulation of
-      ignore_user/ignore_group find-filter strings
+      ignore_user/ignore_group find-filter strings; monitor_check(): quote
+      $ignore_paths in grep -vf pipeline to prevent word splitting
 [Fix] scan_stage_yara(): anchor dedup regex to prevent substring
       false-positives; per-file fallback for YARA < 4.0; stderr filter
       handles YARA-X message format; validate downloaded and compiled rules
@@ -190,21 +192,13 @@ v2.0.1 | Mar 10 2026:
       gensigs() temp file leak on repeated calls; ClamAV lstat() ERE filter
       escape; get_remote_file() scoping and error handling; lmdup() capture
       install.sh exit code; checkout() FTP double domain suffix
-[Fix] CI: UAT job Docker build context set to project root with
-      -f tests/Dockerfile; fixes COPY paths that require project root
-[Fix] alert rendering: hit type regex /^\{[A-Z]+\}/ fails to match {MD5}
-      signatures (digit not in [A-Z]); 84% of signatures produce empty
-      hit_type, blank badges, and missing by-type summary entries
-[Fix] alert rendering: empty quarpath produces consecutive tabs in manifest;
-      bash read IFS=$'\t' collapses them, shifting hit_type into quarpath
-      field; text reports show false quarantine paths for unquarantined hits
-[Fix] alert rendering: JSON injection in Slack/Discord messaging templates;
-      HIT_FILE and HIT_SIGNATURE exported as raw strings into JSON contexts;
-      filenames with quotes, backslashes, or newlines break JSON payloads;
-      add HIT_FILE_JSON/HIT_SIGNATURE_JSON escaped variants
-[Fix] alert rendering: empty SUMMARY_* tokens in single-hit messaging;
-      _lmd_compute_summary() skipped when total==1 but message templates
-      reference {{SUMMARY_*}} unconditionally; produces garbled summary line
+[Fix] glob expansion bugs with adversarial filenames and space-splitting
+      in unprotected paths
+[Fix] alert rendering: hit type regex [A-Z]+ fails on {MD5} signatures;
+      empty quarpath produces consecutive-tab field shift in text reports;
+      JSON injection in Slack/Discord messaging templates via unescaped
+      file paths and signature names; empty SUMMARY_* tokens in single-hit
+      messaging templates produce garbled summary lines
 [Fix] restore() and restore_hitlist() return exit 0 on failure (invalid scan
       ID or nonexistent file); automated recovery scripts checking $? see false
       success; now returns exit 1 on all error paths
@@ -212,21 +206,11 @@ v2.0.1 | Mar 10 2026:
       scan_workers="0" as default, so the guard condition always fails; users
       setting deprecated scan_hex_workers via -co see no effect; condition
       changed to unconditionally map when scan_hex_workers is set
-[Fix] local var=$(mktemp) masks exit code in _yara_scan_rules() and
-      trim_log(); split into separate declaration and assignment per project
-      convention
 [Fix] email alert delivery fails with "No such file or directory" when
-      email_format is html/both but no HTML session file exists (pre-2.0.1
-      scan sessions); _resolve_html_for_session() renders HTML on demand
-      from preserved hits file; falls back to text only when hits file is
-      also missing; view_report() and genalert() share the same helper;
-      regression tests for on-demand rendering and text fallback
-[Fix] on-demand HTML rendering for older scan sessions produces empty scan
-      metadata fields (scan ID, dates, path, totals); _parse_session_metadata()
-      extracts metadata from the text session header before rendering
-[Fix] sigup() md5 verification uses bare relative filenames; if cwd shifts
-      before hash check, md5sum and awk read wrong files or fail; use absolute
-      $tmpwd/ paths for all four hash operations
+      email_format is html/both but no persistent HTML session file exists;
+      renders HTML on-demand from preserved hits file; extracts metadata
+      from text session header for scan ID, dates, path, and totals; falls
+      back to text when hits file is also missing
 [Fix] _safe_source_conf() permits PATH, LD_PRELOAD, BASH_ENV, IFS and other
       dangerous environment variable overrides from remote config; values pass
       the metacharacter guard (no shell chars) but overwrite inherited env;
@@ -234,10 +218,9 @@ v2.0.1 | Mar 10 2026:
 [Fix] clean() uses global $hitname instead of $file_signame parameter for
       clean rule lookup; wrong clean rule selected when global is stale or
       differs from the value passed as arg2; use $file_signame parameter
-[Fix] gensigs(): ClamAV MD5 merge (runtime_hdb) used wrong format when
-      custom user MD5 sigs present; merged LMD-native format (HASH:SIZE:{MD5}name)
-      into ClamAV .hdb file, omitting rfxn.hdb entirely; fix converts user sigs
-      via sed to ClamAV format (HASH:SIZE:name) then appends rfxn.hdb
+[Fix] gensigs(): ClamAV MD5 merge used wrong format when custom user MD5
+      signatures present; fix converts user sigs to ClamAV format
+      (HASH:SIZE:name) before appending rfxn.hdb
 [Fix] scan(): three pre-mktemp validation exits called clean_exit() before
       scan_session/find_results were assigned; clean_exit attempted mv/rm on
       empty paths; replaced with direct exit 1
@@ -245,8 +228,6 @@ v2.0.1 | Mar 10 2026:
       pkill -f lmd_find, killing find processes from all concurrent scans;
       scope to current scan by embedding scanid in dummy marker path
       (/lmd_find_$scanid/) and pkill target (pkill -f lmd_find_$scanid)
-[Fix] _lmd_elog_init(): /var/log/maldet created with default umask 755;
-      audit log directory should not be world-readable; use mkdir -m 750
 [Fix] install.sh Slackware init: created symlinks in SysV runlevel dirs
       (rc3.d/, rc4.d/, rc5.d/) that do not exist on Slackware; use
       /etc/rc.d/rc.maldet with chmod +x per Slackware rc.NAME convention
@@ -255,9 +236,8 @@ v2.0.1 | Mar 10 2026:
       recipients; guard behind $_fmt != text check
 [Fix] quar_hitlist() serial path (quarantine_clean=1): used grep -F inside
       loop to look up sig name from hitlist on each iteration, O(N*M) forks;
-      read hitlist directly and extract signame/filepath per line via
-      parameter expansion, eliminating all inner-loop greps and the broken
-      cut -d: pipeline that misparsed colon-containing paths
+      replaced with parameter expansion eliminating all inner-loop greps and
+      the broken cut -d: pipeline that misparsed colon-containing paths
 [Fix] view_report() list mode: read session file 6 times with separate grep
       forks per entry; cache relevant lines in single grep -E pass, then grep
       from in-memory herestring to eliminate 5 redundant file reads per session
@@ -267,24 +247,22 @@ v2.0.1 | Mar 10 2026:
 [Fix] _batch_record_hits(): used awk > /dev/fd/3 and > /dev/fd/4 to split
       output into two files; /dev/fd/ may not be available on FreeBSD without
       fdescfs; replaced with two portable awk passes writing to tmpfiles
-[Fix] CI: UAT artifact upload path /tmp/uat-*.log never matched; logs land
-      in /tmp/uat-output/ subdirectory; if-no-files-found: ignore masked the
-      empty upload silently; corrected path to /tmp/uat-output/
 [Fix] install.sh: MONITOR_MODE migration ran before sysconfig file was
-      installed; on first upgrade, neither sysconfig file existed yet so
-      migration was silently skipped and non-default monitor mode was lost;
-      read old value early but apply after sysconfig install block
-[Fix] conf.maldet: correct stale comment claiming systemd service reads
-      $default_monitor_mode; service reads MONITOR_MODE from sysconfig env
-      files; init script (maldet.sh) reads $default_monitor_mode as fallback
-[Fix] lmdup(): strip whitespace and validate upstream version string against
-      semver format before path construction; prevents directory traversal via
-      malicious version file content (cd maldetect-${version} -> install.sh)
-[Fix] monitor_check(): quote $ignore_paths in grep -vf pipeline; unquoted
-      variable is subject to word splitting if path contains spaces
-[Fix] view_report() and _genalert_scan(): log diagnostic via eout when
-      HTML-to-text email format downgrade occurs; previously silent fallback
-      made troubleshooting email rendering failures difficult
+      installed; on first upgrade, migration was silently skipped and
+      non-default monitor mode was lost; read old value early but apply
+      after sysconfig install block
+[Fix] view_report() and genalert(): log diagnostic when HTML-to-text email
+      format downgrade occurs; previously silent fallback made troubleshooting
+      email rendering failures difficult
+[Fix] _lmd_elk_post_hits(): add URL scheme guard — prepend http:// when
+      elk_host lacks scheme; update conf.maldet example to include http://
+[Fix] docs: document -qd (runtime quarantine directory override) and
+      -hscan/--hook-scan (ModSecurity inspectFile hook scan) in man page,
+      README, and --help output; both flags were present in CLI dispatcher
+      but undocumented
+[Fix] -a/--scan-all: exit 1 with error message when scan path does not
+      exist; non-glob literal paths are validated before scan dispatch;
+      glob paths (containing *, ?, [) pass through to find unchanged
 
   -- Changes --
 
@@ -292,40 +270,17 @@ v2.0.1 | Mar 10 2026:
       persistent .html session files no longer stored; old scan reports
       always use the latest email design; eliminates the empty-file-path
       bug class (base64 < "") and simplifies session file management;
-      _resolve_html_for_session() renders to temp file for both clean and
-      dirty scans; gen_report() and genalert() digest no longer write .html
-[Change] clean scan emails show celebration block: green checkmark with
-      "No Threats Detected" and file count summary instead of empty stat
-      blocks and orphaned "Threat Details" heading; scan header template
-      refactored to use pre-rendered {{SCAN_RESULT_HTML}} token with
-      separate result-clean.tpl and result-dirty.tpl sub-templates;
-      {{THREAT_BADGE_HTML}} token replaces hardcoded threat badge (green
-      "All Clear" for clean, red count for dirty); _lmd_compute_summary()
-      handles empty manifests by setting SUMMARY_* tokens to zero
-[Change] HTML email templates: responsive fluid hybrid layout with Outlook
-      conditional tables (mso), progressive CSS media queries for mobile
-      (480px breakpoint), and text-size-adjust for iOS/Android; summary data
-      merged into header as colored stat blocks (threats/cleaned/quarantined)
-      with by-type breakdown; scan, panel, and digest headers redesigned;
-      HTML summary templates replaced (content now in header); render pipeline
-      computes summary before header for token availability
-[Change] HTML email templates widened from 600px to 700px for better
-      readability of long YARA signatures and file paths
-[Change] HTML entry card layout redesigned: signature name spans full width
-      with counter right-aligned, type badge moved to detail row below for
-      more efficient use of horizontal space
-[Change] HTML summary card reflowed from cramped 4-column to 2x2 stacked
-      pairs (hits/quarantined, cleaned/status) for clearer readability
-[Change] HTML template label columns standardized to consistent widths
-      (100px headers, 80px entry details) across scan, panel, and digest
-[Change] HTML meta bar date field uses word-break for long date strings
-
+      gen_report() and genalert() digest no longer write .html files
+[Change] HTML email template redesign: responsive 700px fluid layout with
+      Outlook compatibility and mobile media queries (480px breakpoint);
+      clean scan emails show "No Threats Detected" celebration block instead
+      of empty stat blocks; summary data in colored header stat blocks with
+      by-type breakdown (threats/cleaned/quarantined); entry card and summary
+      card layouts redesigned for readability
 [Change] Performance: eliminate ~500,000 fork/exec operations by replacing
       external command pipelines with Bash builtins and consolidating
       duplicated code blocks across scan, quarantine, monitor, and
       alerting paths
-[Fix] Fix glob expansion bugs with adversarial filenames and
-      space-splitting in unprotected paths
 [Change] maldet.service EnvironmentFile changed from conf.maldet to
       /etc/sysconfig/maldet or /etc/default/maldet; ExecStart uses
       ${MONITOR_MODE:-users}
@@ -340,51 +295,20 @@ v2.0.1 | Mar 10 2026:
       surfaces
 [Change] internals.conf: remove 6 orphaned variables; add usermod and
       column binary discovery
-[Change] elog_lib.sh updated to v1.0.3: host field in JSON and syslog UDP
-      output now resolves FQDN via hostname -f with short-name fallback; aligns
-      with RFC 5424 HOSTNAME recommendation for multi-domain log aggregation
-[Change] vendored libraries updated: tlog_lib.sh v2.0.3, elog_lib.sh v1.0.2,
-      alert_lib.sh v1.0.3, pkg_lib.sh v1.0.1
-[Change] vendored libraries: batsman submodule updated to v1.2.0
-[Change] batch quarantine: extract dest paths once for bulk chmod/chown/touch;
-      pre-load inode map into enriched manifest to eliminate per-file awk lookups
+[Change] vendored libraries updated: tlog_lib.sh v2.0.3, elog_lib.sh v1.0.3,
+      alert_lib.sh v1.0.4, pkg_lib.sh v1.0.2; batsman submodule updated to
+      v1.2.0; elog_lib v1.0.3 resolves FQDN via hostname -f for RFC 5424
+      HOSTNAME compliance in log aggregation
 [Change] _scan_progress(): emit plain newline-terminated output in non-TTY
       contexts (cron, pipe, docker exec); ANSI escape sequences (\033[1G,
       \033[K) now gated behind [ -t 1 ] TTY check
-[Change] alert rendering: merge _lmd_render_text and _lmd_render_html into
-      parameterized _lmd_render() helper; thin wrappers preserve API
 [Change] install.sh: show header and copyright before any operations; organize
       output into labeled sections (backup, install, config import, signatures)
       using pkg_lib section primitives; distinguish upgrade vs fresh install;
       end with success summary matching BFD installer conventions
-[Change] alert entry rendering: replace per-entry bash loop (O(N) forks) with
-      single-pass awk _lmd_render_entries(); eliminates ~8 process forks per hit
-      for all render paths (text, html, slack, telegram, discord); type registry
-      moved into _lmd_parse_hitlist awk BEGIN block (6-field enriched manifest);
-      html/json escaping computed in awk; removes _lmd_set_entry_vars,
-      _lmd_hit_type_color, _lmd_hit_type_label (dead code after refactor)
-[Change] genalert(): decompose 228-line monolith into thin dispatcher + four
-      private helpers (_genalert_scan, _genalert_panel, _genalert_digest,
-      _genalert_messaging); each helper owns its email_alert gate and local
-      variables; no behavior change
-[Change] _yara_scan_rules(): convert 10 dynamic-scoped caller-local variables
-      to explicit positional parameters; function is now callable from any
-      context, not just scan_stage_yara(); globals (nice_command, clean_state,
-      scan_session, ignore_sigs, tmpdir) remain as direct references
-[Fix] _lmd_elk_post_hits(): add URL scheme guard — prepend http:// when
-      elk_host lacks scheme; update conf.maldet example to include http://
-[Change] add test for import_conf() -co override preservation when
-      import_config_url cache is active (F-007 combined scenario)
-[Change] add unit test for _process_clamav_hits() colon-containing filepath
-      parsing (F-006 regression coverage)
-[Change] monitor_check(): migrate native scan from serial per-file
-      scan_stage1() loop to _scan_run_native() batch path with parallel
-      MD5/HEX workers, batch YARA, and strlen; monitor_scanned_history
-      now writes once per inotify event (eliminates duplicates);
-      inotify_verbose per-file logging now applies only to ClamAV engine
-      path; stale clamscan_results temp file cleaned on engine toggle
-[Fix] monitor_check() batch path: guard mktemp failure to prevent
-      empty-path redirect on _mon_find_results; document find_results
-      lifecycle and inotify_verbose scope
+[Change] monitor_check(): migrate native scan from serial scan_stage1() loop
+      to _scan_run_native() batch path with parallel MD5/HEX workers, batch
+      YARA, and strlen; mktemp guard prevents empty-path redirect on
+      _mon_find_results; monitor_scanned_history writes once per inotify event
 [Change] conf.maldet: document Slack token scope change for users upgrading
       from v1.x (files.upload replaced by files.getUploadURLExternal)

@@ -26,9 +26,13 @@ inspath='/usr/local/maldetect'
 intcnf="$inspath/internals/internals.conf"
 
 if [ -f "$intcnf" ]; then
+	# shellcheck disable=SC1090,SC1091
 	source "$intcnf"
+	# shellcheck disable=SC1090,SC1091,SC2154
 	source "$cnf"
+	# shellcheck disable=SC2154
 	if [ -f "$compatcnf" ]; then
+		# shellcheck disable=SC1090,SC1091
 		source "$compatcnf"
 	fi
 else
@@ -38,14 +42,18 @@ fi
 
 # Source function library.
 if [ -f /etc/init.d/functions ]; then
+        # shellcheck source=/dev/null
         . /etc/init.d/functions
 elif [ -f /lib/lsb/init-functions ]; then
+        # shellcheck source=/dev/null
         . /lib/lsb/init-functions
 fi
 
 if [ -f "/etc/sysconfig/maldet" ]; then
+	# shellcheck source=/dev/null
 	. /etc/sysconfig/maldet
 elif [ -f "/etc/default/maldet" ]; then
+	# shellcheck source=/dev/null
 	. /etc/default/maldet
 fi
 
@@ -74,7 +82,7 @@ fi
 
 start() {
         echo -n "Starting $prog: "
-        $inspath/maldet --monitor $MONITOR_MODE
+        $inspath/maldet --monitor "$MONITOR_MODE"
         RETVAL=$?; [ $RETVAL -eq 0 ] && touch $LOCKFILE
         echo
         return $RETVAL
@@ -82,6 +90,7 @@ start() {
 
 stop() {
         echo -n "Shutting down $prog: "
+        # shellcheck disable=SC2015
         if [ -f /etc/redhat-release ]; then
             $inspath/maldet --kill-monitor && success || failure
         elif [ -f /etc/debian_version ]; then
@@ -101,6 +110,7 @@ restart() {
 
 status() {
         echo -n "Checking $prog monitoring status: "
+        # shellcheck disable=SC2154
         if [ -f "$tmpdir/monitor.pid" ]; then
             local _mpid
             _mpid=$(cat "$tmpdir/monitor.pid")

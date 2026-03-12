@@ -125,7 +125,7 @@ prerun() {
 	fi
 
 	if [ "$user" == "root" ]; then
-		$sed -i -e '/^$/d' $ignore_paths $ignore_sigs $ignore_inotify $ignore_file_ext
+		$sed -i -e '/^$/d' "$ignore_paths" "$ignore_sigs" "$ignore_inotify" "$ignore_file_ext"
 	fi
 
 	scan_cpunice="${scan_cpunice:-19}"
@@ -228,8 +228,8 @@ detect_control_panel() {
 }
 
 get_panel_contacts() {
-	panel="$1"
-	user="$2"
+	local panel="$1"
+	local user="$2"
 	case "$panel" in
 		"cpanel")
 			if [ -f /var/cpanel/users/${user} ]; then
@@ -241,7 +241,15 @@ get_panel_contacts() {
 		"interworx")
 			master_domain=$(/usr/local/interworx/bin/listaccounts.pex | grep "${user}" | awk '{print $2}')
 			if [ -n "$master_domain" ]; then
-				contact_emails=$(siteworx -un --login_domain "${master_domain}" -c Users -a listUsers -o json | python -c 'import json,sys;data=json.load(sys.stdin);emails=[elem["email"] for elem in data if elem["user_status"] == "active"];print(", ".join(emails))')
+				# Parse siteworx JSON output with awk (portable, no python dependency)
+				# Accumulates email+user_status per object, prints at } boundary;
+				# handles any field ordering in both compact and formatted JSON
+				contact_emails=$(siteworx -un --login_domain "${master_domain}" -c Users -a listUsers -o json | \
+					awk -F'"' '
+						/"user_status"/ { for (i=1; i<=NF; i++) if ($i == "user_status") { ustatus=$(i+2); break } }
+						/"email"/ { for (i=1; i<=NF; i++) if ($i == "email") { em=$(i+2); break } }
+						/\}/ { if (ustatus == "active" && em != "") printf "%s,", em; ustatus=""; em="" }
+					' | sed 's/,$//')
 			fi
 		;;
 	esac
@@ -325,14 +333,14 @@ import_user_sigs() {
 	if [ "$import_custsigs_md5_url" ]; then
 		get_remote_file "$import_custsigs_md5_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
-			cp -f $return_file $sig_user_md5_file
+			cp -f "$return_file" "$sig_user_md5_file"
 			eout "{importsigs} imported custom signature data from $import_custsigs_md5_url"
 		fi
 	fi
 	if [ "$import_custsigs_hex_url" ]; then
 		get_remote_file "$import_custsigs_hex_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
-			cp -f $return_file $sig_user_hex_file
+			cp -f "$return_file" "$sig_user_hex_file"
 			eout "{importsigs} imported custom signature data from $import_custsigs_hex_url"
 		fi
 	fi
@@ -418,7 +426,7 @@ import_conf() {
 			fi
 		fi
 		if [ -f "$sessdir/.import_conf.cache" ]; then
-			if [ -z "$_lmd_cli_co_applied" ]; then
+			if [ -z "$_lmd_cli_co_applied" ]; then # skip re-source when CLI -co overrides are active — re-sourcing would discard them
 				source "$intcnf"
 				source "$cnf"
 			fi
@@ -439,10 +447,10 @@ import_conf() {
 }
 
 clamav_linksigs() {
-	cpath="$1"
+	local cpath="$1"
 	if [ -d "$cpath" ]; then
-		rm -f $cpath/rfxn.{hdb,ndb,yara} 2> /dev/null ; cp -f $sigdir/rfxn.{hdb,ndb,yara} $cpath/ 2> /dev/null
-		rm -f $cpath/lmd.user.* 2> /dev/null ; cp -f $sigdir/lmd.user.ndb $sigdir/lmd.user.hdb $cpath/ 2> /dev/null
+		rm -f "$cpath"/rfxn.{hdb,ndb,yara} 2> /dev/null ; cp -f "$sigdir"/rfxn.{hdb,ndb,yara} "$cpath"/ 2> /dev/null
+		rm -f "$cpath"/lmd.user.* 2> /dev/null ; cp -f "$sigdir/lmd.user.ndb" "$sigdir/lmd.user.hdb" "$cpath"/ 2> /dev/null
 	fi
 }
 
@@ -488,6 +496,7 @@ usage: maldet [OPTION] [ARGUMENT]
     -c|--checkout FILE          submit suspected malware to rfxn.com
     --mkpubpaths                create per-user pub/ data directories
     --web-proxy IP:PORT         set HTTP/HTTPS proxy
+    -v|--version                show version information
     -h|--help                   show detailed help
 EOF
 }
@@ -562,6 +571,10 @@ QUARANTINE & RESTORE:
        e.g: maldet --restore /usr/local/maldetect/quarantine/config.php.23754
        e.g: maldet --restore 050910-1534.21135
 
+    -qd PATH
+       Override the quarantine directory for this run
+       e.g: maldet -qd /data/quarantine -q 050910-1534.21135
+
 REPORTING:
     -e, --report [SCANID] [email]
        View scan report of most recent scan or of a specific SCANID;
@@ -619,6 +632,13 @@ OTHER:
     --web-proxy (also: --wget-proxy, --curl-proxy) IP:PORT
        Set HTTP/HTTPS proxy for all remote URL calls
 
+    -hscan, --hook-scan (also: --modsec)
+       Scan a single file supplied by a ModSecurity inspectFile hook
+       Used internally by hookscan.sh; not intended for direct invocation
+
+    -v, --version
+       Show version information
+
     -h, --help
        Show this help message
 EOF
@@ -670,9 +690,9 @@ clean() {
 				chown root:root "$file"
 				eout "{clean} clean failed on $file_path and returned to quarantine" 1
 			else
-				echo "$file_path" >> $sessdir/clean.$$
+				echo "$file_path" >> "$sessdir/clean.$$"
 				progress_cleaned=$((${progress_cleaned:-0} + 1))
-				echo "$file_path" >> $clean_history
+				echo "$file_path" >> "$clean_history"
 				eout "{clean} clean successful on $file_path" 1
 				_lmd_elog_event "$ELOG_EVT_FILE_CLEANED" "info" "cleaned $file_path" "file=$file_path" "sig=$sh_hitname"
 			fi
@@ -691,9 +711,9 @@ clean() {
 			if [ "$clean_failed" == "1" ]; then
 				eout "{clean} clean failed on $file" 1
 			else
-				echo "$file" >> $sessdir/clean.$$
+				echo "$file" >> "$sessdir/clean.$$"
 				progress_cleaned=$((${progress_cleaned:-0} + 1))
-				echo "$file_path" >> $clean_history
+				echo "$file_path" >> "$clean_history"
 				eout "{clean} clean successful on $file" 1
 				_lmd_elog_event "$ELOG_EVT_FILE_CLEANED" "info" "cleaned $file" "file=$file" "sig=$sh_hitname"
 			fi
@@ -1013,7 +1033,7 @@ _resolve_html_for_session() {
 }
 
 view_report() {
-	rid="$1"
+	local rid="$1"
 	if [ "$rid" == "list" ]; then
 		tmpf=$(mktemp "$tmpdir/.areps.XXXXXX")
 		for file in "$sessdir"/session.[0-9]*; do
@@ -1089,7 +1109,7 @@ dump_report() {
 
 view() {
 	echo "Viewing last 50 lines from $maldet_log:"
-	tail -n 50 $maldet_log
+	tail -n 50 "$maldet_log"
 }
 
 _inotify_trim_log() {
@@ -1106,14 +1126,14 @@ _inotify_trim_log() {
 }
 
 purge() {
-	:> $maldet_log
+	:> "$maldet_log"
 	if [ -f "$inotify_log" ]; then
 		log_size=$($wc -l < "$inotify_log")
 		if [ "$inotify_trim" ] && [ "$log_size" -ge "$inotify_trim" ]; then
 			_inotify_trim_log "$(($log_size - 1000))"
 		fi
 	fi
-	rm -f $tmpdir/* $quardir/* $sessdir/* 2> /dev/null
+	rm -f "$tmpdir"/* "$quardir"/* "$sessdir"/* 2> /dev/null
 	eout "{glob} logs and quarantine data cleared by user request (-p)" 1
 }
 
@@ -1128,15 +1148,15 @@ quarantine_suspend_user() {
 			if [ ! -f "/var/cpanel/suspended/$user" ]; then
 				/scripts/suspendacct $user "maldet --report $datestamp.$$" >> /dev/null 2>&1
 				eout "{quar} account $user cpanel suspended" 1
-				echo "$user" >> $sessdir/suspend.users.$$
-				echo "$user" >> $suspend_history
+				echo "$user" >> "$sessdir/suspend.users.$$"
+				echo "$user" >> "$suspend_history"
 			fi
 		elif [ -n "$usermod" ]; then
 			if [ "$(grep "$user" /etc/passwd | cut -d':' -f7 | grep /bin/false)" == "" ]; then
 				$usermod -s /bin/false "$user" >> /dev/null 2>&1
 				eout "{quar} account $user suspended; set 'usermod -s /bin/false'"
-				echo "$user" >> $sessdir/suspend.users.$$
-				echo "$user" >> $suspend_history
+				echo "$user" >> "$sessdir/suspend.users.$$"
+				echo "$user" >> "$suspend_history"
 			fi
 		fi
 	fi
@@ -1389,7 +1409,7 @@ _batch_quarantine() {
 		fi
 
 		# Write .info metadata
-		echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$_own:$_grp:$_mode:$_sz:$_hash:$_times:$_fp" > "$_dest.info"
+		printf '%s\n%s\n' "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)" "$_own:$_grp:$_mode:$_sz:$_hash:$_times:$_fp" > "$_dest.info"
 
 		# Collect quarantine history and session entries
 		printf '%s:%s:%s:%s:%s:%s:%s:%s\n' "$utime" "$_sig" "$_fp" "$_own" "$_grp" "$_hash" "$_sz" "$_dest" >> "$_quar_hist_block"
@@ -1515,10 +1535,10 @@ _quarantine_file() {
 		chmod 000 "$quardir/$file_name.$rnd"
 		chown root:root "$quardir/$file_name.$rnd"
 	fi
-	echo -e "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)\n$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$_file" > "$quardir/$file_name.$rnd.info"
+	printf '%s\n%s\n' "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)" "$file_owner:$file_group:$file_mode:$file_size:$md5_hash:$file_times:$_file" > "$quardir/$file_name.$rnd.info"
 	eout "{quar} malware quarantined from '$_file' to '$quardir/$file_name.$rnd'" $_verbose
 	_lmd_elog_event "$ELOG_EVT_QUARANTINE_ADDED" "warn" "quarantined $_file" "file=$_file" "sig=$_hitname"
-	echo "$utime:$_hitname:$_file:$file_owner:$file_group:$md5_hash:$file_size:$quardir/$file_name.$rnd" >> $quar_history
+	echo "$utime:$_hitname:$_file:$file_owner:$file_group:$md5_hash:$file_size:$quardir/$file_name.$rnd" >> "$quar_history"
 	_quar_dest="$quardir/$file_name.$rnd"
 }
 
@@ -1659,9 +1679,9 @@ clamselector() {
 _build_scan_filters() {
 	# Reset all find-filter variables before rebuilding
 	ignore_fext_args=()
-	ignore_root=""
-	ignore_user=""
-	ignore_group=""
+	ignore_root=()
+	ignore_user=()
+	ignore_group=()
 
 	# File extension ignores
 	if [ -f "$ignore_file_ext" ] && [ -s "$ignore_file_ext" ]; then
@@ -1672,18 +1692,14 @@ _build_scan_filters() {
 
 	# Root-owned file ignores
 	if [ "$scan_ignore_root" == "1" ]; then
-		ignore_root="-not -uid 0 -not -gid 0"
+		ignore_root=(-not -uid 0 -not -gid 0)
 	fi
 
 	# Per-user ignores
 	if [ "$scan_ignore_user" ]; then
 		while IFS= read -r i; do
 			if id "$i" >/dev/null 2>&1; then
-				if [ "$ignore_user" == "" ]; then
-					ignore_user="-not -user $i"
-				else
-					ignore_user="$ignore_user -not -user $i"
-				fi
+				ignore_user+=(-not -user "$i")
 			else
 				eout "{scan} scan_ignore_user: user '$i' does not exist, skipping" 1
 			fi
@@ -1694,11 +1710,7 @@ _build_scan_filters() {
 	if [ "$scan_ignore_group" ]; then
 		while IFS= read -r i; do
 			if getent group "$i" >/dev/null 2>&1; then
-				if [ "$ignore_group" == "" ]; then
-					ignore_group="-not -group $i"
-				else
-					ignore_group="$ignore_group -not -group $i"
-				fi
+				ignore_group+=(-not -group "$i")
 			else
 				eout "{scan} scan_ignore_group: group '$i' does not exist, skipping" 1
 			fi
@@ -1751,7 +1763,10 @@ _scan_build_filelist() {
 		fi
 		if [ "$scan_find_timeout" -ge "60" ]; then
 			lmd_find_sleep=$(mktemp "$tmpdir/.lmd_find_sleep.XXXXXX")
-			echo -e "sleep $scan_find_timeout\ntouch $tmpdir/.find_killed.$scanid\npkill -f lmd_find_$scanid" > "$lmd_find_sleep"
+			printf '%s\n' \
+				"sleep $scan_find_timeout" \
+				"touch $tmpdir/.find_killed.$scanid" \
+				"pkill -f lmd_find_$scanid" > "$lmd_find_sleep"
 			sh -c "sh $lmd_find_sleep >> /dev/null 2>&1 &" >> /dev/null 2>&1 &
 			rm -f "$lmd_find_sleep" 2> /dev/null
 			eout "{scan} setting maximum execution time for 'find' file list: ${scan_find_timeout}sec" 1
@@ -1771,17 +1786,17 @@ _scan_build_filelist() {
 		    done < "$ignore_paths"
 		fi
 		if [ "$days" == "all" ]; then
-			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs ${find_prune_args[*]} -maxdepth $scan_max_depth $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize ${include_regex_args[*]} -not -perm 000 ${exclude_regex_args[*]} ${ignore_fext_args[*]} $ignore_root $ignore_user $ignore_group"
-			$nice_command $find /lmd_find_$scanid/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
+			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs ${find_prune_args[*]} -maxdepth $scan_max_depth $find_opts -type f -size +${scan_min_filesize}c -size -$scan_max_filesize ${include_regex_args[*]} -not -perm 000 ${exclude_regex_args[*]} ${ignore_fext_args[*]} ${ignore_root[*]} ${ignore_user[*]} ${ignore_group[*]}"
+			$nice_command "$find" /lmd_find_$scanid/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" "${ignore_root[@]}" "${ignore_user[@]}" "${ignore_group[@]}" 2>/dev/null | grep -E -vf "$ignore_paths" > "$find_results"
 		else
-			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs ${find_prune_args[*]} -maxdepth $scan_max_depth $find_opts \( -mtime -${days} -o -ctime -${days} \) -type f -size +${scan_min_filesize}c -size -$scan_max_filesize ${include_regex_args[*]} -not -perm 000 ${exclude_regex_args[*]} ${ignore_fext_args[*]} $ignore_root $ignore_user $ignore_group"
-			$nice_command $find /lmd_find_$scanid/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts  \( -mtime -${days} -o -ctime -${days} \) -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" $ignore_root $ignore_user $ignore_group 2>/dev/null | grep -E -vf "$ignore_paths" > $find_results
+			eout "{scan} executed $nice_command $find $spath $spath_tmpdirs ${find_prune_args[*]} -maxdepth $scan_max_depth $find_opts \( -mtime -${days} -o -ctime -${days} \) -type f -size +${scan_min_filesize}c -size -$scan_max_filesize ${include_regex_args[*]} -not -perm 000 ${exclude_regex_args[*]} ${ignore_fext_args[*]} ${ignore_root[*]} ${ignore_user[*]} ${ignore_group[*]}"
+			$nice_command "$find" /lmd_find_$scanid/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts  \( -mtime -${days} -o -ctime -${days} \) -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" "${ignore_root[@]}" "${ignore_user[@]}" "${ignore_group[@]}" 2>/dev/null | grep -E -vf "$ignore_paths" > "$find_results"
 		fi
 
-		cd $tmpdir
-		rm -rf $tmpscandir
+		cd "$tmpdir"
+		rm -rf "$tmpscandir"
 		if [ "$rscan" = "1" ] && [ "$scan_export_filelist" == "1" ]; then
-			rm -f $tmpdir/.find_results.* 2> /dev/null
+			rm -f "$tmpdir"/.find_results.* 2> /dev/null
 			shared_results=$(mktemp "$tmpdir/.find_results.shared.XXXXXX")
 			cp "$find_results" "$shared_results" 2> /dev/null
 			ln -fs "$shared_results" "$tmpdir/find_results.last" 2> /dev/null
@@ -1789,7 +1804,7 @@ _scan_build_filelist() {
 		file_list_end=$(date +"%s")
 		file_list_et=$((file_list_end - file_list_start))
 		if [ -f "$tmpdir/.find_killed.$scanid" ]; then
-			rm -f $tmpdir/.find_killed.$scanid
+			rm -f "$tmpdir/.find_killed.$scanid"
 			echo && eout "{scan} file list 'find' operation reached maximum execution time (${scan_find_timeout}sec) and was terminated" 1
 		else
 			pkill -f lmd_find_sleep >> /dev/null 2>&1
@@ -1874,7 +1889,7 @@ _scan_progress() {
 		local _line="maldet($$): {scan} [$_stage] $_fileinfo${_status} | $progress_hits hits $progress_cleaned cleaned"
 		if [ -t 1 ]; then
 			# TTY: overwrite current line with cursor-to-column-1 and erase-to-EOL
-			echo -en "\\033[${res_col}G\\033[K${_line}"
+			printf '\033[%sG\033[K%s' "$res_col" "$_line"
 		else
 			# Non-TTY (cron, pipe, docker exec): plain newline-terminated output
 			echo "$_line"
@@ -1973,10 +1988,10 @@ _scan_run_clamav() {
 	_scan_progress "clamav" "$tot_files files"
 	_start_elapsed_timer "clamav" "$tot_files"
 
-	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan start"  >> $clamscan_log
+	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan start"  >> "$clamscan_log"
 	clamscan_results=$(mktemp "$tmpdir/.clamscan.XXXXXX")
 	chmod 600 "$clamscan_results"
-	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) executed: $nice_command $clamscan $clamopts --infected --no-summary -f $find_results" >> $clamscan_log
+	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) executed: $nice_command $clamscan $clamopts --infected --no-summary -f $find_results" >> "$clamscan_log"
 	_clamd_retry_scan "$find_results"
 	_stop_elapsed_timer
 	if [ "$clamscan_return" == "2" ]; then
@@ -1992,7 +2007,7 @@ _scan_run_clamav() {
 		quarantine_hits=0
 		eout "{scan} clamscan returned a fatal error in scan results, check $clamscan_log for details; quarantine has been disabled!" 1
 	fi
-	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> $clamscan_log
+	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> "$clamscan_log"
 	_process_clamav_hits "$clamscan_results" 1
 	_run_yara_scan "$find_results"
 
@@ -2378,12 +2393,12 @@ scan() {
 		exit 1
 	fi
 	if [ ! -f "$ignore_paths" ]; then
-		touch $ignore_paths
-		chmod 640 $ignore_paths
+		touch "$ignore_paths"
+		chmod 640 "$ignore_paths"
 	fi
 	if [ ! -f "$ignore_sigs" ]; then
-		touch $ignore_sigs
-		chmod 640 $ignore_sigs
+		touch "$ignore_sigs"
+		chmod 640 "$ignore_sigs"
 	fi
 		
 	if [ "$days" != "all" ] && [ -z "$file_list" ]; then
@@ -2444,9 +2459,9 @@ scan() {
 			eout "{scan} file list completed in ${file_list_et}s, found $tot_files files..." 1
 		fi
 	fi
-	touch $sessdir/clean.$$
+	touch "$sessdir/clean.$$"
 	if [ ! -f "$scan_session" ]; then
-		touch $scan_session
+		touch "$scan_session"
 	fi
 	progress_hits=0
 	progress_cleaned=0
@@ -2508,8 +2523,8 @@ scan() {
 }
 
 scan_strlen() {
-	type="$1"
-	file="$2"
+	local type="$1"
+	local file="$2"
 	if [ "$string_length_scan" == "1" ] && [ "$type" == "file" ]; then
 		flen=$($wc -L "$file" 2> /dev/null | awk '{print$1}')
 		if [ "$flen" -ge "$string_length" ]; then
@@ -2542,8 +2557,8 @@ scan_strlen() {
 }
 
 scan_stage1() {
-	file="$1"
-	clean_check="$2"
+	local file="$1"
+	local clean_check="$2"
 	local _md5out
 	_md5out="$($md5sum "$file")"
 	hash="${_md5out%% *}"
@@ -2949,8 +2964,8 @@ gen_report() {
 }
 
 trim_log() {
-	log="$1"
-	logtrim="$2"
+	local log="$1"
+	local logtrim="$2"
 	if [ -f "$log" ]; then
 		log_size=$($wc -l < "$log")
 		if [ "$log_size" -gt "$logtrim" ] 2>/dev/null; then
@@ -3071,7 +3086,12 @@ _genalert_panel() {
 				continue
 			fi
 			if [ -f "$hit_file" ]; then
-				file_owner=$(stat -c "%U" "$hit_file")
+				# Portable owner lookup (no md5sum — only username needed for panel routing)
+				if [ "$os_freebsd" = "1" ]; then
+					file_owner=$($stat -f '%Su' "$hit_file")
+				else
+					file_owner=$($stat -c '%U' "$hit_file")
+				fi
 			elif [ -n "$quarantined_file" ] && [ -f "${quarantined_file}.info" ]; then
 				file_owner=$(awk -F':' '/^[^#]/{print $1}' "${quarantined_file}.info")
 			else
@@ -3087,7 +3107,12 @@ _genalert_panel() {
 		if [ "$quarantine_clean" == "1" ] && [ -f "$sessdir/clean.$$" ]; then
 			while IFS= read -r clean_file; do
 				if [ -f "$clean_file" ]; then
-					clean_owner=$(stat -c "%U" "$clean_file")
+					# Portable owner lookup (no md5sum — only username needed for panel routing)
+					if [ "$os_freebsd" = "1" ]; then
+						clean_owner=$($stat -f '%Su' "$clean_file")
+					else
+						clean_owner=$($stat -c '%U' "$clean_file")
+					fi
 				fi
 				echo "$clean_owner : $clean_file" >> "$tmpdir/.panel_alert.clean"
 			done < "$sessdir/clean.$$"
@@ -3270,9 +3295,9 @@ monitor_kill() {
 monitor_cycle() {
 	TLOG_FLOCK=1
 	if [ "$BASHPID" ]; then
-		echo "$BASHPID" > $tmpdir/monitor.pid
+		echo "$BASHPID" > "$tmpdir/monitor.pid"
 	else
-		pgrep maldet > $tmpdir/monitor.pid
+		pgrep maldet > "$tmpdir/monitor.pid"
 	fi
 	inotify_cycle_runtime=0
 	while [ ! -f "$tmpdir/stop_monitor" ]; do
@@ -3287,7 +3312,7 @@ monitor_cycle() {
 		fi
 		if [ "$inotify_cycle_runtime" -ge "$inotify_reloadtime" ] || [ -f "$inspath/reload_monitor" ]; then
 			if [ -f "$inspath/reload_monitor" ]; then
-				rm -f $inspath/reload_monitor
+				rm -f "$inspath/reload_monitor"
 			fi
 			source "$intcnf"
 			source "$cnf"
@@ -3328,7 +3353,7 @@ monitor_cycle() {
 		fi
 		monitor_check
 	done
-	rm -f $tmpdir/stop_monitor
+	rm -f "$tmpdir/stop_monitor"
 	eout "{mon} monitoring terminated by user, inotify killed."
 	exit 0
 }
@@ -3375,7 +3400,7 @@ monitor_check() {
 			scanned_count=$($wc -l < "$monitor_scanlist")
 			eout "{mon} scanned ${scanned_count} new/changed files with clamav engine"
 			_run_yara_scan "$monitor_scanlist"
-			rm -f $clamscan_results $monitor_scanlist
+			rm -f "$clamscan_results" "$monitor_scanlist"
 		else
 			# Build expanded file list for the batch native engine.
 			# monitor_scanlist contains inotify event paths (dirs/files);
@@ -3396,10 +3421,10 @@ monitor_check() {
 					# Write once per inotify event path (not per expanded
 					# file) to eliminate duplicate history entries.
 					echo "$file" >> "$monitor_scanned_history"
-					$nice_command $find "$file" -maxdepth 1 $find_opts -type f \
+					$nice_command "$find" "$file" -maxdepth 1 $find_opts -type f \
 						-size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" \
 						-not -perm 000 "${ignore_fext_args[@]}" \
-						$ignore_root $ignore_user $ignore_group 2>/dev/null >> "$_mon_find_results"
+						"${ignore_root[@]}" "${ignore_user[@]}" "${ignore_group[@]}" 2>/dev/null >> "$_mon_find_results"
 				fi
 			done < "$monitor_scanlist"
 			tot_files=$($wc -l < "$_mon_find_results")
@@ -3422,10 +3447,10 @@ monitor_check() {
 }
 
 monitor_init() {
-	inopt="$1"
+	local inopt="$1"
 	scan_session="$sessdir/session.hits.$datestamp.$$"
-	touch $scan_session
-	echo "$scan_session" > $sessdir/session.monitor.current
+	touch "$scan_session"
+	echo "$scan_session" > "$sessdir/session.monitor.current"
 	
 	if [ "$inopt" == "" ]; then
 		eout "invalid usage of -m|--monitor, aborting." 1
@@ -3455,7 +3480,7 @@ monitor_init() {
 		exit 1
 	fi
 	
-	rm -f $tmpdir/stop_monitor $tmpdir/inotifywait.pid
+	rm -f "$tmpdir/stop_monitor" "$tmpdir/inotifywait.pid"
 	
 	if [ -f "/proc/sys/fs/inotify/max_user_instances" ] && [ -f "/proc/sys/fs/inotify/max_user_watches" ]; then
 		cur_user_watches=$(cat /proc/sys/fs/inotify/max_user_watches)
@@ -3478,8 +3503,8 @@ monitor_init() {
 	
 	icnt=0
 	inotify_fpaths=$(mktemp "$sessdir/.inotify.paths.XXXXXX")
-	touch $inotify_log
-	chmod 640 $inotify_log
+	touch "$inotify_log"
+	chmod 640 "$inotify_log"
 	
 	if [[ "$inopt" =~ ^[Uu][Ss][Ee][Rr][Ss]?$ ]]; then
 		while IFS=':' read -r user user_id user_home; do
@@ -3488,12 +3513,12 @@ monitor_init() {
 				if [ -n "$inotify_docroot" ] && [ -d "$user_home" ]; then
 				 while IFS= read -r docroot; do
 					if [ -d "$user_home/$docroot" ]; then
-						echo "$user_home/$docroot" >> $inotify_fpaths
+						echo "$user_home/$docroot" >> "$inotify_fpaths"
 						eout "{mon} added $user_home/$docroot to inotify monitoring array" 1
 					fi
 				 done < <(echo "$inotify_docroot" | tr ', ' '\n' | grep -v '^$')
 				elif [ -d "$user_home" ]; then
-					echo "$user_home" >> $inotify_fpaths
+					echo "$user_home" >> "$inotify_fpaths"
 					eout "{mon} added $user_home to inotify monitoring array" 1
 				else
 					eout "{mon} could not find any suitable user home paths"
@@ -3502,15 +3527,15 @@ monitor_init() {
 		done < <(cut -d':' -f1,3,6 /etc/passwd | sort)
 		
 		if [ -d "/dev/shm" ]; then
-			echo "/dev/shm" >> $inotify_fpaths
+			echo "/dev/shm" >> "$inotify_fpaths"
 			eout "{mon} added /dev/shm to inotify monitoring array" 1
 		fi
 		if [ -d "/var/tmp" ]; then
-			echo "/var/tmp" >> $inotify_fpaths
+			echo "/var/tmp" >> "$inotify_fpaths"
 			eout "{mon} added /var/tmp to inotify monitoring array" 1
 		fi
 		if [ -d "/tmp" ]; then
-			echo "/tmp" >> $inotify_fpaths
+			echo "/tmp" >> "$inotify_fpaths"
 			eout "{mon} added /tmp to inotify monitoring array" 1
 		fi
 	elif [ -f "$inopt" ]; then
@@ -3522,7 +3547,7 @@ monitor_init() {
 		while IFS= read -r i; do
 			if [ -d "$i" ]; then
 				eout "{mon} added $i to inotify monitoring array" 1
-				echo "$i" >> $inotify_fpaths
+				echo "$i" >> "$inotify_fpaths"
 			else
 				eout "{mon} ignored invalid path $i" 1
 			fi
@@ -3532,7 +3557,7 @@ monitor_init() {
 		while IFS= read -r i; do
 			if [ -d "$i" ]; then
 				eout "{mon} added $i to inotify monitoring array" 1
-				echo "$i" >> $inotify_fpaths
+				echo "$i" >> "$inotify_fpaths"
 			else
 				eout "{mon} invalid path $i specified, ignoring." 1
 			fi
@@ -3564,7 +3589,7 @@ monitor_init() {
 
 	_build_nice_command "$inotify_cpunice" "$inotify_ionice" "$inotify_cpulimit"
 
-	$nice_command $inotify -r --fromfile $inotify_fpaths $exclude --timefmt "%d %b %H:%M:%S" --format "%w%f %e %T" -m -e create,move,modify >> $inotify_log 2>&1 &
+	$nice_command $inotify -r --fromfile "$inotify_fpaths" $exclude --timefmt "%d %b %H:%M:%S" --format "%w%f %e %T" -m -e create,move,modify >> "$inotify_log" 2>&1 &
 	sleep 2
 	inotify_pid=$(pgrep -f inotify.paths.[0-9]+)
 	if [ -z "$inotify_pid" ]; then
@@ -3575,7 +3600,7 @@ monitor_init() {
 		eout "{mon} inotify monitoring log: $inotify_log" 1
 		_lmd_elog_event "$ELOG_EVT_MONITOR_STARTED" "info" "inotify monitor started (pid: $inotify_pid)"
 		_lmd_elog_event "$ELOG_EVT_CONFIG_LOADED" "info" "configuration loaded" "config=$cnf"
-		echo "$inotify_pid" > $tmpdir/inotifywait.pid
+		echo "$inotify_pid" > "$tmpdir/inotifywait.pid"
 	fi
 	monitor_cycle >> /dev/null 2>&1 &
 }
@@ -3585,7 +3610,7 @@ checkout() {
 		eout "{checkout} ftp binary not found, unable to upload" 1
 		return 1
 	fi
-	file="$1"
+	local file="$1"
 	host=ftp.rfxn.com
 	user=anonymous@rfxn.com
 	passwd=anonymous@rfxn.com
@@ -3661,8 +3686,8 @@ gensigs() {
 	runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.XXXXXX")
 	runtime_hexstrings=$(mktemp "$tmpdir/.runtime.hexsigs.XXXXXX")
 	runtime_md5=$(mktemp "$tmpdir/.runtime.md5sigs.XXXXXX")
-	ln -fs $runtime_ndb $sigdir/lmd.user.ndb 2> /dev/null
-	ln -fs $runtime_hdb $sigdir/lmd.user.hdb 2> /dev/null
+	ln -fs "$runtime_ndb" "$sigdir/lmd.user.ndb" 2> /dev/null
+	ln -fs "$runtime_hdb" "$sigdir/lmd.user.hdb" 2> /dev/null
 	if [ ! -f "$sig_user_yara_file" ]; then
 		touch "$sig_user_yara_file"
 		chmod $sig_file_mode "$sig_user_yara_file"
@@ -3691,10 +3716,10 @@ gensigs() {
 				name=$(echo "$i" | tr '%' ' ' | awk '{print$2}')
 				hex=$(echo "$i" | tr '%' ' ' | awk '{print$1}')
 				if [ -n "$name" ] && [ -n "$hex" ]; then
-					echo "{HEX}$name:0:*:$hex" >> $runtime_ndb
+					echo "{HEX}$name:0:*:$hex" >> "$runtime_ndb"
 				fi
 			done < <(sed 's/{HEX}//' "$sig_user_hex_file" | tr ':' '%' | grep -vE "^\s*$")
-			cat $sig_cav_hex_file >> $runtime_ndb
+			cat "$sig_cav_hex_file" >> "$runtime_ndb"
 		else
 			cp $sig_cav_hex_file $runtime_ndb
 		fi
@@ -3788,12 +3813,12 @@ lmdup() {
 			doupdate=1
 		elif [ "$autoupdate_version_hashed" == "1" ]; then
 			eout "{update} hashing install files and checking against server..." 1
-			$md5sum $inspath/maldet $intfunc | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > $lmd_hash_file
+			$md5sum "$inspath/maldet" "$intfunc" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > "$lmd_hash_file"
 			get_remote_file "$lmd_hash_url" "update" "1"
 			upstreamhash="$return_file"
 			if [ -s "$upstreamhash" ]; then
-				installed_hash=$(cat $lmd_hash_file)
-				current_hash=$(cat $upstreamhash)
+				installed_hash=$(cat "$lmd_hash_file")
+				current_hash=$(cat "$upstreamhash")
 				if [ "$installed_hash" != "$current_hash" ]; then
 					eout "{update} version check shows latest but hash check failed, forcing update..." 1
 					doupdate=1
@@ -3802,7 +3827,7 @@ lmdup() {
 				fi
 			else
 				eout "{update} could not download upstream hash file ($lmd_hash_url), please try again later." 1
-				cd $inspath ; rm -rf $tmpwd
+				cd "$inspath" ; rm -rf "$tmpwd"
 				clean_exit
 				exit 1
 			fi
@@ -3811,12 +3836,12 @@ lmdup() {
 		fi
 	else
 		eout "{update} could not download version file from server, please try again later." 1
-		cd $inspath ; rm -rf $tmpwd
+		cd "$inspath" ; rm -rf "$tmpwd"
 		clean_exit
 		exit 1
 	fi
 	if [ "$doupdate" ]; then
-		cd $tmpwd/
+		cd "$tmpwd/" || { eout "{update} failed to cd to temp dir, aborting update" 1; rm -rf "$tmpwd"; exit 1; }
 
 		get_remote_file "${lmd_current_tgzbase_url}/${lmd_current_tgzfile}" "update" "1" "$tmpwd/${lmd_current_tgzfile}"
 		get_remote_file "${lmd_current_tgzbase_url}/${lmd_current_tgzfile}.md5" "update" "1" "$tmpwd/${lmd_current_tgzfile}.md5"
@@ -3826,7 +3851,7 @@ lmdup() {
 			local_md5=$($md5sum "$tmpwd/${lmd_current_tgzfile}" | awk '{print$1}')
 			if [ "$upstream_md5" != "$local_md5" ]; then
 				eout "{update} unable to verify md5sum of ${lmd_current_tgzfile}, update failed!" 1
-				cd $inspath ; rm -rf $tmpwd
+				cd "$inspath" ; rm -rf "$tmpwd"
 				clean_exit
 				exit 1
 			else
@@ -3834,14 +3859,14 @@ lmdup() {
 			fi
 		else
 			eout "{update} could not download ${lmd_current_tgzfile} or .md5, please try again later." 1
-			cd $inspath ; rm -rf $tmpwd
+			cd "$inspath" ; rm -rf "$tmpwd"
 			clean_exit
 			exit 1
 		fi
 		if [ -s "$tmpwd/${lmd_current_tgzfile}" ]; then
-			tar xfz ${lmd_current_tgzfile}
-			rm -f ${lmd_current_tgzfile} ${lmd_current_tgzfile}.md5
-			cd maldetect-${upstreamver_readable}
+			tar xfz "${lmd_current_tgzfile}"
+			rm -f "${lmd_current_tgzfile}" "${lmd_current_tgzfile}.md5"
+			cd "maldetect-${upstreamver_readable}" || { eout "{update} failed to cd to extracted directory maldetect-${upstreamver_readable}, aborting update" 1; cd "$inspath"; rm -rf "$tmpwd"; clean_exit; exit 1; }
 			chmod 750 install.sh
 			local install_log
 			install_log=$(mktemp "$tmpdir/.lmdup_install.XXXXXX")
@@ -3866,12 +3891,12 @@ lmdup() {
 			eout "{update} update and config import completed" 1
 		else
 			eout "{update} could not download ${lmd_current_tgzfile}, please try again later." 1
-			cd $inspath ; rm -rf $tmpwd
+			cd "$inspath" ; rm -rf "$tmpwd"
 			clean_exit
 			exit 1
 		fi
 	fi
-	cd $inspath ; rm -rf $tmpwd
+	cd "$inspath" ; rm -rf "$tmpwd"
 }
 
 sigup() {
@@ -3897,7 +3922,7 @@ sigup() {
 		clean_exit
 		exit 1
 	else
-		nver=$(cat $upstream_sigver)
+		nver=$(cat "$upstream_sigver")
 	fi
 
 	if [ ! -f "$sig_md5_file" ] || [ ! -f "$sig_hex_file" ]; then
@@ -3916,7 +3941,7 @@ sigup() {
 	fi
 
 	if [ "$nver" != "$sig_version" ]; then
-		cd $tmpwd/
+		cd "$tmpwd/" || { eout "{sigup} failed to cd to temp dir, aborting sigup" 1; rm -rf "$tmpwd"; exit 1; }
 		tar=$(command -v tar 2> /dev/null)
 		eout "{sigup} new signature set $nver available" 1
 		
@@ -3938,12 +3963,12 @@ sigup() {
 			else
 				eout "{sigup} verified md5sum of maldet-sigpack.tgz" 1
 				if [ -f "$tmpwd/maldet-sigpack.tgz" ] && [ -s "$tmpwd/maldet-sigpack.tgz" ]; then
-					tar xfz $tmpwd/maldet-sigpack.tgz 2> /dev/null
+					tar xfz "$tmpwd/maldet-sigpack.tgz" 2> /dev/null
 					if [ -d "$tmpwd/sigs" ]; then
-						mkdir -p $sigdir.old 2> /dev/null
-						rm -f $sigdir.old/* 2> /dev/null
-						cp -f $sigdir/* $sigdir.old/ 2> /dev/null
-						cp -f $tmpwd/sigs/* $sigdir 2> /dev/null
+						mkdir -p "$sigdir.old" 2> /dev/null
+						rm -f "$sigdir.old"/* 2> /dev/null
+						cp -f "$sigdir"/* "$sigdir.old"/ 2> /dev/null
+						cp -f "$tmpwd"/sigs/* "$sigdir" 2> /dev/null
 						eout "{sigup} unpacked and installed maldet-sigpack.tgz" 1
 						for cp in $clamav_paths; do
 							clamav_linksigs "$cp"
@@ -3972,9 +3997,9 @@ sigup() {
 			else
 				eout "{sigup} verified md5sum of maldet-clean.tgz" 1
 				if [ -f "$tmpwd/maldet-clean.tgz" ] && [ -s "$tmpwd/maldet-clean.tgz" ]; then
-					tar xfz $tmpwd/maldet-clean.tgz
+					tar xfz "$tmpwd/maldet-clean.tgz"
 					if [ -d "$tmpwd/clean" ]; then
-						cp -f $tmpwd/clean/* $cldir
+						cp -f "$tmpwd"/clean/* "$cldir"
 						eout "{sigup} unpacked and installed maldet-clean.tgz" 1
 					else
 						eout "{sigup} clean rules archive contained no data" 1
@@ -3990,8 +4015,8 @@ sigup() {
 		fi
 		
 		if [ "$sigpackfail" ]; then
-			cd $inspath
-			rm -rf $tmpwd
+			cd "$inspath"
+			rm -rf "$tmpwd"
 			clean_exit
 			exit 1
 		else
@@ -4004,12 +4029,12 @@ sigup() {
 			fi
 			eout "{sigup} $tot_sigs signatures ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
 		fi
-		cd $inspath
-		rm -rf $tmpwd
+		cd "$inspath"
+		rm -rf "$tmpwd"
 	else
 		eout "{sigup} latest signature set already installed" 1
-		cd $inspath
-		rm -rf $tmpwd
+		cd "$inspath"
+		rm -rf "$tmpwd"
 	fi
 }
 

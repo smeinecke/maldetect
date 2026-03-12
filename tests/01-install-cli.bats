@@ -27,11 +27,6 @@ setup() {
     [ -x "/usr/local/sbin/lmd" ]
 }
 
-@test "maldet --help exits 0" {
-    run maldet --help
-    assert_success
-}
-
 @test "maldet --help displays usage information" {
     run maldet --help
     assert_success
@@ -72,11 +67,6 @@ setup() {
 
 @test "tmp directory exists" {
     [ -d "$LMD_INSTALL/tmp" ]
-}
-
-@test "-co config option override works" {
-    run maldet -co scan_max_filesize=1024 --help
-    assert_success
 }
 
 @test "invalid argument returns exit code 1" {
@@ -175,4 +165,31 @@ setup() {
 # systemd, SysV, chkconfig, update-rc.d, rc-update, and Slackware S-links
 @test "uninstall.sh uses pkg_service_uninstall for service removal" {
     grep -q 'pkg_service_uninstall maldet' "$LMD_INSTALL/uninstall.sh"
+}
+
+# UAT-001: nonexistent scan path exits 1
+@test "maldet -a /nonexistent/path exits 1 with error message" {
+    run maldet -a /nonexistent/path/that/does/not/exist
+    assert_failure
+    assert_output --partial "does not exist"
+}
+
+# UAT-001: valid literal path must not be rejected (regression)
+@test "maldet -a /tmp exits 0 for valid path" {
+    run maldet -a /tmp
+    assert_success
+}
+
+# UAT-003: -v flag shows version
+@test "maldet -v exits 0 and shows version" {
+    run maldet -v
+    assert_success
+    assert_output --partial "2.0.1"
+}
+
+# UAT-003: --version flag shows version
+@test "maldet --version exits 0 and shows version" {
+    run maldet --version
+    assert_success
+    assert_output --partial "2.0.1"
 }

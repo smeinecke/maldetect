@@ -1,4 +1,4 @@
-.TH MALDET "1" "February 2026" "Linux Malware Detect v2.0.1" "User Commands"
+.TH MALDET "1" "March 2026" "Linux Malware Detect v2.0.1" "User Commands"
 .SH NAME
 maldet \- Linux malware scanner for shared hosting environments
 .SH SYNOPSIS
@@ -54,6 +54,10 @@ Attempt to clean malware from files in scan report \fISCANID\fR.
 .TP
 \fB\-s\fR, \fB\-\-restore\fR \fIFILE\fR|\fISCANID\fR
 Restore a quarantined file or all files from \fISCANID\fR.
+.TP
+\fB\-qd\fR \fIPATH\fR
+Override the quarantine directory for this run.
+If \fIPATH\fR does not exist the setting is silently ignored.
 .SS Reporting
 .TP
 \fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR] [\fIEMAIL\fR]
@@ -97,6 +101,13 @@ Override configuration options at runtime.
 .TP
 \fB\-\-web\-proxy\fR \fIIP\fR:\fIPORT\fR
 Set HTTP/HTTPS proxy for all remote connections.
+.TP
+\fB\-hscan\fR, \fB\-\-hook\-scan\fR
+Scan a single file supplied by a ModSecurity \fIinspectFile\fR hook.
+Used internally by \fBhookscan.sh\fR; not intended for direct invocation.
+.TP
+\fB\-v\fR, \fB\-\-version\fR
+Display version information.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Display usage information.

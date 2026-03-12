@@ -369,6 +369,7 @@ QUARANTINE & RESTORE:
   -q, --quarantine SCANID       quarantine hits from scan
   -n, --clean SCANID            clean malware from scan hits
   -s, --restore FILE|SCANID     restore quarantined file(s)
+  -qd PATH                      override quarantine directory for this run
 
 REPORTING:
   -e, --report [SCANID] [email] view or email scan report (use 'list' to show all)
@@ -385,6 +386,8 @@ OTHER:
   -c, --checkout FILE           submit suspected malware to rfxn.com
   --mkpubpaths                  create per-user pub/ data directories
   --web-proxy IP:PORT           set HTTP/HTTPS proxy
+  -hscan, --hook-scan           scan a file via ModSecurity inspectFile hook (hookscan.sh)
+  -v, --version                 show version information
   -h, --help                    show detailed help
 ```
 
