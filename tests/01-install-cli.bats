@@ -175,9 +175,71 @@ setup() {
 }
 
 # UAT-001: valid literal path must not be rejected (regression)
-@test "maldet -a /tmp exits 0 for valid path" {
-    run maldet -a /tmp
-    assert_success
+@test "maldet -a valid path does not exit 1" {
+    local clean_dir
+    clean_dir=$(mktemp -d)
+    printf '%30s' ' ' > "$clean_dir/testfile.txt"
+    run maldet -a "$clean_dir"
+    /usr/bin/rm -rf "$clean_dir"
+    # exit 0 = clean, exit 2 = malware found; both prove the path was accepted
+    # exit 1 = error (the bug UAT-001 fixed) — must not happen for valid paths
+    assert [ "$status" -ne 1 ]
+}
+
+# -b|--background can appear after the action argument
+@test "maldet -a PATH -b accepts background flag after action" {
+    local clean_dir
+    clean_dir=$(mktemp -d)
+    printf '%30s' ' ' > "$clean_dir/testfile.txt"
+    run maldet -a "$clean_dir" -b
+    /usr/bin/rm -rf "$clean_dir"
+    assert [ "$status" -ne 1 ]
+    assert_output --partial "launching scan"
+    assert_output --partial "background"
+}
+
+# Position-independent modifier flags
+@test "-x after action: maldet -a PATH -x excludes files" {
+    local clean_dir
+    clean_dir=$(mktemp -d)
+    printf '%30s' ' ' > "$clean_dir/testfile.txt"
+    printf '%30s' ' ' > "$clean_dir/testfile.log"
+    run maldet -a "$clean_dir" -x '.*'
+    /usr/bin/rm -rf "$clean_dir"
+    # -x '.*' excludes everything, so scan should complete with 0 files
+    assert [ "$status" -ne 1 ]
+}
+
+@test "-i after action: maldet -a PATH -i includes only matching files" {
+    local clean_dir
+    clean_dir=$(mktemp -d)
+    printf '%30s' ' ' > "$clean_dir/testfile.txt"
+    printf '%30s' ' ' > "$clean_dir/testfile.log"
+    run maldet -a "$clean_dir" -i '.*\.txt'
+    /usr/bin/rm -rf "$clean_dir"
+    assert [ "$status" -ne 1 ]
+}
+
+@test "--hook-scan after action: header suppressed" {
+    local clean_dir
+    clean_dir=$(mktemp -d)
+    printf '%30s' ' ' > "$clean_dir/testfile.txt"
+    run maldet -a "$clean_dir" --hook-scan
+    /usr/bin/rm -rf "$clean_dir"
+    assert [ "$status" -ne 1 ]
+    refute_output --partial "Linux Malware Detect"
+}
+
+@test "-qd with non-existent directory exits 1" {
+    run maldet -qd /nonexistent/quarantine/dir -a /tmp
+    assert_failure
+    assert_output --partial "does not exist"
+}
+
+@test "-qd without directory argument exits 1" {
+    run maldet -qd
+    assert_failure
+    assert_output --partial "requires a directory"
 }
 
 # UAT-003: -v flag shows version

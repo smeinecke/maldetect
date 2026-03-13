@@ -25,14 +25,16 @@ Scan files created or modified in the last \fIDAYS\fR days (default: 7).
 Scan files listed in \fIFILE\fR, one path per line.
 .TP
 \fB\-b\fR, \fB\-\-background\fR
-Run the next scan operation in the background.
+Run the scan operation in the background. May appear anywhere in the command line.
 .SS Filters
 .TP
 \fB\-i\fR, \fB\-\-include\-regex\fR \fIREGEX\fR
 Include only paths matching POSIX extended regular expression.
+May appear anywhere in the command line.
 .TP
 \fB\-x\fR, \fB\-\-exclude\-regex\fR \fIREGEX\fR
 Exclude paths matching POSIX extended regular expression.
+May appear anywhere in the command line.
 .SS Monitoring
 .TP
 \fB\-m\fR, \fB\-\-monitor\fR \fIUSERS\fR|\fIPATHS\fR|\fIFILE\fR|\fIRELOAD\fR
@@ -57,7 +59,8 @@ Restore a quarantined file or all files from \fISCANID\fR.
 .TP
 \fB\-qd\fR \fIPATH\fR
 Override the quarantine directory for this run.
-If \fIPATH\fR does not exist the setting is silently ignored.
+\fIPATH\fR must exist or the command exits with an error.
+May appear anywhere in the command line.
 .SS Reporting
 .TP
 \fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR] [\fIEMAIL\fR]
@@ -105,6 +108,7 @@ Set HTTP/HTTPS proxy for all remote connections.
 \fB\-hscan\fR, \fB\-\-hook\-scan\fR
 Scan a single file supplied by a ModSecurity \fIinspectFile\fR hook.
 Used internally by \fBhookscan.sh\fR; not intended for direct invocation.
+May appear anywhere in the command line.
 .TP
 \fB\-v\fR, \fB\-\-version\fR
 Display version information.

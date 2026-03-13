@@ -372,8 +372,8 @@ QUARANTINE & RESTORE:
   -qd PATH                      override quarantine directory for this run
 
 REPORTING:
-  -e, --report [SCANID] [email] view or email scan report (use 'list' to show all)
-  -E, --dump-report SCANID      dump report to stdout
+  -e, --report [SCANID] [email] view or email scan report
+  -E, --dump-report [SCANID]    dump report to stdout
   --alert-daily                 generate inotify monitor digest alert
   -l, --log                     view event log
 
@@ -386,7 +386,7 @@ OTHER:
   -c, --checkout FILE           submit suspected malware to rfxn.com
   --mkpubpaths                  create per-user pub/ data directories
   --web-proxy IP:PORT           set HTTP/HTTPS proxy
-  -hscan, --hook-scan           scan a file via ModSecurity inspectFile hook (hookscan.sh)
+  -hscan, --hook-scan           scan via ModSecurity inspectFile hook
   -v, --version                 show version information
   -h, --help                    show detailed help
 ```
@@ -466,15 +466,15 @@ The daily scan auto-detects installed control panels and adjusts scan paths acco
 |-------|-----------|
 | cPanel | `/home?/?/public_html/` (+ addon/subdomain docroots) |
 | Plesk | `/var/www/vhosts/?/` |
-| DirectAdmin | `/home?/?/domains/?/public_html/` |
+| DirectAdmin | `/home?/?/domains/?/public_html/`, `/var/www/html/?/` |
 | Ensim | `/home/virtual/?/fst/var/www/html/` |
-| ISPConfig | `/var/www/clients/?/web?/web` |
-| Virtualmin | `/home/?/public_html/` |
-| ISPmanager | `/var/www/?/data/` |
+| ISPConfig | `/var/www/clients/?/web?/web`, `…/subdomains`, `/var/www` |
+| Virtualmin | `/home/?/public_html/`, `/home/?/domains/?/public_html/` |
+| ISPmanager | `/var/www/?/data/`, `/home/?/data/` |
 | Froxlor | `/var/customers/webs/` |
 | Bitrix | `/home/bitrix/www/`, `/home/bitrix/ext_www/?/` |
-| VestaCP / HestiaCP | `/home/?/web/?/public_html/` |
-| DTC | `${conf_hosting_path}/` |
+| VestaCP / HestiaCP | `/home/?/web/?/public_html/` (+ `public_shtml`, `tmp`, `private`) |
+| DTC | `${conf_hosting_path:-/var/www/sites}/?/?/subdomains/?/html/` |
 
 If monitor mode is active, daily scans are skipped and a daily report of monitoring events is issued instead.
 
@@ -577,7 +577,7 @@ Remote import URLs can be configured for automatic download during signature upd
 
 ## 9. Quarantine & Cleaning
 
-Quarantined files are stored under `/usr/local/maldetect/quarantine/` with permissions set to `000`. Original path, owner, permissions, and modification time are recorded in `quarantine.hist` for full restoration.
+Quarantined files are stored under `/usr/local/maldetect/quarantine/` with permissions set to `000`. Original path, owner, permissions, and modification time are recorded in `/usr/local/maldetect/sess/quarantine.hist` for full restoration.
 
 ```bash
 # Quarantine all hits from a scan
@@ -593,7 +593,7 @@ maldet -s /usr/local/maldetect/quarantine/config.php.23754
 maldet -n SCANID
 ```
 
-**Quarantine file naming:** `YYYYMMDD-HH-SIGNATURE-SCANPID.INODE`
+**Quarantine file naming:** `FILENAME.INODE` (e.g., `config.php.23754`)
 
 For non-root scans (e.g., ModSecurity2 upload scanning), quarantine data is stored under `/usr/local/maldetect/pub/USERNAME/quar/`. Use the `-U` flag to interact with non-root quarantine:
 

@@ -64,6 +64,10 @@ v2.0.1 | Mar 10 2026:
 
   -- Bug Fixes --
 
+[Fix] clamav_linksigs() copied empty lmd.user.ndb/hdb to ClamAV data dirs
+      causing "Malformed database" errors; gensigs() called clamav_linksigs()
+      before runtime user sig files were populated — reordered to copy after
+      population and added -s guard to skip empty files
 [Fix] lmdup(): validate upstream version string against semver format and
       strip whitespace before path construction; prevents directory traversal
       via malicious version file content; quote all cd targets and add error
@@ -263,6 +267,10 @@ v2.0.1 | Mar 10 2026:
 [Fix] -a/--scan-all: exit 1 with error message when scan path does not
       exist; non-glob literal paths are validated before scan dispatch;
       glob paths (containing *, ?, [) pass through to find unchanged
+[Change] CLI modifier flags (-x, -i, -hscan, -qd) are now position-independent;
+      may appear before or after action flags (-a, -r, -f);
+      -qd with non-existent directory now exits 1 instead of silent ignore;
+      -qd override preserved when combined with -U/--user
 
   -- Changes --
 

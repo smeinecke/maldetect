@@ -450,7 +450,9 @@ clamav_linksigs() {
 	local cpath="$1"
 	if [ -d "$cpath" ]; then
 		rm -f "$cpath"/rfxn.{hdb,ndb,yara} 2> /dev/null ; cp -f "$sigdir"/rfxn.{hdb,ndb,yara} "$cpath"/ 2> /dev/null
-		rm -f "$cpath"/lmd.user.* 2> /dev/null ; cp -f "$sigdir/lmd.user.ndb" "$sigdir/lmd.user.hdb" "$cpath"/ 2> /dev/null
+		rm -f "$cpath"/lmd.user.* 2> /dev/null
+		[ -s "$sigdir/lmd.user.ndb" ] && /usr/bin/cp -f "$sigdir/lmd.user.ndb" "$cpath"/ 2> /dev/null
+		[ -s "$sigdir/lmd.user.hdb" ] && /usr/bin/cp -f "$sigdir/lmd.user.hdb" "$cpath"/ 2> /dev/null
 	fi
 }
 
@@ -483,7 +485,7 @@ usage: maldet [OPTION] [ARGUMENT]
 
   reporting:
     -e|--report [SCANID] [email]  view scan report
-    -E|--dump-report SCANID     dump report to stdout
+    -E|--dump-report [SCANID]   dump report to stdout
     --alert-daily               generate inotify monitor digest alert
     -l|--log                    view event log
 
@@ -512,7 +514,7 @@ SCANNING:
        e.g: maldet -a /home/?/public_html
 
     -r, --scan-recent PATH DAYS
-       Scan files created/modified in the last X days (default: 7d, wildcard: ?)
+       Scan files changed in the last X days (default: 7d, wildcard: ?)
        e.g: maldet -r /home/?/public_html 2
 
     -f, --file-list FILE
@@ -520,17 +522,23 @@ SCANNING:
        e.g: maldet -f /root/scan_file_list
 
     -b, --background
-       Execute operations in the background, ideal for large scans
+       Execute scan operations in the background, ideal for large scans.
+       May appear anywhere in the command line.
        e.g: maldet -b -r /home/?/public_html 7
+       e.g: maldet -a /home -b
 
 SCAN FILTERS:
     -i, --include-regex REGEX
-       Include paths/files based on POSIX extended regular expression (grep -E)
+       Include paths/files based on POSIX extended regular expression (grep -E).
+       May appear anywhere in the command line.
        e.g: maldet --include-regex ".*/wp-content/.*|.*.php\$"
+       e.g: maldet -a /home -i ".*.php\$"
 
     -x, --exclude-regex REGEX
-       Exclude paths/files based on POSIX extended regular expression (grep -E)
+       Exclude paths/files based on POSIX extended regular expression (grep -E).
+       May appear anywhere in the command line.
        e.g: maldet --exclude-regex ".*wp-content/w3tc/.*|.*core.[0-9]+\$"
+       e.g: maldet -a /home -x ".*\.log"
 
     -co, --config-option VAR=VALUE[,VAR=VALUE,...]
        Override conf.maldet config options at runtime
@@ -572,8 +580,11 @@ QUARANTINE & RESTORE:
        e.g: maldet --restore 050910-1534.21135
 
     -qd PATH
-       Override the quarantine directory for this run
+       Override the quarantine directory for this run.
+       PATH must exist or the command exits with an error.
+       May appear anywhere in the command line.
        e.g: maldet -qd /data/quarantine -q 050910-1534.21135
+       e.g: maldet -q 050910-1534.21135 -qd /data/quarantine
 
 REPORTING:
     -e, --report [SCANID] [email]
@@ -584,8 +595,8 @@ REPORTING:
        e.g: maldet --report 050910-1534.21135
        e.g: maldet --report 050910-1534.21135 user@domain.com
 
-    -E, --dump-report SCANID
-       Dump scan report to stdout for a specific SCANID
+    -E, --dump-report [SCANID]
+       Dump scan report to stdout (default: most recent scan)
        e.g: maldet --dump-report 050910-1534.21135
 
     --alert-daily (also: --monitor-report)
@@ -623,7 +634,7 @@ OTHER:
        Clear logs, quarantine queue, session and temporary data
 
     -c, --checkout FILE
-       Upload suspected malware to rfxn.com for review & hashing into signatures
+       Submit suspected malware to rfxn.com for review & signature hashing
 
     --mkpubpaths
        Create per-user pub/ data directories for non-root scan operations.
@@ -633,8 +644,9 @@ OTHER:
        Set HTTP/HTTPS proxy for all remote URL calls
 
     -hscan, --hook-scan (also: --modsec)
-       Scan a single file supplied by a ModSecurity inspectFile hook
-       Used internally by hookscan.sh; not intended for direct invocation
+       Scan a single file supplied by a ModSecurity inspectFile hook.
+       Used internally by hookscan.sh; not intended for direct invocation.
+       May appear anywhere in the command line.
 
     -v, --version
        Show version information
@@ -3706,10 +3718,6 @@ gensigs() {
 	else
 		cat "$sig_md5_file" > "$runtime_md5"
 	fi
-	for cp in $clamav_paths; do
-		clamav_linksigs "$cp"
-	done
-
 	if [ "$scan_clamscan" == "1" ]; then
 		if [ -s "$sig_user_hex_file" ]; then
 			while IFS= read -r i; do
@@ -3731,6 +3739,11 @@ gensigs() {
 			cp "$sig_cav_md5_file" "$runtime_hdb"
 		fi
 	fi
+	# Copy sigs to ClamAV dirs AFTER runtime user sigs are populated;
+	# empty lmd.user.* files cause ClamAV "Malformed database" errors
+	for cp in $clamav_paths; do
+		clamav_linksigs "$cp"
+	done
 
 	# Apply ignore_sigs filtering to runtime copies (non-destructive)
 	if [ -f "$ignore_sigs" ]; then

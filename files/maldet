@@ -101,6 +101,57 @@ fi
 # prerun operations
 prerun
 
+# Pre-parse: extract position-independent modifier flags from anywhere in argv
+_all_args=("$@")
+_remaining_args=()
+for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
+	case "${_all_args[$_i]}" in
+		-b|--background)
+			set_background=1
+		;;
+		-hscan|--hook-scan|--modsec)
+			hscan=1
+		;;
+		-x|--exclude-regex)
+			((_i++))
+			if [ "$_i" -lt "${#_all_args[@]}" ]; then
+				exclude_regex_args=(-not -regex "${_all_args[$_i]}")
+			else
+				echo "ERROR: -x/--exclude-regex requires a regex pattern argument" >&2
+				exit 1
+			fi
+		;;
+		-i|--include-regex)
+			((_i++))
+			if [ "$_i" -lt "${#_all_args[@]}" ]; then
+				include_regex_args=(-regex "${_all_args[$_i]}")
+			else
+				echo "ERROR: -i/--include-regex requires a regex pattern argument" >&2
+				exit 1
+			fi
+		;;
+		-qd)
+			((_i++))
+			if [ "$_i" -ge "${#_all_args[@]}" ]; then
+				echo "ERROR: -qd requires a directory argument" >&2
+				exit 1
+			fi
+			if [ ! -d "${_all_args[$_i]}" ]; then
+				echo "ERROR: -qd directory does not exist: ${_all_args[$_i]}" >&2
+				exit 1
+			fi
+			eout "{scan} set quarantine path: ${_all_args[$_i]}" 1
+			quardir="${_all_args[$_i]}"
+			_qd_override=1
+		;;
+		*)
+			_remaining_args+=("${_all_args[$_i]}")
+		;;
+	esac
+done
+set -- "${_remaining_args[@]}"
+unset _all_args _remaining_args _i
+
 if [ -z "$1" ]; then
 	header
 	usage_short
@@ -135,9 +186,6 @@ else
 					exit 1
 				fi
 			;;
-			-hscan|--hook-scan|--modsec)
-				hscan=1
-			;;
 			-U|--user)
 				shift
 				user="$1"
@@ -155,7 +203,9 @@ else
 					echo "ERROR: user '$user' does not exist"
 					exit 1
 				fi
-				quardir=$userbasedir/$user/quar
+				if [ -z "$_qd_override" ]; then
+					quardir=$userbasedir/$user/quar
+				fi
 				sessdir=$userbasedir/$user/sess
 				tmpdir=$userbasedir/$user/tmp
 				maldet_log=$userbasedir/$user/event_log
@@ -183,16 +233,6 @@ else
 					source "$compatcnf"
 				fi
 			;;
-			-qd)
-				shift
-				if [ -d "$1" ];  then
-					eout "{scan} set quarantine path: $1" 1
-					quardir="$1"
-				fi
-			;;
-			-b|--background)
-				set_background=1
-			;;
 			-c|--checkout)
 				shift
 				if [ -z "$1" ]; then
@@ -201,22 +241,6 @@ else
 				fi
 				header
 				checkout "$1"
-			;;
-			-x|--exclude-regex)
-				shift
-				if [ -z "$1" ]; then
-					echo "ERROR: -x/--exclude-regex requires a regex pattern argument" >&2
-					exit 1
-				fi
-				exclude_regex_args=(-not -regex "$1")
-			;;
-			-i|--include-regex)
-				shift
-				if [ -z "$1" ]; then
-					echo "ERROR: -i/--include-regex requires a regex pattern argument" >&2
-					exit 1
-				fi
-				include_regex_args=(-regex "$1")
 			;;
 			--wget-proxy|--curl-proxy|--web-proxy)
 				shift

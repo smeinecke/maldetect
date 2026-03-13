@@ -60,6 +60,39 @@ teardown() {
     [ -f "$MOCK_CLAMAV_DIR/rfxn.hdb" ] || [ -f "$MOCK_CLAMAV_DIR/rfxn.ndb" ]
 }
 
+@test "clamav_linksigs skips empty lmd.user sig files" {
+    _source_lmd_stack_clamav
+    mkdir -p "$MOCK_CLAMAV_DIR"
+    # Create empty user sig symlinks (simulates pre-population state)
+    local _empty_ndb _empty_hdb
+    _empty_ndb=$(mktemp "$tmpdir/.empty.ndb.XXXXXX")
+    _empty_hdb=$(mktemp "$tmpdir/.empty.hdb.XXXXXX")
+    ln -fs "$_empty_ndb" "$sigdir/lmd.user.ndb"
+    ln -fs "$_empty_hdb" "$sigdir/lmd.user.hdb"
+    clamav_linksigs "$MOCK_CLAMAV_DIR"
+    # Empty files must NOT be copied — ClamAV rejects 0-byte .ndb/.hdb
+    [ ! -f "$MOCK_CLAMAV_DIR/lmd.user.ndb" ]
+    [ ! -f "$MOCK_CLAMAV_DIR/lmd.user.hdb" ]
+    rm -f "$_empty_ndb" "$_empty_hdb"
+}
+
+@test "clamav_linksigs copies non-empty lmd.user sig files" {
+    _source_lmd_stack_clamav
+    mkdir -p "$MOCK_CLAMAV_DIR"
+    # Create non-empty user sig files
+    local _pop_ndb _pop_hdb
+    _pop_ndb=$(mktemp "$tmpdir/.pop.ndb.XXXXXX")
+    _pop_hdb=$(mktemp "$tmpdir/.pop.hdb.XXXXXX")
+    echo "test:0:*:deadbeef" > "$_pop_ndb"
+    echo "d41d8cd98f00b204e9800998ecf8427e:0:test" > "$_pop_hdb"
+    ln -fs "$_pop_ndb" "$sigdir/lmd.user.ndb"
+    ln -fs "$_pop_hdb" "$sigdir/lmd.user.hdb"
+    clamav_linksigs "$MOCK_CLAMAV_DIR"
+    [ -f "$MOCK_CLAMAV_DIR/lmd.user.ndb" ]
+    [ -f "$MOCK_CLAMAV_DIR/lmd.user.hdb" ]
+    rm -f "$_pop_ndb" "$_pop_hdb"
+}
+
 @test "clamav_linksigs skips non-existent directories" {
     cp "$LMD_INSTALL/internals/internals.conf" "$LMD_INSTALL/internals/internals.conf.bak"
     sed -i 's|^clamav_paths=.*|clamav_paths="/nonexistent/clamav/path"|' "$LMD_INSTALL/internals/internals.conf"

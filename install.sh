@@ -25,7 +25,9 @@ clamav_linksigs() {
 	local cpath="$1"
 	if [ -d "$cpath" ]; then
 		rm -f "$cpath"/rfxn.* ; cp -f "$inspath/sigs/rfxn.ndb" "$inspath/sigs/rfxn.hdb" "$inspath/sigs/rfxn.yara" "$cpath/" 2>/dev/null
-		rm -f "$cpath"/lmd.user.* ; cp -f "$inspath/sigs/lmd.user.ndb" "$inspath/sigs/lmd.user.hdb" "$cpath/" 2>/dev/null
+		rm -f "$cpath"/lmd.user.* 2>/dev/null
+		[ -s "$inspath/sigs/lmd.user.ndb" ] && /usr/bin/cp -f "$inspath/sigs/lmd.user.ndb" "$cpath"/ 2>/dev/null
+		[ -s "$inspath/sigs/lmd.user.hdb" ] && /usr/bin/cp -f "$inspath/sigs/lmd.user.hdb" "$cpath"/ 2>/dev/null
 	fi
 }
 
