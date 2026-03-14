@@ -8,7 +8,7 @@ maldet \- Linux malware scanner for shared hosting environments
 .B maldet
 (Linux Malware Detect) is an open\-source malware scanner designed for
 Linux shared hosting environments.
-It provides multi\-stage detection using MD5 hashes, HEX patterns,
+It provides multi\-stage detection using MD5 and SHA\-256 hashes, HEX patterns,
 statistical analysis, native YARA rules, and optional ClamAV integration.
 Detected threats can be quarantined, cleaned, or reported via email,
 Slack, Telegram, and Discord.
@@ -158,7 +158,16 @@ Shared incremental log reading library.
 Shared structured event logging library.
 .TP
 .I /usr/local/maldetect/sigs/
-Signature directory (MD5, HEX, YARA, ClamAV).
+Signature directory (MD5, SHA\-256, HEX, YARA, ClamAV).
+.TP
+.I /usr/local/maldetect/sigs/sha256v2.dat
+SHA\-256 hash signatures (HASH:SIZE:{SHA256}sig.name.N).
+.TP
+.I /usr/local/maldetect/sigs/custom.sha256.dat
+User\-defined SHA\-256 hash signatures.
+.TP
+.I /usr/local/maldetect/sigs/rfxn.hsb
+ClamAV SHA\-256 hash signature database (ClamAV >= 0.97).
 .TP
 .I /usr/local/maldetect/quarantine/
 Quarantine storage for detected malware.
@@ -200,6 +209,7 @@ Key variables by category:
 .BR discord_webhook_url .
 .PP
 .B Scanning:
+.BR scan_hashtype ,
 .BR scan_clamscan ,
 .BR scan_yara ,
 .BR scan_yara_scope ,
@@ -228,12 +238,27 @@ Key variables by category:
 .B Maintenance:
 .BR autoupdate_signatures ,
 .BR autoupdate_version ,
+.BR autoupdate_version_hashed ,
 .BR cron_prune_days ,
 .BR cron_daily_scan ,
 .BR scan_days .
 .PP
+.B autoupdate_version_hashed
+validates the SHA\-256 hash of installed LMD executables against known good
+upstream values on each update check.
+Falls back to MD5 verification if sha256sum is unavailable.
+Forces reinstallation on mismatch.
+Default: 1.
+.PP
+.B scan_hashtype
+selects the hash algorithm for file\-hash signature matching (stage 1).
+Values: \fBauto\fR (use SHA\-256 if CPU has hardware acceleration, else MD5),
+\fBsha256\fR (always SHA\-256), \fBmd5\fR (always MD5, legacy),
+\fBboth\fR (check both MD5 and SHA\-256 signatures).
+Default: auto.
+.PP
 .B scan_workers
-sets the number of parallel workers for native MD5 and HEX scan passes.
+sets the number of parallel workers for native MD5, SHA\-256, and HEX scan passes.
 A value of 0 (default) uses automatic detection: 2 workers per CPU core, up to 8.
 Set to 1 for single\-threaded operation.
 Maximum value: 8.

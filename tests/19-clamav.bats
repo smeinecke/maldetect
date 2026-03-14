@@ -32,7 +32,8 @@ teardown() {
 
 @test "gensigs creates HDB symlink in sigdir after scan" {
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR"
+    # Force MD5 mode — on SHA-NI hardware, auto mode skips HDB generation
+    maldet -co scan_hashtype=md5 -a "$TEST_SCAN_DIR"
     [ -L "$LMD_INSTALL/sigs/lmd.user.hdb" ]
 }
 
@@ -127,6 +128,39 @@ _source_lmd_stack_clamav() {
     source "$LMD_INSTALL/internals/internals.conf"
     source "$LMD_INSTALL/conf.maldet"
     source "$LMD_INSTALL/internals/functions"
+}
+
+@test "_process_clamav_hits prefixes YARA hits with {YARA} not {YARA backslash}" {
+    _source_lmd_stack_clamav
+
+    # Create a file for the [ -f ] check inside _process_clamav_hits
+    echo "yara test content" > "$TEST_SCAN_DIR/yara-test.php"
+
+    # Set up minimal infrastructure
+    local scan_session_file
+    scan_session_file=$(mktemp "$tmpdir/.scan_session.XXXXXX")
+    scan_session="$scan_session_file"
+    hits_history=$(mktemp "$tmpdir/.hits_hist.XXXXXX")
+    progress_hits=0
+    quarantine_hits=0
+    _in_scan_context=""
+
+    # Create mock ClamAV results with a YARA hit:
+    # ClamAV reports YARA matches as "YARA.RULE_NAME"
+    local mock_results
+    mock_results=$(mktemp "$tmpdir/.mock_clam_results.XXXXXX")
+    echo "$TEST_SCAN_DIR/yara-test.php: YARA.Safe0ver_Shell FOUND" > "$mock_results"
+
+    _process_clamav_hits "$mock_results" ""
+
+    # Must contain {YARA} prefix without backslash
+    run grep -F '{YARA}' "$scan_session_file"
+    assert_success
+    # Must NOT contain escaped \}
+    run grep -F '{YARA\}' "$scan_session_file"
+    assert_failure
+
+    rm -f "$mock_results" "$scan_session_file" "$hits_history"
 }
 
 # S-003: F-006 unit test — _process_clamav_hits() colon-path parsing

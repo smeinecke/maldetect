@@ -2,6 +2,12 @@ v2.0.1 | Mar 10 2026:
 
   -- New Features --
 
+[New] SHA-256 hash-based scanning: auto-detects CPU hardware acceleration
+      (SHA-NI on x86, SHA2 on ARM) and selects optimal hash algorithm;
+      scan_hashtype config (auto/sha256/md5/both); sha256v2.dat signature
+      file; ClamAV .hsb integration with version gate (>= 0.97); batch
+      parallel SHA-256 workers; custom.sha256.dat for user-defined sigs;
+      .info quarantine metadata accepts either MD5 or SHA-256 natively
 [New] email alert system reimagined: HTML+text dual-format email alerts with
       unified rfxn design language (teal brand bar, card-based threat entries,
       color-coded hit types); template engine with {{TOKEN}} placeholders;
@@ -68,6 +74,9 @@ v2.0.1 | Mar 10 2026:
       causing "Malformed database" errors; gensigs() called clamav_linksigs()
       before runtime user sig files were populated — reordered to copy after
       population and added -s guard to skip empty files
+[Fix] _process_clamav_hits() YARA prefix produced {YARA\} on bash 4.x due to
+      literal backslash in ${var/pat/{YARA\}} replacement; use variable to avoid
+      bash 4.2 parameter substitution escape bug — broke type badge and sig display
 [Fix] lmdup(): validate upstream version string against semver format and
       strip whitespace before path construction; prevents directory traversal
       via malicious version file content; quote all cd targets and add error
@@ -267,6 +276,11 @@ v2.0.1 | Mar 10 2026:
 [Fix] -a/--scan-all: exit 1 with error message when scan path does not
       exist; non-glob literal paths are validated before scan dispatch;
       glob paths (containing *, ?, [) pass through to find unchanged
+[Fix] _import_config(): conf.maldet permissions regressed from 640 to 644
+      after upgrade; pkg_config_merge preserves source-tree permissions (644)
+      on the temp file, and command mv replaced the installed 640 config;
+      add explicit chmod 640 after mv to restore restrictive permissions
+      (conf.maldet contains credentials: smtp_pass, slack_token)
 [Change] CLI modifier flags (-x, -i, -hscan, -qd) are now position-independent;
       may appear before or after action flags (-a, -r, -f);
       -qd with non-existent directory now exits 1 instead of silent ignore;
@@ -274,6 +288,11 @@ v2.0.1 | Mar 10 2026:
 
   -- Changes --
 
+[Change] Update verification (sigpack, cleanpack, tarball, version tamper
+      check) prefers SHA-256 over MD5; graceful MD5 fallback when sha256sum
+      binary is absent; new _verify_download() helper eliminates inline
+      duplication; fixes copy-paste bug in cleanpack error message
+      (sig_sigpack_url -> sig_clpack_url)
 [Change] HTML email rendered on-demand at send time from current templates;
       persistent .html session files no longer stored; old scan reports
       always use the latest email design; eliminates the empty-file-path
@@ -320,3 +339,9 @@ v2.0.1 | Mar 10 2026:
       _mon_find_results; monitor_scanned_history writes once per inotify event
 [Change] conf.maldet: document Slack token scope change for users upgrading
       from v1.x (files.upload replaced by files.getUploadURLExternal)
+[Change] _import_config(): replace importconf heredoc template with
+      pkg_config_merge() AWK-based file merge; 17 compat variable migrations +
+      3 special-case migrations preserved via _compat_migrate helper; delete
+      files/internals/importconf (~440 lines); eliminates conf.maldet sync
+      maintenance between importconf and conf.maldet
+[Change] vendor pkg_lib v1.0.2 to v1.0.3 (config merge permission preservation)

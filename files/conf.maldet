@@ -123,11 +123,12 @@ autoupdate_signatures="1"
 # [0 = disabled, 1 = enabled]
 autoupdate_version="1"
 
-# This controls validating the LMD executable MD5 hash with known
-# good upstream hash value. This allows LMD to replace the
-# executable / force a reinstallation in the event the LMD executable
-# is tampered with or corrupted. If you intend to make customizations
-# to the LMD executable, you should disable this feature.
+# This controls validating the LMD executable SHA-256 hash with known
+# good upstream hash value (falls back to MD5 if sha256sum unavailable).
+# This allows LMD to replace the executable / force a reinstallation
+# in the event the LMD executable is tampered with or corrupted. If you
+# intend to make customizations to the LMD executable, you should
+# disable this feature.
 # [0 = disabled, 1 = enabled]
 autoupdate_version_hashed="1"
 
@@ -166,11 +167,24 @@ import_config_expire="43200"
 import_custsigs_md5_url=""
 import_custsigs_hex_url=""
 import_custsigs_yara_url=""
+import_custsigs_sha256_url=""
 
 ##
 # [ SCAN OPTIONS ]
 ##
-# Number of parallel workers for native scan passes (MD5 and HEX).
+# Hash algorithm for file-hash signature matching (stage 1).
+# Controls which hash-based signatures are checked during scans.
+#   auto    - use SHA-256 if CPU has hardware acceleration, else MD5
+#   sha256  - always use SHA-256 (requires sha256sum binary)
+#   md5     - always use MD5 (legacy behavior)
+#   both    - check both MD5 and SHA-256 signatures (most thorough, slowest)
+# Note: 'both' mode hashes every file twice and is intended for transitional
+# periods when migrating from MD5 to SHA-256 signature sets. Not recommended
+# for inotify monitoring due to doubled I/O overhead.
+# [ auto = default ]
+scan_hashtype="auto"
+
+# Number of parallel workers for native scan passes (MD5, SHA-256, and HEX).
 # A value of 0 uses automatic detection: 2 workers per CPU core, up to 8.
 # [ 0 = auto, 1 = single-threaded, max = 8 ]
 scan_workers="0"

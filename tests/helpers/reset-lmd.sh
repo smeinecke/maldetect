@@ -34,6 +34,7 @@ else
     # Main sig files (hex.dat, md5v2.dat, rfxn.*, maldet.sigs.ver) stay in place
     > "$LMD_INSTALL/sigs/custom.md5.dat"
     > "$LMD_INSTALL/sigs/custom.hex.dat"
+    > "$LMD_INSTALL/sigs/custom.sha256.dat"
     > "$LMD_INSTALL/sigs/custom.yara"
     rm -rf "$LMD_INSTALL/sigs/custom.yara.d"
     mkdir -p "$LMD_INSTALL/sigs/custom.yara.d"
@@ -49,6 +50,7 @@ rm -rf "$LMD_INSTALL/tmp/"*
 if [ "${RESET_FULL:-0}" = "1" ]; then
     > "$LMD_INSTALL/sigs/custom.md5.dat"
     > "$LMD_INSTALL/sigs/custom.hex.dat"
+    > "$LMD_INSTALL/sigs/custom.sha256.dat"
     > "$LMD_INSTALL/sigs/custom.yara"
     rm -rf "$LMD_INSTALL/sigs/custom.yara.d"
     mkdir -p "$LMD_INSTALL/sigs/custom.yara.d"

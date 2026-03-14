@@ -11,7 +11,6 @@ PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 lmd_version="2.0.1"
 inspath=/usr/local/maldetect
 logf=$inspath/logs/event_log
-conftemp="$inspath/internals/importconf"
 
 # Source shared packaging library
 PKG_BACKUP_SYMLINK="maldetect.last"
@@ -24,10 +23,14 @@ source files/internals/pkg_lib.sh
 clamav_linksigs() {
 	local cpath="$1"
 	if [ -d "$cpath" ]; then
-		rm -f "$cpath"/rfxn.* ; cp -f "$inspath/sigs/rfxn.ndb" "$inspath/sigs/rfxn.hdb" "$inspath/sigs/rfxn.yara" "$cpath/" 2>/dev/null
+		rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null
+		cp -f "$inspath/sigs/rfxn.ndb" "$inspath/sigs/rfxn.hdb" "$inspath/sigs/rfxn.yara" "$cpath/" 2>/dev/null
+		[ -f "$inspath/sigs/rfxn.hsb" ] && [ -s "$inspath/sigs/rfxn.hsb" ] && \
+			/usr/bin/cp -f "$inspath/sigs/rfxn.hsb" "$cpath"/ 2>/dev/null
 		rm -f "$cpath"/lmd.user.* 2>/dev/null
 		[ -s "$inspath/sigs/lmd.user.ndb" ] && /usr/bin/cp -f "$inspath/sigs/lmd.user.ndb" "$cpath"/ 2>/dev/null
 		[ -s "$inspath/sigs/lmd.user.hdb" ] && /usr/bin/cp -f "$inspath/sigs/lmd.user.hdb" "$cpath"/ 2>/dev/null
+		[ -s "$inspath/sigs/lmd.user.hsb" ] && /usr/bin/cp -f "$inspath/sigs/lmd.user.hsb" "$cpath"/ 2>/dev/null
 	fi
 }
 
@@ -58,6 +61,8 @@ _install_core() {
 	mkdir -p /usr/local/share/man/man1/
 	gzip -9 "$inspath/maldet.1"
 	pkg_symlink "$inspath/maldet.1.gz" /usr/local/share/man/man1/maldet.1.gz
+	# Create empty custom.sha256.dat if absent (upgrade path: prior versions lack it)
+	[ -f "$inspath/sigs/custom.sha256.dat" ] || touch "$inspath/sigs/custom.sha256.dat"
 	for lp in $clamav_paths; do
 		clamav_linksigs "$lp"
 	done
@@ -153,26 +158,95 @@ _postinfo() {
 
 # --- Config import on upgrade ---
 
+# _compat_migrate old_conf merged_conf old_var new_var
+# Migrate a renamed config variable from old backup into merged output.
+# Only migrates if: old_var present and non-empty in old_conf,
+# AND new_var NOT present (or empty) in old_conf (user hasn't already migrated).
+# Mirrors compat.conf semantics: [ ! "$new_var" ] && [ "$old_var" ]
+_compat_migrate() {
+	local _old_conf="$1" _merged="$2" _old_var="$3" _new_var="$4"
+	local _val
+	# Skip if user's old config already has the new variable name with a non-empty value.
+	# CH-3-001: pkg_config_get returns 0 with empty output for VAR=""; treat empty as
+	# "not set" to match compat.conf's [ ! "$new_var" ] semantics.
+	_val=$(pkg_config_get "$_old_conf" "$_new_var") && [[ -n "$_val" ]] && return 0
+	# Read old variable value; skip if absent from old config
+	_val=$(pkg_config_get "$_old_conf" "$_old_var") || return 0
+	# Guard: skip empty values to avoid overwriting real defaults (CH-001)
+	[[ -n "$_val" ]] || return 0
+	# Apply old value to new variable name in merged output
+	pkg_config_set "$_merged" "$_new_var" "$_val"
+}
+
 _import_config() {
-	if [ -f "$conftemp" ] && [ -f "${inspath}.last/conf.maldet" ]; then
-		# shellcheck disable=SC1091
-		. files/conf.maldet
-		# shellcheck disable=SC1090
-		. "${inspath}.last/conf.maldet"
-		if [ "$quarantine_hits" == "0" ] && [ "$quar_hits" == "1" ]; then
-			quarantine_hits=1
+	local _old_conf="${bkpath:-}/conf.maldet"
+	[ -f "$_old_conf" ] || return 0
+
+	local _merge_tmp
+	_merge_tmp=$(mktemp "${PKG_TMPDIR:-/tmp}/lmd-conf-merge.XXXXXX")
+	trap 'rm -f "$_merge_tmp"' RETURN  # CH-002: cleanup on any exit path
+
+	# AWK merge: old user values into new template structure
+	pkg_config_merge "$_old_conf" "files/conf.maldet" "$_merge_tmp" || {
+		pkg_warn "config merge failed, using new defaults"
+		return 0
+	}
+
+	# Standard compat migrations: renamed user-facing config variables.
+	# Only variables present in conf.maldet need install-time migration.
+	# Internal vars (sig paths, version URLs) handled at runtime by compat.conf.
+	_compat_migrate "$_old_conf" "$_merge_tmp" suppress_cleanhit email_ignore_clean
+	_compat_migrate "$_old_conf" "$_merge_tmp" quar_clean quarantine_clean
+	_compat_migrate "$_old_conf" "$_merge_tmp" quar_hits quarantine_hits
+	_compat_migrate "$_old_conf" "$_merge_tmp" quar_susp quarantine_suspend_user
+	_compat_migrate "$_old_conf" "$_merge_tmp" quar_susp_minuid quarantine_suspend_user_minuid
+	_compat_migrate "$_old_conf" "$_merge_tmp" maxdepth scan_max_depth
+	_compat_migrate "$_old_conf" "$_merge_tmp" minfilesize scan_min_filesize
+	_compat_migrate "$_old_conf" "$_merge_tmp" maxfilesize scan_max_filesize
+	_compat_migrate "$_old_conf" "$_merge_tmp" hexdepth scan_hexdepth
+	_compat_migrate "$_old_conf" "$_merge_tmp" clamav_scan scan_clamscan
+	_compat_migrate "$_old_conf" "$_merge_tmp" tmpdir_paths scan_tmpdir_paths
+	_compat_migrate "$_old_conf" "$_merge_tmp" public_scan scan_user_access
+	_compat_migrate "$_old_conf" "$_merge_tmp" pubuser_minuid scan_user_access_minuid
+	_compat_migrate "$_old_conf" "$_merge_tmp" scan_nice scan_cpunice
+	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_stime inotify_sleep
+	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_webdir inotify_docroot
+	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_nice inotify_cpunice
+
+	# Special case: scan_hexfifo consolidation (v2.0.1)
+	# Old scan_hexfifo + scan_hexfifo_depth are consolidated into scan_hexdepth.
+	# First migrate the pre-1.5 intermediate names if present:
+	_compat_migrate "$_old_conf" "$_merge_tmp" hex_fifo_scan scan_hexfifo
+	_compat_migrate "$_old_conf" "$_merge_tmp" hex_fifo_depth scan_hexfifo_depth
+	# Then, if hexfifo was enabled, propagate its depth to scan_hexdepth:
+	local _hexfifo_val _hexfifo_depth
+	_hexfifo_val=$(pkg_config_get "$_old_conf" scan_hexfifo 2>/dev/null) || \
+		_hexfifo_val=$(pkg_config_get "$_old_conf" hex_fifo_scan 2>/dev/null) || \
+		_hexfifo_val=""  # safe: suppress "not found" when var absent from old config
+	if [[ "${_hexfifo_val:-0}" = "1" ]]; then
+		_hexfifo_depth=$(pkg_config_get "$_old_conf" scan_hexfifo_depth 2>/dev/null) || \
+			_hexfifo_depth=$(pkg_config_get "$_old_conf" hex_fifo_depth 2>/dev/null) || \
+			_hexfifo_depth=""  # safe: suppress "not found" when var absent from old config
+		if [[ -n "$_hexfifo_depth" ]]; then
+			pkg_config_set "$_merge_tmp" scan_hexdepth "$_hexfifo_depth"
 		fi
-		if [ "$quarantine_clean" == "0" ] && [ "$quar_clean" == "1" ]; then
-			quarantine_clean="1"
-		fi
-		if [ -f "files/internals/compat.conf" ]; then
-			# shellcheck disable=SC1091
-			source files/internals/compat.conf
-		fi
-		# shellcheck disable=SC1090
-		source "$conftemp"
-		pkg_info "imported config options from ${inspath}.last/conf.maldet"
 	fi
+
+	# Special case: scan_hex_workers -> scan_workers (unconditional, v2.0.1)
+	# conf.maldet defaults scan_workers="0", so standard _compat_migrate would
+	# see new_var in merged output and skip. This override is unconditional:
+	# if old config had scan_hex_workers set, it always overrides scan_workers.
+	local _hex_workers
+	_hex_workers=$(pkg_config_get "$_old_conf" scan_hex_workers 2>/dev/null) || \
+		_hex_workers=""  # safe: suppress "not found" when var absent from old config
+	if [[ -n "$_hex_workers" ]]; then
+		pkg_config_set "$_merge_tmp" scan_workers "$_hex_workers"
+	fi
+
+	# Install merged config
+	command mv -f "$_merge_tmp" "$inspath/conf.maldet"
+	chmod 640 "$inspath/conf.maldet"  # restore restrictive perms — conf contains credentials
+	pkg_info "imported config options from ${_old_conf}"
 }
 
 # --- Restart monitor if it was running ---

@@ -65,3 +65,23 @@ teardown() {
     assert_output --partial "does not exist, skipping"
     assert_output --partial "malware hits 1"
 }
+
+@test "scan_hashtype accepts valid values" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    for val in auto md5 sha256 both; do
+        run maldet -co scan_hashtype=$val -a "$TEST_SCAN_DIR"
+        assert_success
+        assert_output --partial "hash engine:"
+    done
+}
+
+@test "scan_hashtype=sha256 without sha256sum logs warning and falls back" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    # Temporarily remove sha256sum by clearing all assignments in internals.conf
+    cp "$LMD_INSTALL/internals/internals.conf" "$LMD_INSTALL/internals/internals.conf.bak"
+    sed -i 's|sha256sum=.*|sha256sum=""|' "$LMD_INSTALL/internals/internals.conf"
+    run maldet -co scan_hashtype=sha256 -a "$TEST_SCAN_DIR"
+    assert_success
+    assert_output --partial "sha256sum not found"
+    assert_output --partial "hash engine: md5"
+}

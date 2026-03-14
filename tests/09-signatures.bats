@@ -53,3 +53,10 @@ teardown() {
     [ -s "$LMD_INSTALL/sigs/hex.dat" ]
     [ -f "$LMD_INSTALL/sigs/maldet.sigs.ver" ]
 }
+
+@test "sha256v2.dat absence is non-fatal (upgrade path)" {
+    rm -f "$LMD_INSTALL/sigs/sha256v2.dat"
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_success
+}

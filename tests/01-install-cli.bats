@@ -180,7 +180,7 @@ setup() {
     clean_dir=$(mktemp -d)
     printf '%30s' ' ' > "$clean_dir/testfile.txt"
     run maldet -a "$clean_dir"
-    /usr/bin/rm -rf "$clean_dir"
+    rm -rf "$clean_dir"
     # exit 0 = clean, exit 2 = malware found; both prove the path was accepted
     # exit 1 = error (the bug UAT-001 fixed) — must not happen for valid paths
     assert [ "$status" -ne 1 ]
@@ -192,7 +192,7 @@ setup() {
     clean_dir=$(mktemp -d)
     printf '%30s' ' ' > "$clean_dir/testfile.txt"
     run maldet -a "$clean_dir" -b
-    /usr/bin/rm -rf "$clean_dir"
+    rm -rf "$clean_dir"
     assert [ "$status" -ne 1 ]
     assert_output --partial "launching scan"
     assert_output --partial "background"
@@ -205,7 +205,7 @@ setup() {
     printf '%30s' ' ' > "$clean_dir/testfile.txt"
     printf '%30s' ' ' > "$clean_dir/testfile.log"
     run maldet -a "$clean_dir" -x '.*'
-    /usr/bin/rm -rf "$clean_dir"
+    rm -rf "$clean_dir"
     # -x '.*' excludes everything, so scan should complete with 0 files
     assert [ "$status" -ne 1 ]
 }
@@ -216,7 +216,7 @@ setup() {
     printf '%30s' ' ' > "$clean_dir/testfile.txt"
     printf '%30s' ' ' > "$clean_dir/testfile.log"
     run maldet -a "$clean_dir" -i '.*\.txt'
-    /usr/bin/rm -rf "$clean_dir"
+    rm -rf "$clean_dir"
     assert [ "$status" -ne 1 ]
 }
 
@@ -225,7 +225,7 @@ setup() {
     clean_dir=$(mktemp -d)
     printf '%30s' ' ' > "$clean_dir/testfile.txt"
     run maldet -a "$clean_dir" --hook-scan
-    /usr/bin/rm -rf "$clean_dir"
+    rm -rf "$clean_dir"
     assert [ "$status" -ne 1 ]
     refute_output --partial "Linux Malware Detect"
 }

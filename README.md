@@ -4,9 +4,10 @@
 [![License: GPL v2](https://img.shields.io/badge/license-GPL_v2-green.svg)](COPYING.GPL)
 [![CI](https://github.com/rfxn/linux-malware-detect/actions/workflows/smoke-test.yml/badge.svg?branch=master)](https://github.com/rfxn/linux-malware-detect/actions/workflows/smoke-test.yml)
 
-**Malware scanner for Linux** — multi-stage threat detection (MD5, HEX, YARA, statistical
-analysis), ClamAV integration, real-time inotify monitoring, quarantine/clean/restore
-operations, and multi-channel alerting (email, Slack, Telegram, Discord).
+**Malware scanner for Linux** — multi-stage threat detection (MD5, SHA-256, HEX, YARA,
+statistical analysis), ClamAV integration, real-time inotify monitoring,
+quarantine/clean/restore operations, and multi-channel alerting (email, Slack, Telegram,
+Discord).
 
 > (C) 2002-2026, R-fx Networks &lt;proj@rfxn.com&gt;<br>
 > (C) 2026, Ryan MacDonald &lt;ryan@rfxn.com&gt;<br>
@@ -26,9 +27,10 @@ MD5 and HEX signature matching now use batch grep with Aho-Corasick parallel wor
 eliminating per-file pattern compilation overhead and ~500,000 subprocess forks per scan.
 Configure parallel worker count with `scan_workers` (default: auto).
 
-Other highlights: native YARA scanning (`scan_yara=1`), Discord webhook alerting,
-Slack/Telegram alerting fixes, ClamAV hex wildcard support in the native engine,
-and 200+ bug fixes across the codebase.
+Other highlights: SHA-256 hash scanning with CPU hardware auto-detection (`scan_hashtype`),
+native YARA scanning (`scan_yara=1`), Discord webhook alerting, Slack/Telegram alerting
+fixes, ClamAV hex wildcard support in the native engine, and 200+ bug fixes across the
+codebase.
 See [CHANGELOG](CHANGELOG) for full details.
 
 ---
@@ -188,7 +190,7 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 |----------|---------|---------|
 | `autoupdate_signatures` | Auto-update signatures daily via cron | `1` |
 | `autoupdate_version` | Auto-update LMD version daily via cron | `1` |
-| `autoupdate_version_hashed` | Verify LMD executable MD5 against upstream | `1` |
+| `autoupdate_version_hashed` | Verify LMD executable SHA-256 hash against upstream (falls back to MD5) | `1` |
 | `cron_prune_days` | Days to retain quarantine/session/temp data | `21` |
 | `cron_daily_scan` | Enable daily automatic scanning via cron | `1` |
 | `scan_days` | Days to look back for modified files in daily cron scans | `1` |
@@ -230,11 +232,12 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
+| `scan_hashtype` | Hash algorithm for stage 1: `auto`, `sha256`, `md5`, `both` | `auto` |
 | `scan_max_depth` | Maximum directory depth for find | `15` |
 | `scan_min_filesize` | Minimum file size to scan | `24` bytes |
 | `scan_max_filesize` | Maximum file size to scan | `2048k` |
 | `scan_hexdepth` | Byte depth for HEX signature matching | `524288` |
-| `scan_workers` | Parallel workers for MD5 and HEX scan passes (0=auto) | `0` |
+| `scan_workers` | Parallel workers for MD5, SHA-256, and HEX scan passes (0=auto) | `0` |
 | `scan_cpunice` | Nice priority for scan process (-19 to 19) | `19` |
 | `scan_ionice` | IO scheduling class priority (0-7) | `6` |
 | `scan_cpulimit` | Hard CPU limit percentage (0=disabled) | `0` |
@@ -517,11 +520,12 @@ Alerting in monitor mode uses daily digest reports via the cron job rather than 
 
 ## 8. Signature System
 
-LMD ships with three signature types:
+LMD ships with four signature types:
 
 | Type | File | Format | Count |
 |------|------|--------|-------|
 | MD5 hashes | `sigs/md5v2.dat` | `HASH:SIZE:{MD5}sig.name.N` | ~14,801 |
+| SHA-256 hashes | `sigs/sha256v2.dat` | `HASH:SIZE:{SHA256}sig.name.N` | CDN |
 | HEX patterns | `sigs/hex.dat` | `HEXSTRING:{HEX}sig.name.N` | ~2,054 |
 | YARA rules | `sigs/rfxn.yara` | YARA syntax | ~783 rules |
 | Compiled YARA | `sigs/compiled.yarc` | `yarac` output | optional |
@@ -529,6 +533,7 @@ LMD ships with three signature types:
 ClamAV-compatible signatures are also maintained:
 - `sigs/rfxn.hdb` — ClamAV MD5 format
 - `sigs/rfxn.ndb` — ClamAV HEX format
+- `sigs/rfxn.hsb` — ClamAV SHA-256 format (requires ClamAV >= 0.97)
 
 **Signature naming convention:** `{TYPE}category.name.variant_number`
 
@@ -539,6 +544,7 @@ Categories include: `bin.` (binary), `c.` (C language), `exp.` (exploit), `php.`
 | Prefix | Source |
 |--------|--------|
 | `{MD5}` | MD5 hash match (stage 1) |
+| `{SHA256}` | SHA-256 hash match (stage 1) |
 | `{HEX}` | HEX pattern match (stage 2) |
 | `{SA}` | Statistical analysis (string length) |
 | `{YARA}` | Native YARA scan (`scan_yara=1`) |
@@ -560,6 +566,7 @@ Custom signatures can be added in three formats, all preserved across upgrades:
 | Type | File | Format |
 |------|------|--------|
 | Custom MD5 | `sigs/custom.md5.dat` | Same as `md5v2.dat` |
+| Custom SHA-256 | `sigs/custom.sha256.dat` | Same as `sha256v2.dat` |
 | Custom HEX | `sigs/custom.hex.dat` | Same as `hex.dat` |
 | Custom YARA | `sigs/custom.yara` | YARA rule syntax |
 | Custom YARA (drop-in) | `sigs/custom.yara.d/*.yar` | YARA rule files |
@@ -570,6 +577,7 @@ Remote import URLs can be configured for automatic download during signature upd
 | Variable | Purpose |
 |----------|---------|
 | `import_custsigs_md5_url` | URL for custom MD5 signatures |
+| `import_custsigs_sha256_url` | URL for custom SHA-256 signatures |
 | `import_custsigs_hex_url` | URL for custom HEX signatures |
 | `import_custsigs_yara_url` | URL for custom YARA rules |
 

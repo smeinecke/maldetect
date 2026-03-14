@@ -126,6 +126,7 @@ create_mock_sigpack() {
     # Create tarball (paths relative to tmpd so tar extracts to ./sigs/)
     tar czf "$MOCK_FIXTURES/maldet-sigpack.tgz" -C "$tmpd" sigs
     md5sum "$MOCK_FIXTURES/maldet-sigpack.tgz" | awk '{print $1}' > "$MOCK_FIXTURES/maldet-sigpack.tgz.md5"
+    sha256sum "$MOCK_FIXTURES/maldet-sigpack.tgz" | awk '{print $1}' > "$MOCK_FIXTURES/maldet-sigpack.tgz.sha256"
 
     # Set version fixture
     echo "$sig_ver" > "$MOCK_FIXTURES/maldet.sigs.ver"
@@ -143,6 +144,7 @@ create_mock_cleanpack() {
 
     tar czf "$MOCK_FIXTURES/maldet-cleanv2.tgz" -C "$tmpd" clean
     md5sum "$MOCK_FIXTURES/maldet-cleanv2.tgz" | awk '{print $1}' > "$MOCK_FIXTURES/maldet-cleanv2.tgz.md5"
+    sha256sum "$MOCK_FIXTURES/maldet-cleanv2.tgz" | awk '{print $1}' > "$MOCK_FIXTURES/maldet-cleanv2.tgz.sha256"
 
     rm -rf "$tmpd"
 }
@@ -165,6 +167,7 @@ STUB
 
     tar czf "$MOCK_FIXTURES/maldetect-current.tar.gz" -C "$tmpd" "maldetect-${ver}"
     md5sum "$MOCK_FIXTURES/maldetect-current.tar.gz" | awk '{print $1}' > "$MOCK_FIXTURES/maldetect-current.tar.gz.md5"
+    sha256sum "$MOCK_FIXTURES/maldetect-current.tar.gz" | awk '{print $1}' > "$MOCK_FIXTURES/maldetect-current.tar.gz.sha256"
 
     # Set version fixture
     echo "$ver" > "$MOCK_FIXTURES/maldet.current.ver"

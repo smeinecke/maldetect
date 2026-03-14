@@ -41,6 +41,66 @@ _require_bin() {
 	fi
 }
 
+_detect_sha_capability() {
+	# Detect CPU SHA hardware acceleration capability.
+	# Returns via stdout: "hardware", "software", or "none".
+	# "hardware" = SHA-256 within ~1.3x of MD5 (safe as primary hash)
+	# "software" = SHA-256 available but ~2.5-3x slower than MD5
+	# "none"     = sha256sum binary not found
+	if [ -z "$sha256sum" ]; then
+		echo "none"
+		return
+	fi
+	if [ -f /proc/cpuinfo ]; then
+		# x86_64: Intel SHA-NI (Goldmont+ 2016, Ice Lake+ 2019, all Zen 2017+)
+		if grep -qw 'sha_ni' /proc/cpuinfo 2>/dev/null; then
+			echo "hardware"
+			return
+		fi
+		# ARM64: SHA2 crypto extension (ARMv8-A with crypto, Cortex-A57+)
+		if grep -qw 'sha2' /proc/cpuinfo 2>/dev/null; then
+			echo "hardware"
+			return
+		fi
+	fi
+	# FreeBSD: no reliable unprivileged sysctl for SHA-NI detection;
+	# dmesg ring buffer may have rotated. Default to software.
+	echo "software"
+}
+
+_resolve_hashtype() {
+	# Resolve _effective_hashtype from scan_hashtype config and _sha_capability.
+	# Called after -co overrides are applied (in scan()) and on monitor config reload.
+	case "$scan_hashtype" in
+		auto)
+			if [ "$_sha_capability" == "hardware" ]; then
+				_effective_hashtype="sha256"
+			else
+				_effective_hashtype="md5"
+			fi
+			;;
+		sha256)
+			if [ "$_sha_capability" == "none" ]; then
+				eout "{scan} WARNING: scan_hashtype=sha256 but sha256sum not found, falling back to md5" 1
+				_effective_hashtype="md5"
+			else
+				_effective_hashtype="sha256"
+			fi
+			;;
+		both)
+			if [ "$_sha_capability" == "none" ]; then
+				eout "{scan} WARNING: scan_hashtype=both but sha256sum not found, falling back to md5" 1
+				_effective_hashtype="md5"
+			else
+				_effective_hashtype="both"
+			fi
+			;;
+		*)
+			_effective_hashtype="md5"
+			;;
+	esac
+}
+
 prerun() {
 
 	startdir=$(pwd);
@@ -93,7 +153,13 @@ prerun() {
 	_require_bin "md5sum" "$md5sum"
 	_require_bin "od" "$od"
 	_require_bin "find" "$find"
-	
+
+	# Cache CPU SHA capability once (hardware doesn't change at runtime).
+	# Effective hashtype is resolved later via _resolve_hashtype() after
+	# -co overrides have been applied.
+	_sha_capability=$(_detect_sha_capability)
+	_effective_hashtype="md5"
+
 	if [ "$email_alert" == "1" ] && [ ! -f "$mail" ] && [ ! -f "$sendmail" ]; then
 		email_alert=0
 	fi
@@ -113,7 +179,7 @@ prerun() {
 		sig_file_mode=640; sig_dir_mode=750
 	fi
 
-	for _sigf in "$sig_user_hex_file" "$sig_user_md5_file" "$sig_user_yara_file"; do
+	for _sigf in "$sig_user_hex_file" "$sig_user_md5_file" "$sig_user_sha256_file" "$sig_user_yara_file"; do
 		if [ ! -f "$_sigf" ]; then
 			touch "$_sigf"
 			chmod "$sig_file_mode" "$_sigf"
@@ -361,6 +427,13 @@ import_user_sigs() {
 			fi
 		fi
 	fi
+	if [ "$import_custsigs_sha256_url" ]; then
+		get_remote_file "$import_custsigs_sha256_url" "importsigs" "1"
+		if [ -f "$return_file" ]; then
+			cp -f "$return_file" "$sig_user_sha256_file"
+			eout "{importsigs} imported custom SHA-256 signature data from $import_custsigs_sha256_url"
+		fi
+	fi
 }
 
 _safe_source_conf() {
@@ -449,10 +522,28 @@ import_conf() {
 clamav_linksigs() {
 	local cpath="$1"
 	if [ -d "$cpath" ]; then
-		rm -f "$cpath"/rfxn.{hdb,ndb,yara} 2> /dev/null ; cp -f "$sigdir"/rfxn.{hdb,ndb,yara} "$cpath"/ 2> /dev/null
+		rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2> /dev/null
+		# HEX (.ndb) and YARA always seeded regardless of hash mode
+		cp -f "$sigdir"/rfxn.{ndb,yara} "$cpath"/ 2> /dev/null
+		# MD5 hash sigs (.hdb) — only when effective hashtype includes md5
+		if [ "$_effective_hashtype" != "sha256" ]; then
+			cp -f "$sigdir/rfxn.hdb" "$cpath"/ 2> /dev/null
+		fi
+		# SHA-256 hash sigs (.hsb) — only when effective hashtype includes sha256
+		# and ClamAV >= 0.97 (avoids "Malformed database" on CentOS 6)
+		if [ "$_effective_hashtype" != "md5" ] && [ -n "$_clamav_supports_hsb" ] \
+		   && [ -f "$sigdir/rfxn.hsb" ] && [ -s "$sigdir/rfxn.hsb" ]; then
+			/usr/bin/cp -f "$sigdir/rfxn.hsb" "$cpath"/ 2> /dev/null
+		fi
 		rm -f "$cpath"/lmd.user.* 2> /dev/null
 		[ -s "$sigdir/lmd.user.ndb" ] && /usr/bin/cp -f "$sigdir/lmd.user.ndb" "$cpath"/ 2> /dev/null
-		[ -s "$sigdir/lmd.user.hdb" ] && /usr/bin/cp -f "$sigdir/lmd.user.hdb" "$cpath"/ 2> /dev/null
+		if [ "$_effective_hashtype" != "sha256" ] && [ -s "$sigdir/lmd.user.hdb" ]; then
+			/usr/bin/cp -f "$sigdir/lmd.user.hdb" "$cpath"/ 2> /dev/null
+		fi
+		if [ "$_effective_hashtype" != "md5" ] && [ -n "$_clamav_supports_hsb" ] \
+		   && [ -s "$sigdir/lmd.user.hsb" ]; then
+			/usr/bin/cp -f "$sigdir/lmd.user.hsb" "$cpath"/ 2> /dev/null
+		fi
 	fi
 }
 
@@ -746,7 +837,7 @@ quar_get_filestat() {
 	local fstat="$1"
 	if [ -f "$fstat" ]; then
 		local _line
-		# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)
+		# owner:group:mode:size(b):hash:atime(epoch):mtime(epoch):ctime(epoch):file(path)
 		_line=$(grep -E -v '\#' "$fstat")
 		# file_path is last field and may contain colons; read -r captures remainder
 		IFS=':' read -r file_owner file_group file_mode file_size md5_hash \
@@ -1421,7 +1512,7 @@ _batch_quarantine() {
 		fi
 
 		# Write .info metadata
-		printf '%s\n%s\n' "# owner:group:mode:size(b):md5:atime(epoch):mtime(epoch):ctime(epoch):file(path)" "$_own:$_grp:$_mode:$_sz:$_hash:$_times:$_fp" > "$_dest.info"
+		printf '%s\n%s\n' "# owner:group:mode:size(b):hash:atime(epoch):mtime(epoch):ctime(epoch):file(path)" "$_own:$_grp:$_mode:$_sz:$_hash:$_times:$_fp" > "$_dest.info"
 
 		# Collect quarantine history and session entries
 		printf '%s:%s:%s:%s:%s:%s:%s:%s\n' "$utime" "$_sig" "$_fp" "$_own" "$_grp" "$_hash" "$_sz" "$_dest" >> "$_quar_hist_block"
@@ -1600,7 +1691,10 @@ quar_hitlist() {
 
 _clamscan_fallback() {
 	clambin="clamscan"
-	clamopts="$clamscan_extraopts --max-filesize=$clamscan_max_filesize --max-scansize=$((clamscan_max_filesize * 2)) -d $runtime_hdb -d $runtime_ndb $clamav_db -r"
+	local _hash_db_opts=""
+	[ -n "$runtime_hdb" ] && _hash_db_opts="-d $runtime_hdb"
+	[ -n "$runtime_hsb" ] && [ -s "$runtime_hsb" ] && _hash_db_opts="$_hash_db_opts -d $runtime_hsb"
+	clamopts="$clamscan_extraopts --max-filesize=$clamscan_max_filesize --max-scansize=$((clamscan_max_filesize * 2)) $_hash_db_opts -d $runtime_ndb $clamav_db -r"
 	if [ -f "/usr/local/cpanel/3rdparty/bin/$clambin" ]; then
 		clamscan="/usr/local/cpanel/3rdparty/bin/$clambin"
 	elif [ -f "$(command -v $clambin 2> /dev/null)" ]; then
@@ -1612,11 +1706,21 @@ _clamscan_fallback() {
 
 clamselector() {
 	sig_max_filesize=$(cut -d':' -f2 "$sig_md5_file" | sort -n | tail -n1)
+	if [ -f "$sig_sha256_file" ] && [ -s "$sig_sha256_file" ]; then
+		local _sha256_max
+		_sha256_max=$(cut -d':' -f2 "$sig_sha256_file" | sort -n | tail -n1)
+		if [ "$_sha256_max" -gt "$sig_max_filesize" ] 2>/dev/null; then
+			sig_max_filesize="$_sha256_max"
+		fi
+	fi
 	if [ "$sig_max_filesize" -gt "1" ] 2>/dev/null; then
 		clamscan_max_filesize=$((sig_max_filesize+1))
 	else
 		clamscan_max_filesize="2592000"
 	fi
+
+	# Detect ClamAV version for .hsb support (SHA-256 hash DB, ClamAV >= 0.97)
+	_clamav_supports_hsb=""
 
 	if [ "$scan_clamscan" == "1" ]; then
 		trim_log $clamscan_log 10000 1
@@ -1686,6 +1790,23 @@ clamselector() {
 		fi
 	fi
 
+	# Detect ClamAV version for .hsb support gate
+	if [ "$scan_clamscan" == "1" ]; then
+		local _clam_ver_bin
+		_clam_ver_bin="${clamscan:-$(command -v clamscan 2>/dev/null)}"
+		if [ -n "$_clam_ver_bin" ]; then
+			local _clam_ver
+			_clam_ver=$("$_clam_ver_bin" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+			if [ -n "$_clam_ver" ]; then
+				local _clam_major _clam_minor
+				_clam_major="${_clam_ver%%.*}"
+				_clam_minor="${_clam_ver#*.}"
+				if [ "$_clam_major" -gt 0 ] 2>/dev/null || { [ "$_clam_major" -eq 0 ] && [ "$_clam_minor" -ge 97 ]; } 2>/dev/null; then
+					_clamav_supports_hsb=1
+				fi
+			fi
+		fi
+	fi
 }
 
 _build_scan_filters() {
@@ -1732,7 +1853,8 @@ _build_scan_filters() {
 
 _scan_cleanup() {
 	rm -f "$find_results" "$scan_session" "$runtime_ndb" "$runtime_hdb" \
-		"$runtime_hexstrings" "$runtime_md5" "$clamscan_results" \
+		"$runtime_hexstrings" "$runtime_md5" "$runtime_sha256" "$runtime_hsb" \
+		"$clamscan_results" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 		"$tmpdir"/.find_killed."$scanid" \
 		"$tmpdir"/.tmp* "$tmpdir"/.tmpf* "$tmpdir"/.yara_* \
@@ -1740,13 +1862,16 @@ _scan_cleanup() {
 		"$tmpdir"/.hex_md5hits* \
 		"$tmpdir"/.md5_batch_flist* "$tmpdir"/.md5_chunk* "$tmpdir"/.md5_worker* \
 		"$tmpdir"/.md5_linux* "$tmpdir"/.md5_fbsd* \
+		"$tmpdir"/.sha256_batch_flist* "$tmpdir"/.sha256_chunk* "$tmpdir"/.sha256_worker* \
+		"$tmpdir"/.sha256_linux* "$tmpdir"/.sha256_fbsd* \
+		"$tmpdir"/.sha256_manifest* "$tmpdir"/.sha256_md5hits* \
 		"$tmpdir"/.batch_* \
 		"$tmpdir"/.md5_manifest* "$tmpdir"/.hex_manifest* \
 		"$tmpdir"/.clam_manifest* "$tmpdir"/.clam_filtered* \
 		"$tmpdir"/.yara_manifest* "$tmpdir"/.yara_filtered* "$tmpdir"/.yara_existing* "$tmpdir"/.yara_deduped* \
 		"$tmpdir"/.strlen_manifest* "$tmpdir"/.stage_hit* \
 		2>/dev/null  # files may not exist depending on scan path
-	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* 2>/dev/null
+	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* 2>/dev/null
 }
 
 # shellcheck disable=SC2154
@@ -1863,12 +1988,13 @@ _clamd_retry_scan() {
 _process_clamav_hits() {
 	local _results="$1" _progress="$2"
 	local _clam_manifest _signame _file
+	local _yara_prefix="{YARA}"
 	_clam_manifest=$(mktemp "$tmpdir/.clam_manifest.XXXXXX")
 
 	# Parse clamscan output → filepath\tsigname manifest
 	while IFS=: read -r _signame _file; do
 		if [[ "$_signame" == *YARA* ]]; then
-			_signame="${_signame/YARA./{YARA\}}"
+			_signame="${_signame/YARA./$_yara_prefix}"
 		elif [[ "$_signame" != *HEX* ]] && [[ "$_signame" != *MD5* ]]; then
 			_signame="{CAV}$_signame"
 		fi
@@ -2129,6 +2255,89 @@ _md5_batch_worker() {
 	fi
 }
 
+_sha256_batch_worker() {
+	# Self-contained batch SHA-256 scanner for a chunk of files.
+	# Structurally identical to _md5_batch_worker with sha256sum.
+	# Outputs tab-delimited filepath\thash\tsigname triples to stdout.
+	# Arg 1: chunk file (one filepath per line)
+	# Arg 2: runtime_sha256 sig file (HASH:SIZE:{SHA256}sig.name.N)
+	# Arg 3: progress file (written every 500 files; empty = no progress)
+	local _chunk="$1" _sigfile="$2" _progress_file="${3:-}"
+	local _sha_out
+	if [ "$os_freebsd" == "1" ]; then
+		# FreeBSD sha256 -q outputs hash only (no filename); loop to pair them
+		local _fbsd_out _fpath _fhash _fbsd_count=0
+		_fbsd_out=$(mktemp "$tmpdir/.sha256_fbsd.XXXXXX")
+		while IFS= read -r _fpath; do
+			[ -f "$_fpath" ] && [ -r "$_fpath" ] || continue
+			_fhash=$($sha256sum "$_fpath")
+			printf '%s\t%s\n' "$_fhash" "$_fpath"
+			_fbsd_count=$((_fbsd_count + 1))
+			if [ -n "$_progress_file" ] && ((_fbsd_count % 500 == 0)); then
+				echo "$_fbsd_count" > "$_progress_file"
+			fi
+		done < "$_chunk" > "$_fbsd_out"
+		[ -n "$_progress_file" ] && echo "$_fbsd_count" > "$_progress_file"
+		# awk join: load sigs, match on hash field
+		awk -F'\t' -v sigfile="$_sigfile" '
+		BEGIN {
+			while ((getline line < sigfile) > 0) {
+				colon1 = index(line, ":")
+				if (colon1 > 0) {
+					h = substr(line, 1, colon1 - 1)
+					rest = substr(line, colon1 + 1)
+					colon2 = index(rest, ":")
+					if (colon2 > 0) sigs[h] = substr(rest, colon2 + 1)
+				}
+			}
+			close(sigfile)
+		}
+		{ if ($1 in sigs) print $2 "\t" $1 "\t" sigs[$1] }
+		' "$_fbsd_out"
+		rm -f "$_fbsd_out"
+	else
+		# Linux: xargs sha256sum hashes all files in one process
+		_sha_out=$(mktemp "$tmpdir/.sha256_linux.XXXXXX")
+		xargs -d '\n' "$sha256sum" < "$_chunk" > "$_sha_out" 2>/dev/null  # suppress errors on unreadable files
+		# awk join: load sigs (hash->signame), scan sha256sum output for matches
+		# sha256sum output format: "hash  filepath" (two spaces)
+		# Writes progress every 500 files when progress file is set.
+		awk -v sigfile="$_sigfile" -v pfile="$_progress_file" '
+		BEGIN {
+			while ((getline line < sigfile) > 0) {
+				colon1 = index(line, ":")
+				if (colon1 > 0) {
+					h = substr(line, 1, colon1 - 1)
+					rest = substr(line, colon1 + 1)
+					colon2 = index(rest, ":")
+					if (colon2 > 0) sigs[h] = substr(rest, colon2 + 1)
+				}
+			}
+			close(sigfile)
+		}
+		{
+			count++
+			hash = $1
+			if (hash in sigs) {
+				fpath = substr($0, length(hash) + 3)
+				print fpath "\t" hash "\t" sigs[hash]
+			}
+			if (pfile != "" && count % 500 == 0) {
+				print count > pfile
+				close(pfile)
+			}
+		}
+		END {
+			if (pfile != "" && count > 0) {
+				print count > pfile
+				close(pfile)
+			}
+		}
+		' "$_sha_out"
+		rm -f "$_sha_out"
+	fi
+}
+
 _hex_batch_worker() {
 	# Self-contained batch hex scanner for a chunk of files.
 	# Runs in a subshell (backgrounded by caller).
@@ -2197,81 +2406,159 @@ _scan_run_native() {
 	fi
 
 	# --- Pass 1: MD5 (batch parallel workers) ---
+	# Runs when effective hashtype is md5 or both; skipped for sha256-only.
 	local rpath _md5_batch_flist _md5_file_count
-	_md5_batch_flist=$(mktemp "$tmpdir/.md5_batch_flist.XXXXXX")
-	# Build readable file list from find_results
-	while IFS= read -r rpath; do
-		[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
-	done < "$find_results" > "$_md5_batch_flist"
-	_md5_file_count=$($wc -l < "$_md5_batch_flist")
-	if [ "$_md5_file_count" -gt 0 ] && [ -s "$runtime_md5" ]; then
-		_nworkers=$(_resolve_worker_count "$_md5_file_count")
-		_scan_progress "md5" "$_md5_file_count files"
-		if [ "$_nworkers" -le 1 ]; then
-			# Single worker: run inline (no subshell overhead)
-			_md5_batch_worker "$_md5_batch_flist" "$runtime_md5" > "$tmpdir/.md5_worker.$$.0"
-		else
-			# Multi-worker: round-robin split and background
-			local _md5_chunk_prefix _w _md5_progress_dir _md5_pfile
-			_md5_chunk_prefix="$tmpdir/.md5_chunk.$$"
-			_md5_progress_dir=$(mktemp -d "$tmpdir/.md5_progress.$$.XXXXXX")
-			awk -v n="$_nworkers" -v prefix="$_md5_chunk_prefix" \
-				'{ print > (prefix "." ((NR-1) % n)) }' "$_md5_batch_flist"
-			local _md5_worker_pids
-			_md5_worker_pids=()
-			_w=0
-			while [ "$_w" -lt "$_nworkers" ]; do
-				if [ -f "$_md5_chunk_prefix.$_w" ]; then
-					# Skip progress writes in background mode for max throughput
-					_md5_pfile=""
-					[ "$set_background" != "1" ] && _md5_pfile="$_md5_progress_dir/$_w"
-					_md5_batch_worker "$_md5_chunk_prefix.$_w" "$runtime_md5" \
-						"$_md5_pfile" \
-						> "$tmpdir/.md5_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
-					_md5_worker_pids[_w]=$!
-				fi
-				_w=$((_w + 1))
-			done
-			_wait_workers_with_progress "md5" "$_md5_file_count" "$_md5_progress_dir" "${_md5_worker_pids[@]}"
-			rm -f "$_md5_chunk_prefix".* 2>/dev/null
-		fi
-		# Merge worker outputs into single manifest and batch-process hits
-		_scan_progress "md5" "processing hits"
-		local _md5_manifest
-		_md5_manifest=$(mktemp "$tmpdir/.md5_manifest.XXXXXX")
-		for _w in "$tmpdir"/.md5_worker."$$".*; do
-			if [ -f "$_w" ] && [ -s "$_w" ]; then
-				# Worker output: filepath\thash\tsigname → manifest: filepath\tsigname\thash
-				awk -F'\t' '{print $1 "\t" $3 "\t" $2}' "$_w" >> "$_md5_manifest"
+	if [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; then
+		_md5_batch_flist=$(mktemp "$tmpdir/.md5_batch_flist.XXXXXX")
+		# Build readable file list from find_results
+		while IFS= read -r rpath; do
+			[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
+		done < "$find_results" > "$_md5_batch_flist"
+		_md5_file_count=$($wc -l < "$_md5_batch_flist")
+		if [ "$_md5_file_count" -gt 0 ] && [ -s "$runtime_md5" ]; then
+			_nworkers=$(_resolve_worker_count "$_md5_file_count")
+			_scan_progress "md5" "$_md5_file_count files"
+			if [ "$_nworkers" -le 1 ]; then
+				# Single worker: run inline (no subshell overhead)
+				_md5_batch_worker "$_md5_batch_flist" "$runtime_md5" > "$tmpdir/.md5_worker.$$.0"
+			else
+				# Multi-worker: round-robin split and background
+				local _md5_chunk_prefix _w _md5_progress_dir _md5_pfile
+				_md5_chunk_prefix="$tmpdir/.md5_chunk.$$"
+				_md5_progress_dir=$(mktemp -d "$tmpdir/.md5_progress.$$.XXXXXX")
+				awk -v n="$_nworkers" -v prefix="$_md5_chunk_prefix" \
+					'{ print > (prefix "." ((NR-1) % n)) }' "$_md5_batch_flist"
+				local _md5_worker_pids
+				_md5_worker_pids=()
+				_w=0
+				while [ "$_w" -lt "$_nworkers" ]; do
+					if [ -f "$_md5_chunk_prefix.$_w" ]; then
+						# Skip progress writes in background mode for max throughput
+						_md5_pfile=""
+						[ "$set_background" != "1" ] && _md5_pfile="$_md5_progress_dir/$_w"
+						_md5_batch_worker "$_md5_chunk_prefix.$_w" "$runtime_md5" \
+							"$_md5_pfile" \
+							> "$tmpdir/.md5_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
+						_md5_worker_pids[_w]=$!
+					fi
+					_w=$((_w + 1))
+				done
+				_wait_workers_with_progress "md5" "$_md5_file_count" "$_md5_progress_dir" "${_md5_worker_pids[@]}"
+				rm -f "$_md5_chunk_prefix".* 2>/dev/null
 			fi
-		done
-		_flush_hit_batch "$_md5_manifest" "md5"
-		rm -f "$_md5_manifest" "$tmpdir"/.md5_worker."$$".* 2>/dev/null
+			# Merge worker outputs into single manifest and batch-process hits
+			_scan_progress "md5" "processing hits"
+			local _md5_manifest
+			_md5_manifest=$(mktemp "$tmpdir/.md5_manifest.XXXXXX")
+			for _w in "$tmpdir"/.md5_worker."$$".*; do
+				if [ -f "$_w" ] && [ -s "$_w" ]; then
+					# Worker output: filepath\thash\tsigname → manifest: filepath\tsigname\thash
+					awk -F'\t' '{print $1 "\t" $3 "\t" $2}' "$_w" >> "$_md5_manifest"
+				fi
+			done
+			_flush_hit_batch "$_md5_manifest" "md5"
+			rm -f "$_md5_manifest" "$tmpdir"/.md5_worker."$$".* 2>/dev/null
+		fi
+		rm -f "$_md5_batch_flist"
 	fi
-	rm -f "$_md5_batch_flist"
+
+	# --- Pass 1b: SHA-256 (batch parallel workers) ---
+	# Runs instead of MD5 when _effective_hashtype=sha256,
+	# or after MD5 when _effective_hashtype=both (on remaining files).
+	if { [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } \
+	   && [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
+		local _sha256_batch_flist _sha256_file_count
+		_sha256_batch_flist=$(mktemp "$tmpdir/.sha256_batch_flist.XXXXXX")
+		if [ "$_effective_hashtype" == "both" ]; then
+			# 'both' mode: scan only files NOT already hit by MD5 pass
+			local _hash_hit_paths
+			_hash_hit_paths=$(mktemp "$tmpdir/.sha256_md5hits.XXXXXX")
+			if [ -s "$scan_session" ]; then
+				awk -F' : ' '{ sub(/ =>.*/, "", $2); if ($2 != "") print $2 }' "$scan_session" > "$_hash_hit_paths"
+			fi
+			while IFS= read -r rpath; do
+				[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
+			done < "$find_results" | {
+				if [ -s "$_hash_hit_paths" ]; then
+					grep -vFxf "$_hash_hit_paths"
+				else
+					cat
+				fi
+			} > "$_sha256_batch_flist"
+			rm -f "$_hash_hit_paths"
+		else
+			# sha256-only mode: scan all readable files
+			while IFS= read -r rpath; do
+				[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
+			done < "$find_results" > "$_sha256_batch_flist"
+		fi
+		_sha256_file_count=$($wc -l < "$_sha256_batch_flist")
+		if [ "$_sha256_file_count" -gt 0 ]; then
+			_nworkers=$(_resolve_worker_count "$_sha256_file_count")
+			_scan_progress "sha256" "$_sha256_file_count files"
+			if [ "$_nworkers" -le 1 ]; then
+				_sha256_batch_worker "$_sha256_batch_flist" "$runtime_sha256" > "$tmpdir/.sha256_worker.$$.0"
+			else
+				local _sha256_chunk_prefix _w _sha256_progress_dir _sha256_pfile
+				_sha256_chunk_prefix="$tmpdir/.sha256_chunk.$$"
+				_sha256_progress_dir=$(mktemp -d "$tmpdir/.sha256_progress.$$.XXXXXX")
+				awk -v n="$_nworkers" -v prefix="$_sha256_chunk_prefix" \
+					'{ print > (prefix "." ((NR-1) % n)) }' "$_sha256_batch_flist"
+				local _sha256_worker_pids
+				_sha256_worker_pids=()
+				_w=0
+				while [ "$_w" -lt "$_nworkers" ]; do
+					if [ -f "$_sha256_chunk_prefix.$_w" ]; then
+						_sha256_pfile=""
+						[ "$set_background" != "1" ] && _sha256_pfile="$_sha256_progress_dir/$_w"
+						_sha256_batch_worker "$_sha256_chunk_prefix.$_w" "$runtime_sha256" \
+							"$_sha256_pfile" \
+							> "$tmpdir/.sha256_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
+						_sha256_worker_pids[_w]=$!
+					fi
+					_w=$((_w + 1))
+				done
+				_wait_workers_with_progress "sha256" "$_sha256_file_count" "$_sha256_progress_dir" "${_sha256_worker_pids[@]}"
+				rm -f "$_sha256_chunk_prefix".* 2>/dev/null
+			fi
+			# Merge worker outputs into single manifest and batch-process hits
+			_scan_progress "sha256" "processing hits"
+			local _sha256_manifest
+			_sha256_manifest=$(mktemp "$tmpdir/.sha256_manifest.XXXXXX")
+			for _w in "$tmpdir"/.sha256_worker."$$".*; do
+				if [ -f "$_w" ] && [ -s "$_w" ]; then
+					# Worker output: filepath\thash\tsigname → manifest: filepath\tsigname\thash
+					awk -F'\t' '{print $1 "\t" $3 "\t" $2}' "$_w" >> "$_sha256_manifest"
+				fi
+			done
+			_flush_hit_batch "$_sha256_manifest" "sha256"
+			rm -f "$_sha256_manifest" "$tmpdir"/.sha256_worker."$$".* 2>/dev/null
+		fi
+		rm -f "$_sha256_batch_flist"
+	fi
 
 	# --- Pass 2: HEX batch (parallel workers) ---
 	local _hex_filelist _hex_depth
 	_hex_filelist=$(mktemp "$tmpdir/.hex_batch_flist.XXXXXX")
-	# Build file list: skip files already hit by MD5 pass.
+	# Build file list: skip files already hit by hash passes (MD5/SHA-256).
 	# Quarantined files are chmod 000 (not readable); non-quarantined hits
 	# are listed in scan_session — extract paths and use grep -vFf to exclude.
-	local _md5_hit_paths
-	_md5_hit_paths=$(mktemp "$tmpdir/.hex_md5hits.XXXXXX")
+	local _hash_hit_paths
+	_hash_hit_paths=$(mktemp "$tmpdir/.hex_md5hits.XXXXXX")
 	if [ -s "$scan_session" ]; then
 		# scan_session format: "signame : /path" or "signame : /path => /quarpath"
-		awk -F' : ' '{ sub(/ =>.*/, "", $2); if ($2 != "") print $2 }' "$scan_session" > "$_md5_hit_paths"
+		awk -F' : ' '{ sub(/ =>.*/, "", $2); if ($2 != "") print $2 }' "$scan_session" > "$_hash_hit_paths"
 	fi
 	while IFS= read -r rpath; do
 		[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
 	done < "$find_results" | {
-		if [ -s "$_md5_hit_paths" ]; then
-			grep -vFxf "$_md5_hit_paths"
+		if [ -s "$_hash_hit_paths" ]; then
+			grep -vFxf "$_hash_hit_paths"
 		else
 			cat
 		fi
 	} > "$_hex_filelist"
-	rm -f "$_md5_hit_paths"
+	rm -f "$_hash_hit_paths"
 	local _hex_file_count
 	_hex_file_count=$($wc -l < "$_hex_filelist")
 	if [ "$_hex_file_count" -gt 0 ] && { [ -s "$runtime_hex_literal" ] || [ -s "$runtime_hex_regex" ]; }; then
@@ -2349,6 +2636,10 @@ _scan_run_native() {
 _count_signatures() {
 	local _md5_src="$1" _hex_src="$2"
 	md5_sigs=$($wc -l < "$_md5_src")
+	sha256_sigs=0
+	if [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
+		sha256_sigs=$($wc -l < "$runtime_sha256")
+	fi
 	hex_sigs=$($wc -l < "$_hex_src")
 	yara_sigs=$(grep -E -c '^rule ' "$sig_yara_file" 2>/dev/null || true)  # safe: grep exits 1 when no rule match found; zero count is valid
 	user_yara_sigs=0
@@ -2365,13 +2656,17 @@ _count_signatures() {
 	else
 		user_md5_sigs=$($wc -l < "$sig_user_md5_file")
 	fi
+	user_sha256_sigs=0
+	if [ -f "$sig_user_sha256_file" ] && [ -s "$sig_user_sha256_file" ]; then
+		user_sha256_sigs=$($wc -l < "$sig_user_sha256_file")
+	fi
 	if [ ! -f "$sig_user_hex_file" ]; then
 		user_hex_sigs=0
 	else
 		user_hex_sigs=$($wc -l < "$sig_user_hex_file")
 	fi
-	user_sigs=$((user_hex_sigs + user_md5_sigs + user_yara_sigs))
-	tot_sigs=$((md5_sigs + hex_sigs + yara_sigs + user_sigs))
+	user_sigs=$((user_hex_sigs + user_md5_sigs + user_sha256_sigs + user_yara_sigs))
+	tot_sigs=$((md5_sigs + sha256_sigs + hex_sigs + yara_sigs + user_sigs))
 }
 
 scan() {
@@ -2432,7 +2727,13 @@ scan() {
 
 	scan_session=$(mktemp "$tmpdir/.sess.XXXXXX")
 	find_results=$(mktemp "$tmpdir/.find.XXXXXX")
-	
+
+	# Resolve hash engine after -co overrides have been applied
+	_resolve_hashtype
+	if [ -z "$hscan" ]; then
+		eout "{scan} hash engine: $_effective_hashtype (cpu: $_sha_capability)" 1
+	fi
+
 	gensigs
 	if [ "$scan_clamscan" == "1" ]; then
 		clamselector
@@ -2444,7 +2745,7 @@ scan() {
 		if [ "$scan_yara" != "1" ]; then
 			yara_label="YARA(cav)"
 		fi
-		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
+		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $sha256_sigs SHA256 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
 	fi
 	_build_scan_filters
 	_scan_build_filelist
@@ -2571,39 +2872,68 @@ scan_strlen() {
 scan_stage1() {
 	local file="$1"
 	local clean_check="$2"
-	local _md5out
-	_md5out="$($md5sum "$file")"
-	hash="${_md5out%% *}"
 	if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ]; then
 		gensigs
 	fi
-	if  [ -n "$hash" ]; then
-		val_hash=$(grep -m1 "$hash" "$runtime_md5")
-		if [ -n "$val_hash" ]; then
-			md5_hit="$hash"
-			local _tmp="${val_hash#*:}" ; _tmp="${_tmp#*:}" ; _tmp="${_tmp#*:}"
-			md5_hitname="$_tmp"
-			md5_hash="$hash"
-			if [ "$clean_check" == "1" ]; then
-				clean_failed=1
-			else
-				local _hit_manifest
-				_hit_manifest=$(mktemp "$tmpdir/.stage_hit.XXXXXX")
-				printf '%s\t%s\t%s\n' "$file" "$md5_hitname" "$hash" > "$_hit_manifest"
-				_flush_hit_batch "$_hit_manifest" "md5"
-				rm -f "$_hit_manifest"
+
+	local _stage1_hit=""
+
+	# MD5 check (when effective type is md5 or both)
+	if [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; then
+		local _md5out
+		_md5out="$($md5sum "$file")"
+		hash="${_md5out%% *}"
+		if [ -n "$hash" ]; then
+			val_hash=$(grep -m1 "$hash" "$runtime_md5")
+			if [ -n "$val_hash" ]; then
+				_stage1_hit="md5"
+				md5_hit="$hash"
+				local _tmp="${val_hash#*:}" ; _tmp="${_tmp#*:}" ; _tmp="${_tmp#*:}"
+				md5_hitname="$_tmp"
+				md5_hash="$hash"
 			fi
-			unset val_hash md5_hit md5_hitname md5_hash
+		fi
+	fi
+
+	# SHA-256 check (when effective type is sha256 or both, and no MD5 hit)
+	if [ -z "$_stage1_hit" ] && { [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } \
+	   && [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
+		local _sha256out _sha256hash
+		_sha256out="$($sha256sum "$file")"
+		_sha256hash="${_sha256out%% *}"
+		if [ -n "$_sha256hash" ]; then
+			local _sha256_val
+			_sha256_val=$(grep -m1 "$_sha256hash" "$runtime_sha256")
+			if [ -n "$_sha256_val" ]; then
+				_stage1_hit="sha256"
+				local _tmp="${_sha256_val#*:}" ; _tmp="${_tmp#*:}" ; _tmp="${_tmp#*:}"
+				md5_hitname="$_tmp"
+				# .info field 5 accepts either MD5 or SHA-256 natively
+				md5_hash="$_sha256hash"
+			fi
+		fi
+	fi
+
+	if [ -n "$_stage1_hit" ]; then
+		if [ "$clean_check" == "1" ]; then
+			clean_failed=1
 		else
-			if [ -f "$file" ]; then
-				scan_stage2 "$file" "$clean_check" >> /dev/null 2>&1
-			fi
+			local _hit_manifest
+			_hit_manifest=$(mktemp "$tmpdir/.stage_hit.XXXXXX")
+			printf '%s\t%s\t%s\n' "$file" "$md5_hitname" "$md5_hash" > "$_hit_manifest"
+			_flush_hit_batch "$_hit_manifest" "$_stage1_hit"
+			rm -f "$_hit_manifest"
+		fi
+		unset val_hash md5_hit md5_hitname md5_hash
+	else
+		if [ -z "$hash" ] && [ "$_effective_hashtype" != "sha256" ]; then
+			eout "{scan} error could not read or hash $file, do we have permission?"
+		elif [ -f "$file" ]; then
+			scan_stage2 "$file" "$clean_check" >> /dev/null 2>&1
 			if [ -f "$file" ]; then
 				scan_strlen file "$file" >> /dev/null 2>&1
 			fi
 		fi
-	else
-		eout "{scan} error could not read or hash $file, do we have permission?"
 	fi
 }
 
@@ -3311,6 +3641,8 @@ monitor_cycle() {
 	else
 		pgrep maldet > "$tmpdir/monitor.pid"
 	fi
+	# Resolve hash engine for monitor mode (after -co has been applied)
+	_resolve_hashtype
 	inotify_cycle_runtime=0
 	while [ ! -f "$tmpdir/stop_monitor" ]; do
 		inotify_pid=$(pgrep -f inotify.paths.[0-9]+)
@@ -3340,6 +3672,11 @@ monitor_cycle() {
 			_lmd_elog_init
 			_build_scan_filters
 			_yara_bin="" _yara_type="" _yara_has_scan_list=""
+			# Re-evaluate effective hashtype on config reload
+			_resolve_hashtype
+			if [ "$_effective_hashtype" == "both" ]; then
+				eout "{mon} WARNING: scan_hashtype=both doubles hash I/O per monitor cycle" 1
+			fi
 			eout "{mon} reloaded configuration data" 1
 			_lmd_elog_event "$ELOG_EVT_CONFIG_LOADED" "info" "configuration reloaded" "config=$cnf"
 		fi
@@ -3692,14 +4029,21 @@ gensigs() {
 	local _silent="$1"
 	# Clean up previous runtime sig files if re-called (monitor path)
 	rm -f "$runtime_ndb" "$runtime_hdb" "$runtime_hexstrings" "$runtime_md5" \
+		"$runtime_sha256" "$runtime_hsb" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 		2>/dev/null  # vars empty on first call
 	runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.XXXXXX")
-	runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.XXXXXX")
+	runtime_hdb=""
 	runtime_hexstrings=$(mktemp "$tmpdir/.runtime.hexsigs.XXXXXX")
 	runtime_md5=$(mktemp "$tmpdir/.runtime.md5sigs.XXXXXX")
 	ln -fs "$runtime_ndb" "$sigdir/lmd.user.ndb" 2> /dev/null
-	ln -fs "$runtime_hdb" "$sigdir/lmd.user.hdb" 2> /dev/null
+	# Only create .hdb (ClamAV MD5 DB) when hashtype includes md5
+	if [ "$_effective_hashtype" != "sha256" ]; then
+		runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.XXXXXX")
+		ln -fs "$runtime_hdb" "$sigdir/lmd.user.hdb" 2> /dev/null
+	else
+		rm -f "$sigdir/lmd.user.hdb" 2>/dev/null
+	fi
 	if [ ! -f "$sig_user_yara_file" ]; then
 		touch "$sig_user_yara_file"
 		chmod $sig_file_mode "$sig_user_yara_file"
@@ -3718,6 +4062,27 @@ gensigs() {
 	else
 		cat "$sig_md5_file" > "$runtime_md5"
 	fi
+	# SHA-256 runtime sigs — conditional on effective hashtype
+	runtime_sha256=""
+	if [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; then
+		runtime_sha256=$(mktemp "$tmpdir/.runtime.sha256sigs.XXXXXX")
+		if [ -f "$sig_sha256_file" ] && [ -s "$sig_sha256_file" ]; then
+			if [ -s "$sig_user_sha256_file" ]; then
+				grep -h -vE '^\s*$' "$sig_sha256_file" "$sig_user_sha256_file" > "$runtime_sha256"
+			else
+				cat "$sig_sha256_file" > "$runtime_sha256"
+			fi
+		elif [ -s "$sig_user_sha256_file" ]; then
+			# Upgrade path: no base sha256v2.dat yet, only custom sigs
+			grep -vE '^\s*$' "$sig_user_sha256_file" > "$runtime_sha256"
+		else
+			# No SHA-256 sigs available at all
+			: > "$runtime_sha256"
+			if [ "$_effective_hashtype" == "sha256" ]; then
+				eout "{scan} WARNING: scan_hashtype=sha256 but no SHA-256 signature files found; SHA-256 pass will have zero signatures" 1
+			fi
+		fi
+	fi
 	if [ "$scan_clamscan" == "1" ]; then
 		if [ -s "$sig_user_hex_file" ]; then
 			while IFS= read -r i; do
@@ -3731,12 +4096,31 @@ gensigs() {
 		else
 			cp $sig_cav_hex_file $runtime_ndb
 		fi
-		if [ -s "$sig_user_md5_file" ]; then
-			# Convert user MD5 sigs from LMD format (HASH:SIZE:{MD5}name) to ClamAV .hdb format (HASH:SIZE:name)
-			sed 's/{MD5}//' "$sig_user_md5_file" | grep -vE "^\s*$" > "$runtime_hdb"
-			cat "$sig_cav_md5_file" >> "$runtime_hdb"
-		else
-			cp "$sig_cav_md5_file" "$runtime_hdb"
+		# ClamAV .hdb (MD5 hash DB) — only when hashtype includes md5
+		if [ -n "$runtime_hdb" ]; then
+			if [ -s "$sig_user_md5_file" ]; then
+				# Convert user MD5 sigs from LMD format (HASH:SIZE:{MD5}name) to ClamAV .hdb format (HASH:SIZE:name)
+				sed 's/{MD5}//' "$sig_user_md5_file" | grep -vE "^\s*$" > "$runtime_hdb"
+				cat "$sig_cav_md5_file" >> "$runtime_hdb"
+			else
+				cp "$sig_cav_md5_file" "$runtime_hdb"
+			fi
+		fi
+		# ClamAV .hsb (SHA-256 hash DB) — requires ClamAV >= 0.97
+		runtime_hsb=""
+		if [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ] && [ -n "$_clamav_supports_hsb" ]; then
+			runtime_hsb=$(mktemp "$tmpdir/.runtime.user.hsb.XXXXXX")
+			if [ -s "$sig_user_sha256_file" ]; then
+				sed 's/{SHA256}//' "$sig_user_sha256_file" | grep -vE "^\s*$" > "$runtime_hsb"
+				[ -f "$sig_cav_sha256_file" ] && [ -s "$sig_cav_sha256_file" ] && cat "$sig_cav_sha256_file" >> "$runtime_hsb"
+			elif [ -f "$sig_cav_sha256_file" ] && [ -s "$sig_cav_sha256_file" ]; then
+				cp "$sig_cav_sha256_file" "$runtime_hsb"
+			else
+				: > "$runtime_hsb"
+			fi
+			if [ -s "$runtime_hsb" ]; then
+				ln -fs "$runtime_hsb" "$sigdir/lmd.user.hsb" 2>/dev/null
+			fi
 		fi
 	fi
 	# Copy sigs to ClamAV dirs AFTER runtime user sigs are populated;
@@ -3756,6 +4140,10 @@ gensigs() {
 			cat "$_tmpfilt" > "$runtime_hexstrings"
 			grep -E -vf "$ignore_sigs" "$runtime_md5" > "$_tmpfilt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
 			cat "$_tmpfilt" > "$runtime_md5"
+			if [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
+				grep -E -vf "$ignore_sigs" "$runtime_sha256" > "$_tmpfilt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
+				cat "$_tmpfilt" > "$runtime_sha256"
+			fi
 			rm -f "$_tmpfilt"
 			if [ "$_silent" == "1" ] || [ "$hscan" == "1" ]; then
 				eout "{glob} processed $_ign_count signature ignore entries"
@@ -3787,12 +4175,54 @@ gensigs() {
 }
 
 
+_verify_download() {
+	# Verify integrity of a downloaded file against its hash sidecar.
+	# Prefers SHA-256; falls back to MD5 if sha256sum binary is absent.
+	# $1 = local file path (already downloaded)
+	# $2 = sidecar base URL (without .sha256/.md5 extension)
+	# $3 = service label for eout (e.g., "update", "sigup")
+	# $4 = local sidecar save path base (without extension)
+	# Returns: 0 = verified, 1 = mismatch/failure
+	local _file="$1" _sidecar_url_base="$2" _svc="$3" _local_base="$4"
+	local _hash_bin _sidecar_ext _hash_label
+
+	if [ -n "$sha256sum" ]; then
+		_hash_bin="$sha256sum"
+		_sidecar_ext=".sha256"
+		_hash_label="sha256sum"
+	else
+		eout "{$_svc} sha256sum not available, falling back to md5 verification" 1
+		_hash_bin="$md5sum"
+		_sidecar_ext=".md5"
+		_hash_label="md5sum"
+	fi
+
+	get_remote_file "${_sidecar_url_base}${_sidecar_ext}" "$_svc" "1" "${_local_base}${_sidecar_ext}"
+
+	if [ -f "${_local_base}${_sidecar_ext}" ] && [ -s "${_local_base}${_sidecar_ext}" ]; then
+		local _upstream_hash _local_hash
+		_upstream_hash=$(awk '{print$1}' "${_local_base}${_sidecar_ext}")
+		_local_hash=$($_hash_bin "$_file" | awk '{print$1}')
+		if [ "$_upstream_hash" != "$_local_hash" ]; then
+			eout "{$_svc} unable to verify $_hash_label of $(basename "$_file"), please try again" 1
+			return 1
+		else
+			eout "{$_svc} verified $_hash_label of $(basename "$_file")" 1
+			return 0
+		fi
+	else
+		eout "{$_svc} could not download ${_sidecar_url_base}${_sidecar_ext}" 1
+		return 1
+	fi
+}
+
 lmdup() {
 	tmpwd=$(mktemp -d "$tmpdir/.lmdup.XXXXXX")
 	upstreamver="$tmpwd/.lmdup_vercheck"
 	chmod 700 "$tmpwd"
 
 	if [ "$lmdup_beta" ]; then
+		lmd_hash_sha256_url="${lmd_hash_sha256_url}.beta"
 		lmd_hash_url="${lmd_hash_url}.beta"
 		lmd_version_url="${lmd_version_url}.beta"
 		lmd_current_tgzfile="maldetect-beta.tar.gz"
@@ -3826,8 +4256,17 @@ lmdup() {
 			doupdate=1
 		elif [ "$autoupdate_version_hashed" == "1" ]; then
 			eout "{update} hashing install files and checking against server..." 1
-			$md5sum "$inspath/maldet" "$intfunc" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > "$lmd_hash_file"
-			get_remote_file "$lmd_hash_url" "update" "1"
+			local _hash_bin _hash_remote_url
+			if [ -n "$sha256sum" ]; then
+				_hash_bin="$sha256sum"
+				_hash_remote_url="$lmd_hash_sha256_url"
+			else
+				eout "{update} sha256sum not available, falling back to md5 verification" 1
+				_hash_bin="$md5sum"
+				_hash_remote_url="$lmd_hash_url"
+			fi
+			$_hash_bin "$inspath/maldet" "$intfunc" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > "$lmd_hash_file"
+			get_remote_file "$_hash_remote_url" "update" "1"
 			upstreamhash="$return_file"
 			if [ -s "$upstreamhash" ]; then
 				installed_hash=$(cat "$lmd_hash_file")
@@ -3839,7 +4278,7 @@ lmdup() {
 					eout "{update} latest version already installed." 1
 				fi
 			else
-				eout "{update} could not download upstream hash file ($lmd_hash_url), please try again later." 1
+				eout "{update} could not download upstream hash file ($_hash_remote_url), please try again later." 1
 				cd "$inspath" ; rm -rf "$tmpwd"
 				clean_exit
 				exit 1
@@ -3857,28 +4296,23 @@ lmdup() {
 		cd "$tmpwd/" || { eout "{update} failed to cd to temp dir, aborting update" 1; rm -rf "$tmpwd"; exit 1; }
 
 		get_remote_file "${lmd_current_tgzbase_url}/${lmd_current_tgzfile}" "update" "1" "$tmpwd/${lmd_current_tgzfile}"
-		get_remote_file "${lmd_current_tgzbase_url}/${lmd_current_tgzfile}.md5" "update" "1" "$tmpwd/${lmd_current_tgzfile}.md5"
 
-		if [ -s "$tmpwd/${lmd_current_tgzfile}.md5" ] && [ -s "$tmpwd/${lmd_current_tgzfile}" ]; then
-			upstream_md5=$(awk '{print$1}' "$tmpwd/${lmd_current_tgzfile}.md5")
-			local_md5=$($md5sum "$tmpwd/${lmd_current_tgzfile}" | awk '{print$1}')
-			if [ "$upstream_md5" != "$local_md5" ]; then
-				eout "{update} unable to verify md5sum of ${lmd_current_tgzfile}, update failed!" 1
-				cd "$inspath" ; rm -rf "$tmpwd"
-				clean_exit
-				exit 1
-			else
-				eout "{update} verified md5sum of ${lmd_current_tgzfile}" 1
-			fi
-		else
-			eout "{update} could not download ${lmd_current_tgzfile} or .md5, please try again later." 1
+		if [ ! -s "$tmpwd/${lmd_current_tgzfile}" ]; then
+			eout "{update} could not download ${lmd_current_tgzfile}, please try again later." 1
+			cd "$inspath" ; rm -rf "$tmpwd"
+			clean_exit
+			exit 1
+		fi
+		if ! _verify_download "$tmpwd/${lmd_current_tgzfile}" \
+				"${lmd_current_tgzbase_url}/${lmd_current_tgzfile}" \
+				"update" "$tmpwd/${lmd_current_tgzfile}"; then
 			cd "$inspath" ; rm -rf "$tmpwd"
 			clean_exit
 			exit 1
 		fi
 		if [ -s "$tmpwd/${lmd_current_tgzfile}" ]; then
 			tar xfz "${lmd_current_tgzfile}"
-			rm -f "${lmd_current_tgzfile}" "${lmd_current_tgzfile}.md5"
+			rm -f "${lmd_current_tgzfile}" "${lmd_current_tgzfile}".{sha256,md5}
 			cd "maldetect-${upstreamver_readable}" || { eout "{update} failed to cd to extracted directory maldetect-${upstreamver_readable}, aborting update" 1; cd "$inspath"; rm -rf "$tmpwd"; clean_exit; exit 1; }
 			chmod 750 install.sh
 			local install_log
@@ -3899,7 +4333,7 @@ lmdup() {
 			rm -f "$install_log"
 			cp -f "$inspath.last/sigs/custom."* "$sigdir/" 2> /dev/null
 			cp -f "$inspath.last/clean/custom."* "$inspath/clean/" 2> /dev/null
-			eout "{update} completed update v$lmd_version ${installed_hash:0:6} => v$upstreamver_readable ${upstream_md5:0:6}, running signature updates..." 1
+			eout "{update} completed update v$lmd_version ${installed_hash:0:6} => v$upstreamver_readable, running signature updates..." 1
 			$inspath/maldet --update 1
 			eout "{update} update and config import completed" 1
 		else
@@ -3960,71 +4394,52 @@ sigup() {
 		
 		eout "{sigup} downloading $sig_sigpack_url" 1
 		get_remote_file "$sig_sigpack_url" "sigup" "1" "$tmpwd/maldet-sigpack.tgz"
-		get_remote_file "${sig_sigpack_url}.md5" "sigup" "1" "$tmpwd/maldet-sigpack.tgz.md5"
 
 		eout "{sigup} downloading $sig_clpack_url" 1
-
 		get_remote_file "$sig_clpack_url" "sigup" "1" "$tmpwd/maldet-clean.tgz"
-		get_remote_file "${sig_clpack_url}.md5" "sigup" "1" "$tmpwd/maldet-clean.tgz.md5"
-		
-		if [ -f "$tmpwd/maldet-sigpack.tgz.md5" ]; then
-			sigpack_md5=$($md5sum "$tmpwd/maldet-sigpack.tgz" | awk '{print$1}')
-			sigpack_goodmd5=$(awk '{print$1}' "$tmpwd/maldet-sigpack.tgz.md5")
-			if [ "$sigpack_md5" != "$sigpack_goodmd5" ]; then
-				eout "{sigup} unable to verify md5sum of maldet-sigpack.tgz, please try again or contact proj@rfxn.com" 1
-				sigpackfail=1
-			else
-				eout "{sigup} verified md5sum of maldet-sigpack.tgz" 1
-				if [ -f "$tmpwd/maldet-sigpack.tgz" ] && [ -s "$tmpwd/maldet-sigpack.tgz" ]; then
-					tar xfz "$tmpwd/maldet-sigpack.tgz" 2> /dev/null
-					if [ -d "$tmpwd/sigs" ]; then
-						mkdir -p "$sigdir.old" 2> /dev/null
-						rm -f "$sigdir.old"/* 2> /dev/null
-						cp -f "$sigdir"/* "$sigdir.old"/ 2> /dev/null
-						cp -f "$tmpwd"/sigs/* "$sigdir" 2> /dev/null
-						eout "{sigup} unpacked and installed maldet-sigpack.tgz" 1
-						for cp in $clamav_paths; do
-							clamav_linksigs "$cp"
-						done
-						killall -SIGUSR2 clamd 2> /dev/null
-					else
-						eout "{sigup} something went wrong unpacking $sig_sigpack_url, aborting!" 1
-						sigpackfail=1
-					fi
+
+		if ! _verify_download "$tmpwd/maldet-sigpack.tgz" \
+				"$sig_sigpack_url" "sigup" "$tmpwd/maldet-sigpack.tgz"; then
+			sigpackfail=1
+		else
+			if [ -f "$tmpwd/maldet-sigpack.tgz" ] && [ -s "$tmpwd/maldet-sigpack.tgz" ]; then
+				tar xfz "$tmpwd/maldet-sigpack.tgz" 2> /dev/null
+				if [ -d "$tmpwd/sigs" ]; then
+					mkdir -p "$sigdir.old" 2> /dev/null
+					rm -f "$sigdir.old"/* 2> /dev/null
+					cp -f "$sigdir"/* "$sigdir.old"/ 2> /dev/null
+					cp -f "$tmpwd"/sigs/* "$sigdir" 2> /dev/null
+					eout "{sigup} unpacked and installed maldet-sigpack.tgz" 1
+					for cp in $clamav_paths; do
+						clamav_linksigs "$cp"
+					done
+					killall -SIGUSR2 clamd 2> /dev/null
 				else
-					eout "{sigup} could not download $sig_sigpack_url" 1
+					eout "{sigup} something went wrong unpacking $sig_sigpack_url, aborting!" 1
 					sigpackfail=1
 				fi
-			fi
-		else
-			eout "{sigup} could not download ${sig_sigpack_url}.md5" 1
-			sigpackfail=1
-		fi
-		
-		if [ -f "$tmpwd/maldet-clean.tgz.md5" ]; then
-			clpack_md5=$($md5sum "$tmpwd/maldet-clean.tgz" | awk '{print$1}')
-			clpack_goodmd5=$(awk '{print$1}' "$tmpwd/maldet-clean.tgz.md5")
-			if [ "$clpack_md5" != "$clpack_goodmd5" ]; then
-				eout "{sigup} unable to verify md5sum of maldet-clean.tgz, please try again or contact proj@rfxn.com" 1
-				clpackfail=1
 			else
-				eout "{sigup} verified md5sum of maldet-clean.tgz" 1
-				if [ -f "$tmpwd/maldet-clean.tgz" ] && [ -s "$tmpwd/maldet-clean.tgz" ]; then
-					tar xfz "$tmpwd/maldet-clean.tgz"
-					if [ -d "$tmpwd/clean" ]; then
-						cp -f "$tmpwd"/clean/* "$cldir"
-						eout "{sigup} unpacked and installed maldet-clean.tgz" 1
-					else
-						eout "{sigup} clean rules archive contained no data" 1
-					fi
-				else
-					eout "{sigup} error handling $sig_clpack_url, file is either missing or zero sized, aborting!" 1
-					clpackfail=1
-				fi
+				eout "{sigup} could not download $sig_sigpack_url" 1
+				sigpackfail=1
 			fi
-		else
-			eout "{sigup} could not download ${sig_sigpack_url}.md5" 1
+		fi
+
+		if ! _verify_download "$tmpwd/maldet-clean.tgz" \
+				"$sig_clpack_url" "sigup" "$tmpwd/maldet-clean.tgz"; then
 			clpackfail=1
+		else
+			if [ -f "$tmpwd/maldet-clean.tgz" ] && [ -s "$tmpwd/maldet-clean.tgz" ]; then
+				tar xfz "$tmpwd/maldet-clean.tgz"
+				if [ -d "$tmpwd/clean" ]; then
+					cp -f "$tmpwd"/clean/* "$cldir"
+					eout "{sigup} unpacked and installed maldet-clean.tgz" 1
+				else
+					eout "{sigup} clean rules archive contained no data" 1
+				fi
+			else
+				eout "{sigup} error handling $sig_clpack_url, file is either missing or zero sized, aborting!" 1
+				clpackfail=1
+			fi
 		fi
 		
 		if [ "$sigpackfail" ]; then

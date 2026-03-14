@@ -176,11 +176,11 @@ teardown() {
     assert_success
 }
 
-@test "sigup rejects sigpack with bad MD5" {
+@test "sigup rejects sigpack with bad hash" {
     create_mock_sigpack "2025010100000"
     create_mock_cleanpack
-    # Corrupt the md5 file
-    echo "0000000000000000000000000000bad0" > "$MOCK_FIXTURES/maldet-sigpack.tgz.md5"
+    # Corrupt the sha256 sidecar
+    echo "0000000000000000000000000000000000000000000000000000000000bad000" > "$MOCK_FIXTURES/maldet-sigpack.tgz.sha256"
 
     run bash -c '
         source /opt/tests/helpers/mock-update-server.sh
@@ -199,7 +199,7 @@ teardown() {
         sigup
     '
     assert_failure
-    run grep "unable to verify md5sum" "$LMD_INSTALL/logs/event_log"
+    run grep "unable to verify sha256sum" "$LMD_INSTALL/logs/event_log"
     assert_success
 }
 
@@ -363,10 +363,10 @@ teardown() {
     assert_success
 }
 
-@test "lmdup rejects tarball with bad MD5" {
+@test "lmdup rejects tarball with bad hash" {
     create_mock_tarball "2.0.2"
-    # Corrupt the md5 file
-    echo "0000000000000000000000000000bad0" > "$MOCK_FIXTURES/maldetect-current.tar.gz.md5"
+    # Corrupt the sha256 sidecar
+    echo "0000000000000000000000000000000000000000000000000000000000bad000" > "$MOCK_FIXTURES/maldetect-current.tar.gz.sha256"
 
     run bash -c '
         source /opt/tests/helpers/mock-update-server.sh
@@ -382,7 +382,7 @@ teardown() {
         lmdup
     '
     assert_failure
-    run grep "unable to verify md5sum" "$LMD_INSTALL/logs/event_log"
+    run grep "unable to verify sha256sum" "$LMD_INSTALL/logs/event_log"
     assert_success
 }
 
@@ -390,7 +390,7 @@ teardown() {
     create_mock_tarball "2.0.1"
     # Set upstream hash that differs from local
     set_fixture "maldet.current.ver" "2.0.1"
-    set_fixture "maldet.current.hash" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    set_fixture "maldet.current.hash.sha256" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccccccccccc"
 
     run bash -c '
         source /opt/tests/helpers/mock-update-server.sh
@@ -413,8 +413,8 @@ teardown() {
 @test "lmdup hash check passes when files match" {
     set_fixture "maldet.current.ver" "2.0.1"
     # Compute real hash of installed files
-    local_hash=$(md5sum "$LMD_INSTALL/maldet" "$LMD_INSTALL/internals/functions" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ')
-    set_fixture "maldet.current.hash" "$local_hash"
+    local_hash=$(sha256sum "$LMD_INSTALL/maldet" "$LMD_INSTALL/internals/functions" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ')
+    set_fixture "maldet.current.hash.sha256" "$local_hash"
 
     run bash -c '
         source /opt/tests/helpers/mock-update-server.sh
@@ -682,5 +682,90 @@ RULE
     run grep "pre_existing_rule" "$LMD_INSTALL/sigs/custom.yara"
     assert_success
     run grep "WARNING: downloaded YARA rules from" "$LMD_INSTALL/logs/event_log"
+    assert_success
+}
+
+
+# ============================================================
+# SHA-256 / MD5 fallback tests
+# ============================================================
+
+@test "sigup falls back to md5 when sha256sum unavailable" {
+    create_mock_sigpack "2025010100000"
+    create_mock_cleanpack
+
+    run bash -c '
+        source /opt/tests/helpers/mock-update-server.sh
+        setup_mock_update_server
+        source "'"$LMD_INSTALL"'/internals/internals.conf"
+        source "'"$LMD_INSTALL"'/conf.maldet"
+        if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
+        source "'"$LMD_INSTALL"'/internals/functions"
+        import_config_url=""
+        import_custsigs_md5_url=""
+        import_custsigs_hex_url=""
+        web_proxy=""
+        get_proxy_arg=""
+        # Force sha256sum unavailable
+        sha256sum=""
+        echo "2024010100000" > "'"$LMD_INSTALL"'/sigs/maldet.sigs.ver"
+        sig_version="2024010100000"
+        sigup
+    '
+    assert_success
+    run grep "sha256sum not available, falling back to md5" "$LMD_INSTALL/logs/event_log"
+    assert_success
+    run grep "verified md5sum" "$LMD_INSTALL/logs/event_log"
+    assert_success
+}
+
+@test "lmdup falls back to md5 for tarball when sha256sum unavailable" {
+    create_mock_tarball "2.0.2"
+
+    run bash -c '
+        source /opt/tests/helpers/mock-update-server.sh
+        setup_mock_update_server
+        source "'"$LMD_INSTALL"'/internals/internals.conf"
+        source "'"$LMD_INSTALL"'/conf.maldet"
+        if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
+        source "'"$LMD_INSTALL"'/internals/functions"
+        import_config_url=""
+        web_proxy=""
+        get_proxy_arg=""
+        sha256sum=""
+        lmd_version="2.0.1"
+        lmdup
+    '
+    run grep "sha256sum not available, falling back to md5" "$LMD_INSTALL/logs/event_log"
+    assert_success
+    run grep "verified md5sum" "$LMD_INSTALL/logs/event_log"
+    assert_success
+}
+
+@test "lmdup hash check falls back to md5 URL when sha256sum unavailable" {
+    set_fixture "maldet.current.ver" "2.0.1"
+    # Compute real MD5 hash of installed files (sha256sum unavailable)
+    local_hash=$(md5sum "$LMD_INSTALL/maldet" "$LMD_INSTALL/internals/functions" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ')
+    set_fixture "maldet.current.hash" "$local_hash"
+
+    run bash -c '
+        source /opt/tests/helpers/mock-update-server.sh
+        setup_mock_update_server
+        source "'"$LMD_INSTALL"'/internals/internals.conf"
+        source "'"$LMD_INSTALL"'/conf.maldet"
+        if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
+        source "'"$LMD_INSTALL"'/internals/functions"
+        import_config_url=""
+        web_proxy=""
+        get_proxy_arg=""
+        sha256sum=""
+        lmd_version="2.0.1"
+        autoupdate_version_hashed="1"
+        lmdup
+    '
+    assert_success
+    run grep "sha256sum not available, falling back to md5" "$LMD_INSTALL/logs/event_log"
+    assert_success
+    run grep "latest version already installed" "$LMD_INSTALL/logs/event_log"
     assert_success
 }
