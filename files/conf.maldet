@@ -76,8 +76,13 @@ slack_alert="0"
 slack_subj="maldet alert from $(hostname)"
 
 # Slack authentication token (Bot or User token).
-# Requires scopes: files:write, files:read (v2.0.1: migrated from files.upload;
-# users upgrading from v1.x must update token scopes or generate a new token)
+# Requires scopes: files:write, files:read
+# IMPORTANT (v2.0.1): The Slack API integration was migrated from the
+# deprecated files.upload endpoint to files.getUploadURLExternal +
+# files.completeUploadExternal. If upgrading from v1.x, you must ensure
+# your Bot token has the 'files:write' and 'files:read' scopes, or
+# generate a new token with these scopes. Without them, Slack alerts
+# will fail with a 'missing_scope' or 'not_authed' API error.
 # more information https://api.slack.com/methods/files.getUploadURLExternal
 slack_token="AUTH_TOKEN"
 
@@ -160,34 +165,31 @@ import_config_url=""
 # for most setups.
 import_config_expire="43200"
 
-# When defined, the import_custsigs_*_url options allow for the custom signature
+# When defined, the sig_import_*_url options allow for the custom signature
 # files to be downloaded from a remote URL. THIS WILL OVERWRITE ANY LOCAL CUSTOM
 # SIGNATURE FILES! It is recommended for large-scale deployments to define these
 # variables within a import_config_url file.
-import_custsigs_md5_url=""
-import_custsigs_hex_url=""
-import_custsigs_yara_url=""
-import_custsigs_sha256_url=""
+sig_import_md5_url=""
+sig_import_hex_url=""
+sig_import_yara_url=""
+sig_import_sha256_url=""
+sig_import_csig_url=""
 
 ##
 # [ SCAN OPTIONS ]
 ##
 # Hash algorithm for file-hash signature matching (stage 1).
 # Controls which hash-based signatures are checked during scans.
-#   auto    - use SHA-256 if CPU has hardware acceleration, else MD5
+#   auto    - use SHA-256 if CPU has hardware acceleration, else MD5 (recommended)
 #   sha256  - always use SHA-256 (requires sha256sum binary)
-#   md5     - always use MD5 (legacy behavior)
-#   both    - check both MD5 and SHA-256 signatures (most thorough, slowest)
-# Note: 'both' mode hashes every file twice and is intended for transitional
-# periods when migrating from MD5 to SHA-256 signature sets. Not recommended
-# for inotify monitoring due to doubled I/O overhead.
+#   md5     - always use MD5 (preserves performance on older CPUs without SHA-NI)
 # [ auto = default ]
 scan_hashtype="auto"
 
-# Number of parallel workers for native scan passes (MD5, SHA-256, and HEX).
-# A value of 0 uses automatic detection: 2 workers per CPU core, up to 8.
-# [ 0 = auto, 1 = single-threaded, max = 8 ]
-scan_workers="0"
+# Number of parallel workers for native scan passes (MD5, SHA-256, HEX, and CSIG).
+# Auto detection uses 2 workers per CPU core, up to 8.
+# [ auto = default, 1 = single-threaded, max = 8 ]
+scan_workers="auto"
 
 # If installed, use ClamAV clamscan binary as default scan engine which
 # provides improved scan performance on large file sets. The clamscan
@@ -214,6 +216,13 @@ scan_yara_timeout="300"
 # When ClamAV is disabled, this is ignored and all rules are scanned.
 # [ all | custom ]
 scan_yara_scope="custom"
+
+# Enable compound signature (csig) scanning. Compound signatures support
+# multi-pattern boolean logic (AND/OR/threshold), case-insensitive matching,
+# wide (UTF-16LE) matching, and bounded gap wildcards. csig scanning runs
+# in native mode only (not with ClamAV).
+# [ 0 = disabled, 1 = enabled ]
+scan_csig="1"
 
 # Allows non-root users to perform scans. This must be enabled when
 # using mod_security2 upload scanning or if you want to allow users

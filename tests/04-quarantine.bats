@@ -160,3 +160,28 @@ teardown() {
     assert_scan_completed
     [ -f "$TEST_SCAN_DIR/eicar.com" ]
 }
+
+# PR-002: quar_hitlist does not duplicate hits_history entries
+@test "quar_hitlist does not duplicate hits_history entries" {
+    source /opt/tests/helpers/reset-lmd.sh
+    lmd_set_config quarantine_hits 0
+    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
+    # Scan without quarantine — file stays, hits_history written by scan
+    maldet -a "$TEST_SCAN_DIR" || true
+    local scanid
+    scanid=$(get_last_scanid)
+    [ -n "$scanid" ]
+    # File must still exist (quarantine_hits=0)
+    [ -f "$TEST_SCAN_DIR/eicar.com" ]
+    # Record baseline hits_history line count
+    local hist_before
+    hist_before=$(wc -l < "$LMD_INSTALL/sess/hits.hist")
+    # Now quarantine via -q SCANID (file still at original path)
+    run maldet -q "$scanid"
+    assert_success
+    [ ! -f "$TEST_SCAN_DIR/eicar.com" ]
+    # hits_history must NOT have grown (no duplicate entries)
+    local hist_after
+    hist_after=$(wc -l < "$LMD_INSTALL/sess/hits.hist")
+    [ "$hist_after" -eq "$hist_before" ]
+}

@@ -42,6 +42,8 @@ _lmd_parse_hitlist() {
 		ht_color["YARA"] = "#d97706"; ht_label["YARA"] = "YARA Rule"
 		ht_color["SA"]   = "#16a34a"; ht_label["SA"]   = "String Analysis"
 		ht_color["CAV"]  = "#7c3aed"; ht_label["CAV"]  = "ClamAV"
+		ht_color["CSIG"] = "#ea580c"; ht_label["CSIG"] = "Compound Sig"
+		ht_color["SHA256"] = "#0d9488"; ht_label["SHA256"] = "SHA-256 Hash"
 		default_color = "#0891b2"
 	}
 	{

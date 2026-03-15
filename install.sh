@@ -26,11 +26,11 @@ clamav_linksigs() {
 		rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null
 		cp -f "$inspath/sigs/rfxn.ndb" "$inspath/sigs/rfxn.hdb" "$inspath/sigs/rfxn.yara" "$cpath/" 2>/dev/null
 		[ -f "$inspath/sigs/rfxn.hsb" ] && [ -s "$inspath/sigs/rfxn.hsb" ] && \
-			/usr/bin/cp -f "$inspath/sigs/rfxn.hsb" "$cpath"/ 2>/dev/null
+			command cp -f "$inspath/sigs/rfxn.hsb" "$cpath"/ 2>/dev/null
 		rm -f "$cpath"/lmd.user.* 2>/dev/null
-		[ -s "$inspath/sigs/lmd.user.ndb" ] && /usr/bin/cp -f "$inspath/sigs/lmd.user.ndb" "$cpath"/ 2>/dev/null
-		[ -s "$inspath/sigs/lmd.user.hdb" ] && /usr/bin/cp -f "$inspath/sigs/lmd.user.hdb" "$cpath"/ 2>/dev/null
-		[ -s "$inspath/sigs/lmd.user.hsb" ] && /usr/bin/cp -f "$inspath/sigs/lmd.user.hsb" "$cpath"/ 2>/dev/null
+		[ -s "$inspath/sigs/lmd.user.ndb" ] && command cp -f "$inspath/sigs/lmd.user.ndb" "$cpath"/ 2>/dev/null
+		[ -s "$inspath/sigs/lmd.user.hdb" ] && command cp -f "$inspath/sigs/lmd.user.hdb" "$cpath"/ 2>/dev/null
+		[ -s "$inspath/sigs/lmd.user.hsb" ] && command cp -f "$inspath/sigs/lmd.user.hsb" "$cpath"/ 2>/dev/null
 	fi
 }
 
@@ -61,8 +61,9 @@ _install_core() {
 	mkdir -p /usr/local/share/man/man1/
 	gzip -9 "$inspath/maldet.1"
 	pkg_symlink "$inspath/maldet.1.gz" /usr/local/share/man/man1/maldet.1.gz
-	# Create empty custom.sha256.dat if absent (upgrade path: prior versions lack it)
+	# Create empty custom sig files if absent (upgrade path: prior versions lack them)
 	[ -f "$inspath/sigs/custom.sha256.dat" ] || touch "$inspath/sigs/custom.sha256.dat"
+	[ -f "$inspath/sigs/custom.csig.dat" ] || touch "$inspath/sigs/custom.csig.dat"
 	for lp in $clamav_paths; do
 		clamav_linksigs "$lp"
 	done
@@ -141,7 +142,7 @@ _install_cron_service() {
 	# Log setup
 	mkdir -p "$inspath/logs" && touch "$logf"
 	pkg_symlink "$logf" "$inspath/event_log"
-	"$inspath/maldet" --alert-daily 2>/dev/null  # safe: configures daily alert cron
+	"$inspath/maldet" --alert-daily 2>/dev/null  # safe: primes digest state; no-op if no monitor running
 }
 
 # --- Installation summary ---
@@ -167,12 +168,12 @@ _compat_migrate() {
 	local _old_conf="$1" _merged="$2" _old_var="$3" _new_var="$4"
 	local _val
 	# Skip if user's old config already has the new variable name with a non-empty value.
-	# CH-3-001: pkg_config_get returns 0 with empty output for VAR=""; treat empty as
+	# pkg_config_get returns 0 with empty output for VAR=""; treat empty as
 	# "not set" to match compat.conf's [ ! "$new_var" ] semantics.
 	_val=$(pkg_config_get "$_old_conf" "$_new_var") && [[ -n "$_val" ]] && return 0
 	# Read old variable value; skip if absent from old config
 	_val=$(pkg_config_get "$_old_conf" "$_old_var") || return 0
-	# Guard: skip empty values to avoid overwriting real defaults (CH-001)
+	# Guard: skip empty values to avoid overwriting real defaults
 	[[ -n "$_val" ]] || return 0
 	# Apply old value to new variable name in merged output
 	pkg_config_set "$_merged" "$_new_var" "$_val"
@@ -184,7 +185,7 @@ _import_config() {
 
 	local _merge_tmp
 	_merge_tmp=$(mktemp "${PKG_TMPDIR:-/tmp}/lmd-conf-merge.XXXXXX")
-	trap 'rm -f "$_merge_tmp"' RETURN  # CH-002: cleanup on any exit path
+	trap 'rm -f "$_merge_tmp"' RETURN  # cleanup on any exit path
 
 	# AWK merge: old user values into new template structure
 	pkg_config_merge "$_old_conf" "files/conf.maldet" "$_merge_tmp" || {
@@ -212,6 +213,11 @@ _import_config() {
 	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_stime inotify_sleep
 	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_webdir inotify_docroot
 	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_nice inotify_cpunice
+	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_md5_url sig_import_md5_url
+	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_hex_url sig_import_hex_url
+	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_yara_url sig_import_yara_url
+	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_sha256_url sig_import_sha256_url
+	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_csig_url sig_import_csig_url
 
 	# Special case: scan_hexfifo consolidation (v2.0.1)
 	# Old scan_hexfifo + scan_hexfifo_depth are consolidated into scan_hexdepth.

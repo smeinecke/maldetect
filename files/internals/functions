@@ -107,7 +107,7 @@ prerun() {
 
 	if [ "$(whoami)" != "root" ]; then
 		if [ -z "$scan_user_access" ] || [ "$scan_user_access" == "0" ]; then
-			args="$@"
+			args="$*"
 			if [[ "$args" == *"modsec"* ]]; then
 				echo "1 maldet: OK"
 				exit 0
@@ -140,7 +140,7 @@ prerun() {
 		chown -R "${user}:root" "$userbasedir/$user" 2> /dev/null
 		chmod 750 "$userbasedir/$user" "$quardir" "$sessdir" "$tmpdir" 2> /dev/null
 		chmod 640 "$maldet_log" 2> /dev/null
-		cd "$tmpdir"
+		cd "$tmpdir" || return 1
 	else
 		echo "$lmd_version" > "$lmd_version_file"
 	fi
@@ -382,8 +382,7 @@ get_remote_file() {
 		get_file=$(echo "$get_uri" | tr '/' '\n' | tail -n1)
 	fi
 
-	# Download failure is non-fatal; file existence check below handles it
-	$get_bin $get_opts "$get_uri" $get_output_arg "$tmpf" || true
+	$get_bin $get_opts "$get_uri" $get_output_arg "$tmpf" || true  # safe: download failure is non-fatal; file existence check below handles it
 
 	if [ ! -f "$tmpf" ] || [ ! -s "$tmpf" ]; then
 		eout "{$grf_svc} could not download $get_uri, please try again later." $verbose
@@ -396,22 +395,22 @@ get_remote_file() {
 }
 
 import_user_sigs() {
-	if [ "$import_custsigs_md5_url" ]; then
-		get_remote_file "$import_custsigs_md5_url" "importsigs" "1"
+	if [ "$sig_import_md5_url" ]; then
+		get_remote_file "$sig_import_md5_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
 			cp -f "$return_file" "$sig_user_md5_file"
-			eout "{importsigs} imported custom signature data from $import_custsigs_md5_url"
+			eout "{importsigs} imported custom signature data from $sig_import_md5_url"
 		fi
 	fi
-	if [ "$import_custsigs_hex_url" ]; then
-		get_remote_file "$import_custsigs_hex_url" "importsigs" "1"
+	if [ "$sig_import_hex_url" ]; then
+		get_remote_file "$sig_import_hex_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
 			cp -f "$return_file" "$sig_user_hex_file"
-			eout "{importsigs} imported custom signature data from $import_custsigs_hex_url"
+			eout "{importsigs} imported custom signature data from $sig_import_hex_url"
 		fi
 	fi
-	if [ "$import_custsigs_yara_url" ]; then
-		get_remote_file "$import_custsigs_yara_url" "importsigs" "1"
+	if [ "$sig_import_yara_url" ]; then
+		get_remote_file "$sig_import_yara_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
 			local yara_valid=1
 			if [ -n "$yr" ] && [ -f "$yr" ]; then
@@ -421,24 +420,65 @@ import_user_sigs() {
 			fi
 			if [ "$yara_valid" == "1" ]; then
 				cp -f "$return_file" "$sig_user_yara_file"
-				eout "{importsigs} imported custom YARA rules from $import_custsigs_yara_url"
+				eout "{importsigs} imported custom YARA rules from $sig_import_yara_url"
 			else
-				eout "{importsigs} WARNING: downloaded YARA rules from $import_custsigs_yara_url failed syntax check, skipping import"
+				eout "{importsigs} WARNING: downloaded YARA rules from $sig_import_yara_url failed syntax check, skipping import"
 			fi
 		fi
 	fi
-	if [ "$import_custsigs_sha256_url" ]; then
-		get_remote_file "$import_custsigs_sha256_url" "importsigs" "1"
+	if [ "$sig_import_sha256_url" ]; then
+		get_remote_file "$sig_import_sha256_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
 			cp -f "$return_file" "$sig_user_sha256_file"
-			eout "{importsigs} imported custom SHA-256 signature data from $import_custsigs_sha256_url"
+			eout "{importsigs} imported custom SHA-256 signature data from $sig_import_sha256_url"
+		fi
+	fi
+	if [ "$sig_import_csig_url" ]; then
+		get_remote_file "$sig_import_csig_url" "importsigs" "1"
+		if [ -f "$return_file" ]; then
+			cp -f "$return_file" "$sig_user_csig_file"
+			eout "{importsigs} imported custom compound signature data from $sig_import_csig_url"
 		fi
 	fi
 }
 
 _safe_source_conf() {
+	# Parse a remote config file safely, accepting only known conf.maldet
+	# variable names. Uses a TRUE ALLOWLIST -- any variable not listed here
+	# is rejected, preventing override of internal path vars (inspath,
+	# sigdir, cldir, etc.) via compromised import_config_url.
+	# MAINTENANCE: when adding new variables to conf.maldet, also add them
+	# to _ssc_allowed_pat below.
 	local _ssc_file="$1"
 	local _ssc_line _ssc_var _ssc_val
+	# Allowlist: every user-facing variable defined in conf.maldet.
+	# Organized by section to ease maintenance.
+	local _ssc_allowed_pat
+	_ssc_allowed_pat='^(email_alert|email_addr|email_ignore_clean|email_subj'
+	_ssc_allowed_pat="${_ssc_allowed_pat}|email_panel_user_alerts|email_panel_from|email_panel_replyto|email_panel_alert_subj"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|email_format|smtp_relay|smtp_from|smtp_user|smtp_pass"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|slack_alert|slack_subj|slack_token|slack_channels"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|telegram_alert|telegram_file_caption|telegram_bot_token|telegram_channel_id"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|discord_alert|discord_webhook_url"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|autoupdate_signatures|autoupdate_version|autoupdate_version_hashed"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|cron_prune_days|cron_daily_scan|scan_days"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|import_config_url|import_config_expire"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|sig_import_md5_url|sig_import_hex_url|sig_import_yara_url|sig_import_sha256_url|sig_import_csig_url"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_hashtype|scan_workers|scan_clamscan|scan_yara|scan_yara_timeout|scan_yara_scope|scan_csig"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_user_access|scan_user_access_minuid|scan_max_depth"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_min_filesize|scan_max_filesize|scan_hexdepth"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_cpunice|scan_ionice|scan_cpulimit"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_ignore_root|scan_ignore_user|scan_ignore_group"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_find_timeout|scan_export_filelist|scan_tmpdir_paths"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|quarantine_hits|quarantine_clean|quarantine_on_error"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|quarantine_suspend_user|quarantine_suspend_user_minuid"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|default_monitor_mode|inotify_base_watches|inotify_sleep|inotify_reloadtime"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|inotify_minuid|inotify_docroot|inotify_cpunice|inotify_ionice"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|inotify_cpulimit|inotify_verbose"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_clamd_remote|remote_clamd_config|remote_clamd_max_retry|remote_clamd_retry_sleep"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|enable_statistic|elk_host|elk_port|elk_index"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|string_length_scan|string_length"
+	_ssc_allowed_pat="${_ssc_allowed_pat})\$"
 	while IFS= read -r _ssc_line || [ -n "$_ssc_line" ]; do
 		# Skip blank lines and comments
 		case "$_ssc_line" in
@@ -460,10 +500,9 @@ _safe_source_conf() {
 					continue
 					;;
 			esac
-			# Reject dangerous environment variable overrides
-			local _ssc_dangerous_pat='^(PATH|LD_[A-Z_]+|BASH_ENV|ENV|IFS|CDPATH|GLOBIGNORE)$'
-			if [[ "$_ssc_var" =~ $_ssc_dangerous_pat ]]; then
-				eout "{importconf} WARNING: rejected blocked variable in remote config: $_ssc_var"
+			# Allowlist check: only accept known conf.maldet variables
+			if ! [[ "$_ssc_var" =~ $_ssc_allowed_pat ]]; then
+				eout "{importconf} WARNING: rejected unknown variable in remote config: $_ssc_var"
 				continue
 			fi
 			printf -v "$_ssc_var" '%s' "$_ssc_val"
@@ -533,16 +572,16 @@ clamav_linksigs() {
 		# and ClamAV >= 0.97 (avoids "Malformed database" on CentOS 6)
 		if [ "$_effective_hashtype" != "md5" ] && [ -n "$_clamav_supports_hsb" ] \
 		   && [ -f "$sigdir/rfxn.hsb" ] && [ -s "$sigdir/rfxn.hsb" ]; then
-			/usr/bin/cp -f "$sigdir/rfxn.hsb" "$cpath"/ 2> /dev/null
+			command cp -f "$sigdir/rfxn.hsb" "$cpath"/ 2> /dev/null
 		fi
 		rm -f "$cpath"/lmd.user.* 2> /dev/null
-		[ -s "$sigdir/lmd.user.ndb" ] && /usr/bin/cp -f "$sigdir/lmd.user.ndb" "$cpath"/ 2> /dev/null
+		[ -s "$sigdir/lmd.user.ndb" ] && command cp -f "$sigdir/lmd.user.ndb" "$cpath"/ 2> /dev/null
 		if [ "$_effective_hashtype" != "sha256" ] && [ -s "$sigdir/lmd.user.hdb" ]; then
-			/usr/bin/cp -f "$sigdir/lmd.user.hdb" "$cpath"/ 2> /dev/null
+			command cp -f "$sigdir/lmd.user.hdb" "$cpath"/ 2> /dev/null
 		fi
 		if [ "$_effective_hashtype" != "md5" ] && [ -n "$_clamav_supports_hsb" ] \
 		   && [ -s "$sigdir/lmd.user.hsb" ]; then
-			/usr/bin/cp -f "$sigdir/lmd.user.hsb" "$cpath"/ 2> /dev/null
+			command cp -f "$sigdir/lmd.user.hsb" "$cpath"/ 2> /dev/null
 		fi
 	fi
 }
@@ -752,6 +791,10 @@ _clean_rescan() {
 	clean_state="1"
 	unset clean_failed
 	scan_stage1 "$_fpath" 1 >> /dev/null 2>&1
+	# csig single-file evaluation after stage1+stage2, before YARA
+	if [ -f "$_fpath" ] && [ "$scan_csig" == "1" ] && [ -n "$runtime_csig_compiled" ] && [ -s "$runtime_csig_compiled" ]; then
+		_csig_scan_file "$_fpath" 1 >> /dev/null 2>&1
+	fi
 	if [ -f "$_fpath" ] && [ "$scan_yara" == "1" ]; then
 		local clean_yara_list
 		clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
@@ -770,7 +813,7 @@ clean() {
 	file_size="$5"
 	file_md5="$6"
 
-	sh_hitname=$(echo "$file_signame" | sed -E -e 's/\{(HEX|MD5|CAV|YARA)\}//' -e 's/\.[0-9]+$//')
+	sh_hitname=$(echo "$file_signame" | sed -E -e 's/\{(HEX|MD5|SHA256|CAV|YARA|CSIG)\}//' -e 's/\.[0-9]+$//')
 	if [ -d "$cldir" ] && [ "$quarantine_clean" == "1" ] && [ "$quarantine_hits" == "1" ] && [ -f "$file" ]; then
 		if { [ -f "$cldir/$sh_hitname" ] || [ -f "$cldir/custom.$sh_hitname" ]; } && [ -f "${file}.info" ]; then
 			file_path=$(grep -E -v '\#' "${file}.info" | cut -d':' -f9-)
@@ -977,29 +1020,32 @@ clean_hitlist() {
 }
 
 _lmd_alert_init() {
-	# Map LMD config vars to alert_lib env vars
-	export ALERT_CURL_TIMEOUT="${remote_uri_timeout:-30}"
-	export ALERT_CURL_MAX_TIME="120"
-	export ALERT_TMPDIR="$tmpdir"
+	# Map LMD config vars to alert_lib env vars.
+	# No export needed -- alert_lib.sh is sourced (same process), not exec'd.
+	# monitor_cycle() calls _lmd_alert_init() inside its own subshell, so
+	# re-initialization occurs post-fork without needing export.
+	ALERT_CURL_TIMEOUT="${remote_uri_timeout:-30}"
+	ALERT_CURL_MAX_TIME="120"
+	ALERT_TMPDIR="$tmpdir"
 
 	# Email format and SMTP relay
-	export ALERT_EMAIL_FORMAT="${email_format:-html}"
-	export ALERT_SMTP_RELAY="${smtp_relay:-}"
-	export ALERT_SMTP_FROM="${smtp_from:-}"
-	export ALERT_SMTP_USER="${smtp_user:-}"
-	export ALERT_SMTP_PASS="${smtp_pass:-}"
+	ALERT_EMAIL_FORMAT="${email_format:-html}"
+	ALERT_SMTP_RELAY="${smtp_relay:-}"
+	ALERT_SMTP_FROM="${smtp_from:-}"
+	ALERT_SMTP_USER="${smtp_user:-}"
+	ALERT_SMTP_PASS="${smtp_pass:-}"
 
 	# Slack — bot mode only (LMD uses file upload, requires Bot API)
-	export ALERT_SLACK_MODE="bot"
-	export ALERT_SLACK_TOKEN="${slack_token:-}"
-	export ALERT_SLACK_CHANNEL="${slack_channels:-}"
+	ALERT_SLACK_MODE="bot"
+	ALERT_SLACK_TOKEN="${slack_token:-}"
+	ALERT_SLACK_CHANNEL="${slack_channels:-}"
 
 	# Telegram
-	export ALERT_TELEGRAM_BOT_TOKEN="${telegram_bot_token:-}"
-	export ALERT_TELEGRAM_CHAT_ID="${telegram_channel_id:-}"
+	ALERT_TELEGRAM_BOT_TOKEN="${telegram_bot_token:-}"
+	ALERT_TELEGRAM_CHAT_ID="${telegram_channel_id:-}"
 
 	# Discord
-	export ALERT_DISCORD_WEBHOOK_URL="${discord_webhook_url:-}"
+	ALERT_DISCORD_WEBHOOK_URL="${discord_webhook_url:-}"
 
 	# Enable/disable channels
 	if [ "${slack_alert:-0}" = "1" ]; then
@@ -1016,6 +1062,15 @@ _lmd_alert_init() {
 		alert_channel_enable "discord"
 	else
 		alert_channel_disable "discord"
+	fi
+
+	# Warn if Slack is enabled but token looks like the conf.maldet placeholder
+	if [ "${slack_alert:-0}" = "1" ]; then
+		case "$slack_token" in
+			AUTH_TOKEN|"")
+				eout "{alert} WARNING: slack_alert=1 but slack_token is unset or placeholder; Slack alerts will fail"
+				;;
+		esac
 	fi
 }
 
@@ -1672,16 +1727,21 @@ quar_hitlist() {
 				fi
 			done < "$hitlist"
 		else
-			# Batch path: bulk stat+quarantine via unified pipeline
-			local _qh_manifest
+			# Batch path: stat+quarantine directly (skip _batch_record_hits
+			# to avoid duplicating hits_history entries already written by scan)
+			local _qh_manifest _qh_enriched
 			_qh_manifest=$(mktemp "$tmpdir/.qh_manifest.XXXXXX")
+			_qh_enriched=$(mktemp "$tmpdir/.qh_enriched.XXXXXX")
 			awk -F' : ' '{if ($2 != "") print $2 "\t" $1}' "$hitlist" > "$_qh_manifest"
-			# Force quarantine_hits=1 for this CLI path
-			local _saved_qh="$quarantine_hits"
-			quarantine_hits=1
-			_flush_hit_batch "$_qh_manifest" "quarantine"
-			quarantine_hits="$_saved_qh"
-			rm -f "$_qh_manifest"
+			_batch_stat_gather "$_qh_manifest" "$_qh_enriched"
+			if [ -s "$_qh_enriched" ]; then
+				# Force quarantine_hits=1 for this CLI path
+				local _saved_qh="$quarantine_hits"
+				quarantine_hits=1
+				_batch_quarantine "$_qh_enriched" "quarantine"
+				quarantine_hits="$_saved_qh"
+			fi
+			rm -f "$_qh_manifest" "$_qh_enriched"
 		fi
 	else
 		echo "{quar} invalid quarantine hit list, aborting."
@@ -1856,6 +1916,7 @@ _scan_cleanup() {
 		"$runtime_hexstrings" "$runtime_md5" "$runtime_sha256" "$runtime_hsb" \
 		"$clamscan_results" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
+		"$runtime_csig_compiled" "$runtime_csig_prefixes" \
 		"$tmpdir"/.find_killed."$scanid" \
 		"$tmpdir"/.tmp* "$tmpdir"/.tmpf* "$tmpdir"/.yara_* \
 		"$tmpdir"/.hex_batch* "$tmpdir"/.hex_worker* "$tmpdir"/.hex_chunk* \
@@ -1870,8 +1931,10 @@ _scan_cleanup() {
 		"$tmpdir"/.clam_manifest* "$tmpdir"/.clam_filtered* \
 		"$tmpdir"/.yara_manifest* "$tmpdir"/.yara_filtered* "$tmpdir"/.yara_existing* "$tmpdir"/.yara_deduped* \
 		"$tmpdir"/.strlen_manifest* "$tmpdir"/.stage_hit* \
+		"$tmpdir"/.csig_worker* "$tmpdir"/.csig_chunk* "$tmpdir"/.csig_manifest* "$tmpdir"/.csig_batch_flist* \
 		2>/dev/null  # files may not exist depending on scan path
-	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* 2>/dev/null
+	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* \
+		"$tmpdir"/.csig_progress.* 2>/dev/null
 }
 
 # shellcheck disable=SC2154
@@ -1902,10 +1965,10 @@ _scan_build_filelist() {
 			lmd_find_sleep=$(mktemp "$tmpdir/.lmd_find_sleep.XXXXXX")
 			printf '%s\n' \
 				"sleep $scan_find_timeout" \
-				"touch $tmpdir/.find_killed.$scanid" \
-				"pkill -f lmd_find_$scanid" > "$lmd_find_sleep"
-			sh -c "sh $lmd_find_sleep >> /dev/null 2>&1 &" >> /dev/null 2>&1 &
-			rm -f "$lmd_find_sleep" 2> /dev/null
+				"touch \"$tmpdir/.find_killed.$scanid\"" \
+				"pkill -f lmd_find_$scanid" \
+				"rm -f \"$lmd_find_sleep\"" > "$lmd_find_sleep"
+			sh -c "sh \"$lmd_find_sleep\" >> /dev/null 2>&1 &" >> /dev/null 2>&1 &
 			eout "{scan} setting maximum execution time for 'find' file list: ${scan_find_timeout}sec" 1
 		fi
 		if [ -z "$hscan" ]; then
@@ -1913,7 +1976,7 @@ _scan_build_filelist() {
 		fi
 		file_list_start=$(date +"%s")
 		tmpscandir=$(mktemp -d "$tmpdir/scan.XXXXXX")
-		chmod 700 "$tmpscandir" ; cd "$tmpscandir"
+		chmod 700 "$tmpscandir" ; cd "$tmpscandir" || return 1
 		find_prune_args=()
 		if [[ -s "$ignore_paths" ]] && [[ -r "$ignore_paths" ]]; then
 		    while IFS= read -r ignore_path; do
@@ -1930,7 +1993,7 @@ _scan_build_filelist() {
 			$nice_command "$find" /lmd_find_$scanid/ "${spaths[@]}" $spath_tmpdirs "${find_prune_args[@]}" -maxdepth "$scan_max_depth" $find_opts  \( -mtime -${days} -o -ctime -${days} \) -type f -size +"${scan_min_filesize}c" -size -"${scan_max_filesize}" "${include_regex_args[@]}" -not -perm 000 "${exclude_regex_args[@]}" "${ignore_fext_args[@]}" "${ignore_root[@]}" "${ignore_user[@]}" "${ignore_group[@]}" 2>/dev/null | grep -E -vf "$ignore_paths" > "$find_results"
 		fi
 
-		cd "$tmpdir"
+		cd "$tmpdir" || true  # safe: tmpscandir cleanup follows regardless
 		rm -rf "$tmpscandir"
 		if [ "$rscan" = "1" ] && [ "$scan_export_filelist" == "1" ]; then
 			rm -f "$tmpdir"/.find_results.* 2> /dev/null
@@ -2161,8 +2224,8 @@ _resolve_worker_count() {
 	# Arg 1: total file count (workers capped to file count).
 	# Outputs resolved count to stdout.
 	# Auto-detect: 2 workers per CPU core, capped at 8.
-	local _count="${scan_workers:-0}"
-	if [ "$_count" -le 0 ] 2>/dev/null; then  # suppress error if non-numeric
+	local _count="${scan_workers:-auto}"
+	if [ "$_count" == "auto" ] || [ "$_count" -le 0 ] 2>/dev/null; then  # auto or 0 (legacy)
 		_count=$(nproc 2>/dev/null || grep -E -c '^processor' /proc/cpuinfo 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 		_count=$((_count * 2))
 		if [ "$_count" -gt 8 ]; then _count=8; fi
@@ -2393,6 +2456,97 @@ _hex_batch_worker() {
 	rm -f "$_batch_hex"
 }
 
+_csig_batch_worker() {
+	# Self-contained batch csig scanner for a chunk of files.
+	# Runs in a subshell (backgrounded by caller).
+	# Outputs tab-delimited filepath\tsigname hit pairs to stdout.
+	local _chunk="$1" _depth="$2" _compiled="$3" _prefixes="$4"
+	local _progress_file="${5:-}"
+	local _idx=0 _line
+
+	# Load compiled rules into indexed arrays (once per worker)
+	local _r_signames _r_types _r_thresholds _r_pfxs _r_eres _rcount=0
+	_r_signames=()
+	_r_types=()
+	_r_thresholds=()
+	_r_pfxs=()
+	_r_eres=()
+	while IFS=$'\t' read -r _rsig _rtype _rthresh _rpfx _rere_rest; do
+		[ -z "$_rsig" ] && continue
+		_r_signames[_rcount]="$_rsig"
+		_r_types[_rcount]="$_rtype"
+		_r_thresholds[_rcount]="$_rthresh"
+		_r_pfxs[_rcount]="$_rpfx"
+		_r_eres[_rcount]="$_rere_rest"
+		_rcount=$((_rcount + 1))
+	done < "$_compiled"
+
+	[ "$_rcount" -eq 0 ] && return 0
+
+	local _hex_buf
+	_hex_buf=$(mktemp "$tmpdir/.csig_hexbuf.XXXXXX")
+
+	while IFS= read -r _line; do
+		[ -f "$_line" ] && [ -r "$_line" ] || continue
+		_idx=$((_idx + 1))
+
+		# Extract hex content to temp file
+		_hex_extract_file "$_line" "$_depth" > "$_hex_buf"
+
+		# Batch prefix pre-screen: one grep for all prefixes
+		local _matched_pfxs=""
+		if [ -s "$_prefixes" ]; then
+			_matched_pfxs=$(grep -Fo -f "$_prefixes" "$_hex_buf" 2>/dev/null | sort -u) || true  # safe: no prefix match is valid
+		fi
+
+		# Evaluate each rule (first-match-wins)
+		local _ri
+		for (( _ri=0; _ri<_rcount; _ri++ )); do
+			# Prefix pre-filter
+			if [ -n "${_r_pfxs[$_ri]}" ] && [ "${_r_pfxs[$_ri]}" != "-" ]; then
+				local _skip=0
+				if [ "${_r_types[$_ri]}" == "and" ] || [ "${_r_types[$_ri]}" == "single" ] || [ "${_r_types[$_ri]}" == "group" ]; then
+					local _pf
+					while IFS=',' read -r -d ',' _pf || [ -n "$_pf" ]; do
+						[ -z "$_pf" ] && continue
+						if ! echo "$_matched_pfxs" | grep -qF "$_pf" 2>/dev/null; then
+							_skip=1
+							break
+						fi
+					done <<< "${_r_pfxs[$_ri]},"
+				fi
+				[ "$_skip" -eq 1 ] && continue
+			fi
+
+			# Parse ERE fields from stored string
+			local _eres
+			_eres=()
+			local _rest="${_r_eres[$_ri]}"
+			while [ -n "$_rest" ]; do
+				local _epart="${_rest%%	*}"
+				if [ "$_epart" == "$_rest" ]; then
+					_eres+=("$_epart")
+					break
+				fi
+				_eres+=("$_epart")
+				_rest="${_rest#*	}"
+			done
+
+			if _csig_eval_rule "${_r_types[$_ri]}" "${_r_thresholds[$_ri]}" "$_hex_buf" "${_eres[@]}"; then
+				printf '%s\t%s\n' "$_line" "${_r_signames[$_ri]}"
+				break  # first-match-wins
+			fi
+		done
+
+		if [ -n "$_progress_file" ] && ((_idx % 100 == 0)); then
+			echo "$_idx" > "$_progress_file"
+		fi
+	done < "$_chunk"
+	[ -n "$_progress_file" ] && echo "$_idx" > "$_progress_file"
+
+	rm -f "$_hex_buf"
+}
+
 # shellcheck disable=SC2154
 _scan_run_native() {
 	local _nworkers
@@ -2608,6 +2762,74 @@ _scan_run_native() {
 		rm -f "$_hex_manifest" "$_chunk_prefix".* "$tmpdir"/.hex_worker."$$".* 2>/dev/null
 	fi
 
+	# --- Pass 2.5: CSIG batch (compound signatures, parallel workers) ---
+	# Runs only in native mode when scan_csig=1 and compiled rules exist.
+	# Reuses _hex_filelist, re-filtered via scan_session to exclude hex hits.
+	if [ "$scan_csig" == "1" ] && [ -n "$runtime_csig_compiled" ] && [ -s "$runtime_csig_compiled" ]; then
+		local _csig_filelist _csig_file_count
+		_csig_filelist=$(mktemp "$tmpdir/.csig_batch_flist.XXXXXX")
+		# Re-filter hex filelist against scan_session (exclude files hit by MD5/SHA256/HEX)
+		if [ -s "$scan_session" ] && [ -s "$_hex_filelist" ]; then
+			local _csig_hit_paths
+			_csig_hit_paths=$(mktemp "$tmpdir/.csig_hitpaths.XXXXXX")
+			awk -F' : ' '{ sub(/ =>.*/, "", $2); if ($2 != "") print $2 }' "$scan_session" > "$_csig_hit_paths"
+			if [ -s "$_csig_hit_paths" ]; then
+				grep -vFxf "$_csig_hit_paths" "$_hex_filelist" > "$_csig_filelist" || true  # safe: all files may be hit
+			else
+				cat "$_hex_filelist" > "$_csig_filelist"
+			fi
+			rm -f "$_csig_hit_paths"
+		elif [ -s "$_hex_filelist" ]; then
+			cat "$_hex_filelist" > "$_csig_filelist"
+		fi
+		_csig_file_count=$($wc -l < "$_csig_filelist")
+		if [ "$_csig_file_count" -gt 0 ]; then
+			local _csig_depth="${scan_hexdepth:-524288}"
+			_nworkers=$(_resolve_worker_count "$_csig_file_count")
+			_scan_progress "csig" "$_csig_file_count files"
+			if [ "$_nworkers" -le 1 ]; then
+				_csig_batch_worker "$_csig_filelist" "$_csig_depth" \
+					"$runtime_csig_compiled" "$runtime_csig_prefixes" \
+					> "$tmpdir/.csig_worker.$$.0"
+			else
+				local _csig_chunk_prefix _w _csig_progress_dir _csig_pfile
+				_csig_chunk_prefix="$tmpdir/.csig_chunk.$$"
+				_csig_progress_dir=$(mktemp -d "$tmpdir/.csig_progress.$$.XXXXXX")
+				awk -v n="$_nworkers" -v prefix="$_csig_chunk_prefix" \
+					'{ print > (prefix "." ((NR-1) % n)) }' "$_csig_filelist"
+				local _csig_worker_pids
+				_csig_worker_pids=()
+				_w=0
+				while [ "$_w" -lt "$_nworkers" ]; do
+					if [ -f "$_csig_chunk_prefix.$_w" ]; then
+						_csig_pfile=""
+						[ "$set_background" != "1" ] && _csig_pfile="$_csig_progress_dir/$_w"
+						_csig_batch_worker "$_csig_chunk_prefix.$_w" "$_csig_depth" \
+							"$runtime_csig_compiled" "$runtime_csig_prefixes" \
+							"$_csig_pfile" \
+							> "$tmpdir/.csig_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
+						_csig_worker_pids[_w]=$!
+					fi
+					_w=$((_w + 1))
+				done
+				_wait_workers_with_progress "csig" "$_csig_file_count" "$_csig_progress_dir" "${_csig_worker_pids[@]}"
+				rm -f "$_csig_chunk_prefix".* 2>/dev/null
+			fi
+			# Merge worker outputs and batch-process hits
+			_scan_progress "csig" "processing hits"
+			local _csig_manifest
+			_csig_manifest=$(mktemp "$tmpdir/.csig_manifest.XXXXXX")
+			for _w in "$tmpdir"/.csig_worker."$$".*; do
+				if [ -f "$_w" ] && [ -s "$_w" ]; then
+					cat "$_w" >> "$_csig_manifest"
+				fi
+			done
+			_flush_hit_batch "$_csig_manifest" "csig"
+			rm -f "$_csig_manifest" "$tmpdir"/.csig_worker."$$".* 2>/dev/null
+		fi
+		rm -f "$_csig_filelist"
+	fi
+
 	# --- Pass 3: strlen (per-file, on MD5-miss files) ---
 	# Matches old scan_stage1 behavior: strlen only runs on MD5 misses.
 	# Per-file mode handles paths with spaces correctly.
@@ -2637,7 +2859,9 @@ _count_signatures() {
 	local _md5_src="$1" _hex_src="$2"
 	md5_sigs=$($wc -l < "$_md5_src")
 	sha256_sigs=0
-	if [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
+	if [ -f "$sig_sha256_file" ] && [ -s "$sig_sha256_file" ]; then
+		sha256_sigs=$($wc -l < "$sig_sha256_file")
+	elif [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
 		sha256_sigs=$($wc -l < "$runtime_sha256")
 	fi
 	hex_sigs=$($wc -l < "$_hex_src")
@@ -2665,8 +2889,16 @@ _count_signatures() {
 	else
 		user_hex_sigs=$($wc -l < "$sig_user_hex_file")
 	fi
-	user_sigs=$((user_hex_sigs + user_md5_sigs + user_sha256_sigs + user_yara_sigs))
-	tot_sigs=$((md5_sigs + sha256_sigs + hex_sigs + yara_sigs + user_sigs))
+	csig_sigs=0
+	if [ -f "$sig_csig_file" ] && [ -s "$sig_csig_file" ]; then
+		csig_sigs=$(grep -c -vE '^\s*$|^\s*#' "$sig_csig_file" 2>/dev/null || true)  # safe: grep exits 1 when no match; zero count is valid
+	fi
+	user_csig_sigs=0
+	if [ -f "$sig_user_csig_file" ] && [ -s "$sig_user_csig_file" ]; then
+		user_csig_sigs=$(grep -c -vE '^\s*$|^\s*#' "$sig_user_csig_file" 2>/dev/null || true)  # safe: grep exits 1 when no match; zero count is valid
+	fi
+	user_sigs=$((user_hex_sigs + user_md5_sigs + user_sha256_sigs + user_yara_sigs + user_csig_sigs))
+	tot_sigs=$((md5_sigs + sha256_sigs + hex_sigs + csig_sigs + yara_sigs + user_sigs))
 }
 
 scan() {
@@ -2745,7 +2977,7 @@ scan() {
 		if [ "$scan_yara" != "1" ]; then
 			yara_label="YARA(cav)"
 		fi
-		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $sha256_sigs SHA256 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
+		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $sha256_sigs SHA256 | $hex_sigs HEX | $csig_sigs CSIG | $yara_sigs $yara_label | $user_sigs USER)" 1
 	fi
 	_build_scan_filters
 	_scan_build_filelist
@@ -2872,7 +3104,7 @@ scan_strlen() {
 scan_stage1() {
 	local file="$1"
 	local clean_check="$2"
-	if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ]; then
+	if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ] || { [ "$scan_csig" == "1" ] && [ -z "$_gensigs_csig_done" ]; }; then
 		gensigs
 	fi
 
@@ -2954,9 +3186,9 @@ _hex_compile_pattern() {
 	# Output: ERE pattern on stdout.
 	local _pat="$1"
 	local _has_wildcard=0
-	# Detect ClamAV wildcard tokens: ??, (alt), *, nibble ?x/x?
+	# Detect ClamAV wildcard tokens: ??, (alt), *, nibble ?x/x?, {N-M} bounded gap
 	# Lowercase only — matches sed scope below; od outputs lowercase hex
-	local _wc_re='(\?\?|\(.*\|.*\)|\*|\?[0-9a-f]|[0-9a-f]\?)'
+	local _wc_re='(\?\?|\(.*\|.*\)|\*|\?[0-9a-f]|[0-9a-f]\?|\{[0-9]+-[0-9]+\})'
 	if [[ "$_pat" =~ $_wc_re ]]; then
 		_has_wildcard=1
 	fi
@@ -2979,8 +3211,601 @@ _hex_compile_pattern() {
 	_ere=$(echo "$_ere" | $sed -E 's/([0-9a-f])\?/\1[0-9a-f]/g')
 	# * → variable length match
 	_ere=$(echo "$_ere" | $sed -E 's/\*/[0-9a-f]*/g')
+	# {N-M} → bounded gap: N-M bytes = 2N-2M hex chars
+	# Bash loop with shell arithmetic (sed cannot multiply, awk match()
+	# capture groups are gawk-only — mawk on Ubuntu/Debian lacks them)
+	local _gap_re='\{([0-9]+)-([0-9]+)\}'
+	while [[ "$_ere" =~ $_gap_re ]]; do
+		local _gap_n="${BASH_REMATCH[1]}" _gap_m="${BASH_REMATCH[2]}"
+		local _hex_lo=$((_gap_n * 2)) _hex_hi=$((_gap_m * 2))
+		local _gap_old="{${_gap_n}-${_gap_m}}"
+		local _gap_new="[0-9a-f]{${_hex_lo},${_hex_hi}}"
+		_ere="${_ere/"$_gap_old"/$_gap_new}"
+	done
 	echo "$_ere"
 	return 0
+}
+
+_csig_compile_subsig() {
+	# Compile one csig subsig to ERE, handling i:/w:/iw: prefixes and wildcards.
+	# Output: ERE pattern on stdout.
+	# Prefix flags:
+	#   i: = case-insensitive (fold alpha hex bytes 41-5a to alternation)
+	#   w: = wide/UTF-16LE (insert 00 between each hex byte pair)
+	#   iw: or wi: = both
+	local _raw="$1"
+	local _do_icase=0 _do_wide=0
+
+	# Strip prefix flags
+	case "$_raw" in
+		iw:*|wi:*) _do_icase=1; _do_wide=1; _raw="${_raw#*:}" ;;
+		i:*) _do_icase=1; _raw="${_raw#i:}" ;;
+		w:*) _do_wide=1; _raw="${_raw#w:}" ;;
+	esac
+
+	# Apply wide interleaving: insert 00 between each hex byte pair.
+	# Only literal hex bytes are interleaved; wildcards pass through.
+	if [ "$_do_wide" == "1" ]; then
+		local _wide="" _wpos=0 _wlen=${#_raw}
+		while [ "$_wpos" -lt "$_wlen" ]; do
+			local _wch="${_raw:_wpos:1}"
+			local _wch2="${_raw:_wpos:2}"
+			# Check for multi-char wildcard tokens
+			if [ "$_wch2" == "??" ]; then
+				# ?? wildcard — pass through, add 00 after
+				_wide="${_wide}??00"
+				_wpos=$((_wpos + 2))
+			elif [ "$_wch" == "*" ]; then
+				# * wildcard — pass through as-is
+				_wide="${_wide}*"
+				_wpos=$((_wpos + 1))
+			elif [ "$_wch" == "{" ]; then
+				# {N-M} bounded gap — double values for wide byte spacing
+				local _gap_tok="${_raw:_wpos}"
+				_gap_tok="${_gap_tok%%\}*}}"
+				# Extract N and M, double them for UTF-16LE (each char = 2 bytes)
+				local _gap_inner="${_gap_tok#\{}"
+				_gap_inner="${_gap_inner%\}}"
+				local _gap_lo="${_gap_inner%-*}"
+				local _gap_hi="${_gap_inner#*-}"
+				_wide="${_wide}{$((_gap_lo * 2))-$((_gap_hi * 2))}"
+				_wpos=$((_wpos + ${#_gap_tok}))
+			elif [ "$_wch" == "(" ]; then
+				# (alt|alt) group — pass through
+				local _alt_tok="${_raw:_wpos}"
+				_alt_tok="${_alt_tok%%)*})"
+				_wide="${_wide}${_alt_tok}"
+				_wpos=$((_wpos + ${#_alt_tok}))
+			else
+				# Literal hex byte pair or nibble wildcard
+				if [ $((_wpos + 2)) -le "$_wlen" ]; then
+					_wide="${_wide}${_wch2}00"
+					_wpos=$((_wpos + 2))
+				else
+					# Odd trailing char (shouldn't happen in valid sigs)
+					_wide="${_wide}${_wch}"
+					_wpos=$((_wpos + 1))
+				fi
+			fi
+		done
+		# Remove trailing 00 (last byte doesn't need null separator)
+		if [ "${_wide: -2}" == "00" ]; then
+			_wide="${_wide%00}"
+		fi
+		_raw="$_wide"
+	fi
+
+	# Compile wildcards to ERE via shared helper
+	local _ere
+	if _ere=$(_hex_compile_pattern "$_raw"); then
+		: # _ere is set from stdout
+	else
+		_ere="$_raw"
+	fi
+
+	# Apply case-folding: for each alpha hex byte 41-5a, generate (XX|xx) alternation
+	if [ "$_do_icase" == "1" ]; then
+		local _folded="" _fpos=0 _flen=${#_ere}
+		while [ "$_fpos" -lt "$_flen" ]; do
+			local _fc="${_ere:_fpos:1}"
+			# Skip over ERE metachar sequences using pure bash (no sed —
+			# $sed prepends -E on FreeBSD which breaks BRE capture groups)
+			if [ "$_fc" == "[" ]; then
+				# Pass through entire character class [...] as-is
+				local _tail="${_ere:_fpos}"
+				local _close="${_tail#*]}"
+				local _cls_end="${_tail%"$_close"}"
+				if [ -n "$_cls_end" ] && [ "$_cls_end" != "$_tail" ]; then
+					_folded="${_folded}${_cls_end}"
+					_fpos=$((_fpos + ${#_cls_end}))
+				else
+					_folded="${_folded}${_fc}"
+					_fpos=$((_fpos + 1))
+				fi
+			elif [ "$_fc" == "(" ]; then
+				# Pass through ERE groups (...) as-is
+				local _tail="${_ere:_fpos}"
+				local _close="${_tail#*\)}"
+				local _grp_end="${_tail%"$_close"}"
+				if [ -n "$_grp_end" ] && [ "$_grp_end" != "$_tail" ]; then
+					_folded="${_folded}${_grp_end}"
+					_fpos=$((_fpos + ${#_grp_end}))
+				else
+					_folded="${_folded}${_fc}"
+					_fpos=$((_fpos + 1))
+				fi
+			elif [ "$_fc" == "{" ]; then
+				# Pass through quantifiers {N,M} as-is
+				local _tail="${_ere:_fpos}"
+				local _close="${_tail#*\}}"
+				local _qt_end="${_tail%"$_close"}"
+				if [ -n "$_qt_end" ] && [ "$_qt_end" != "$_tail" ]; then
+					_folded="${_folded}${_qt_end}"
+					_fpos=$((_fpos + ${#_qt_end}))
+				else
+					_folded="${_folded}${_fc}"
+					_fpos=$((_fpos + 1))
+				fi
+			else
+				# Check for hex byte pair (two hex chars)
+				local _fc2="${_ere:_fpos:2}"
+				local _hex_byte_re='^[0-9a-f]{2}$'
+				if [[ "$_fc2" =~ $_hex_byte_re ]]; then
+					# Check if this is an alpha byte (41-5a = A-Z)
+					local _dec
+					_dec=$(printf '%d' "0x${_fc2}" 2>/dev/null) || _dec=0
+					if [ "$_dec" -ge 65 ] && [ "$_dec" -le 90 ]; then
+						# Uppercase alpha — generate (UC|LC) alternation
+						local _lc
+						_lc=$(printf '%02x' $((_dec + 32)))
+						_folded="${_folded}(${_fc2}|${_lc})"
+					elif [ "$_dec" -ge 97 ] && [ "$_dec" -le 122 ]; then
+						# Lowercase alpha — generate (UC|LC) alternation
+						local _uc
+						_uc=$(printf '%02x' $((_dec - 32)))
+						_folded="${_folded}(${_uc}|${_fc2})"
+					else
+						_folded="${_folded}${_fc2}"
+					fi
+					_fpos=$((_fpos + 2))
+				else
+					_folded="${_folded}${_fc}"
+					_fpos=$((_fpos + 1))
+				fi
+			fi
+		done
+		_ere="$_folded"
+	fi
+
+	echo "$_ere"
+}
+
+_csig_extract_prefix() {
+	# Extract first 4 literal hex chars from a subsig for prefix pre-screening.
+	# For i: subsigs, extract pre-folding then add both upper and lower forms.
+	# Output: comma-separated prefixes on stdout (may be empty for all-wildcard sigs).
+	local _subsig="$1"
+	local _do_icase=0
+
+	local _do_wide=0
+
+	# Strip prefix flags to get raw hex
+	case "$_subsig" in
+		iw:*|wi:*) _do_icase=1; _do_wide=1; _subsig="${_subsig#*:}" ;;
+		i:*) _do_icase=1; _subsig="${_subsig#i:}" ;;
+		w:*) _do_wide=1; _subsig="${_subsig#w:}" ;;
+	esac
+
+	# Extract first 4 literal hex chars (skip wildcards)
+	local _prefix="" _ppos=0 _plen=${#_subsig}
+	while [ "${#_prefix}" -lt 4 ] && [ "$_ppos" -lt "$_plen" ]; do
+		local _pc="${_subsig:_ppos:1}"
+		local _pc2="${_subsig:_ppos:2}"
+		local _hex_ch_re='^[0-9a-fA-F]$'
+		if [ "$_pc2" == "??" ] || [ "$_pc" == "*" ]; then
+			break  # wildcard — cannot use remaining chars as prefix
+		elif [ "$_pc" == "{" ] || [ "$_pc" == "(" ]; then
+			break  # complex token — stop
+		elif [[ "$_pc" =~ $_hex_ch_re ]]; then
+			_prefix="${_prefix}${_pc}"
+			_ppos=$((_ppos + 1))
+		else
+			break
+		fi
+	done
+
+	if [ "${#_prefix}" -lt 4 ]; then
+		echo ""
+		return
+	fi
+
+	# Normalize to lowercase
+	_prefix=$(echo "$_prefix" | tr 'A-F' 'a-f')
+
+	if [ "$_do_icase" == "1" ] || [ "$_do_wide" == "1" ]; then
+		# i: subsigs: prefix bytes may differ from file bytes in case
+		# (e.g., sig has 53/S, file has 73/s).
+		# w: subsigs: raw prefix doesn't match wide-interleaved file content
+		# (e.g., prefix "4142" won't match "41004200").
+		# Return empty to skip prefix filter for these modes.
+		echo ""
+	else
+		echo "$_prefix"
+	fi
+}
+
+_csig_compile_rules() {
+	# Parse csig.dat lines and compile to pre-compiled rule format.
+	# Input: $1 = runtime csig file (merged base + custom, ignore-filtered)
+	# Output: writes runtime_csig_compiled and runtime_csig_prefixes files.
+	# Format: SIGNAME\tTYPE\tTHRESHOLD\tPREFIXES\tERE1\tERE2\t...
+	# Group type uses RS (\x1e) delimiter within tab fields for OR groups.
+	local _csig_src="$1"
+	local _line _signame _sigs_field _threshold _rule_type
+	local _compiled_count=0
+
+	: > "$runtime_csig_compiled"
+	: > "$runtime_csig_prefixes"
+
+	while IFS= read -r _line; do
+		# Skip empty lines and comments
+		[ -z "$_line" ] && continue
+		case "$_line" in \#*) continue ;; esac
+
+		# csig.dat format: SIGS_FIELD:SIGNAME
+		# Split on LAST colon — sigs_field may contain i:/w:/iw: prefixes
+		# which add early colons. Sig names never contain colons.
+		_signame="${_line##*:}"
+		_sigs_field="${_line%:*}"
+		if [ -z "$_sigs_field" ] || [ -z "$_signame" ]; then
+			eout "{csig} WARNING: malformed csig line, skipping: ${_line:0:60}" 1
+			continue
+		fi
+
+		# Split SIGS_FIELD on top-level || only.
+		# Respects parenthesized groups: || inside (...) is NOT a separator.
+		local _subsigs _nsubs _paren_depth=0 _current=""
+		_subsigs=()
+		local _sf_len=${#_sigs_field} _sf_pos=0
+		while [ "$_sf_pos" -lt "$_sf_len" ]; do
+			local _sf_ch="${_sigs_field:_sf_pos:1}"
+			local _sf_ch2="${_sigs_field:_sf_pos:2}"
+			if [ "$_sf_ch" == "(" ]; then
+				_paren_depth=$((_paren_depth + 1))
+				_current="${_current}${_sf_ch}"
+				_sf_pos=$((_sf_pos + 1))
+			elif [ "$_sf_ch" == ")" ]; then
+				_paren_depth=$((_paren_depth - 1))
+				_current="${_current}${_sf_ch}"
+				_sf_pos=$((_sf_pos + 1))
+			elif [ "$_sf_ch2" == "||" ] && [ "$_paren_depth" -eq 0 ]; then
+				[ -n "$_current" ] && _subsigs+=("$_current")
+				_current=""
+				_sf_pos=$((_sf_pos + 2))
+			else
+				_current="${_current}${_sf_ch}"
+				_sf_pos=$((_sf_pos + 1))
+			fi
+		done
+		[ -n "$_current" ] && _subsigs+=("$_current")
+		_nsubs=${#_subsigs[@]}
+
+		if [ "$_nsubs" -eq 0 ]; then
+			eout "{csig} WARNING: no subsigs in csig line, skipping: ${_line:0:60}" 1
+			continue
+		fi
+
+		# Determine rule type and threshold
+		# Check for OR groups: subsig starting with ( is a grouped OR
+		local _has_groups=0 _has_plain=0 _i
+		for (( _i=0; _i<_nsubs; _i++ )); do
+			case "${_subsigs[$_i]}" in
+				"("*) _has_groups=1 ;;
+				*) _has_plain=1 ;;
+			esac
+		done
+
+		if [ "$_nsubs" -eq 1 ] && [ "$_has_groups" -eq 0 ]; then
+			_rule_type="single"
+			_threshold=1
+		elif [ "$_has_groups" -eq 1 ]; then
+			_rule_type="group"
+			_threshold=0  # AND across top-level elements
+		else
+			# Check for threshold annotation: first subsig may be N/M format
+			# If all subsigs are plain, it's AND (all must match)
+			_rule_type="and"
+			_threshold=0
+		fi
+
+		# Check for threshold prefix on signame: {CSIG}name or threshold:N
+		# Threshold encoded in signame as SIGNAME;N (semicolon-separated)
+		local _thresh_re=';([0-9]+)$'
+		if [[ "$_signame" =~ $_thresh_re ]]; then
+			_threshold="${BASH_REMATCH[1]}"
+			_signame="${_signame%;*}"
+			if [ "$_threshold" -eq 0 ]; then
+				eout "{csig} WARNING: threshold=0 produces always-matching rule, skipping: ${_signame}" 1
+				continue
+			fi
+			if [ "$_nsubs" -gt 1 ] && [ "$_has_groups" -eq 0 ]; then
+				_rule_type="or"
+			fi
+		fi
+
+		# Compile each subsig and extract prefixes
+		local _compiled_eres="" _all_prefixes="" _compile_ok=1
+		for (( _i=0; _i<_nsubs; _i++ )); do
+			local _sub="${_subsigs[$_i]}"
+
+			# Handle grouped OR: (subsig1||subsig2||...);threshold
+			case "$_sub" in
+			"("*)
+				# Parse group: strip parens, extract threshold
+				local _grp_body="${_sub#\(}"
+				local _grp_thresh=1
+				# Check for );N suffix
+				local _grp_thresh_re='\);([0-9]+)$'
+				if [[ "$_grp_body" =~ $_grp_thresh_re ]]; then
+					_grp_thresh="${BASH_REMATCH[1]}"
+					_grp_body="${_grp_body%);*}"
+				else
+					_grp_body="${_grp_body%)}"
+				fi
+				# Reject group threshold=0 -- matches everything (same as outer guard)
+				if [ "$_grp_thresh" -eq 0 ]; then
+					eout "{csig} WARNING: group threshold=0 produces always-matching group, skipping rule: ${_signame}" 1
+					_compile_ok=0
+					break
+				fi
+
+				# Split group subsigs on ||
+				local _grp_subs _grp_eres="" _grp_pfxs=""
+				_grp_subs=()
+				while IFS= read -r _gsub; do
+					[ -n "$_gsub" ] && _grp_subs+=("$_gsub")
+				done < <(echo "$_grp_body" | awk -F'\\|\\|' '{for(i=1;i<=NF;i++) print $i}')
+
+				local _gi
+				for (( _gi=0; _gi<${#_grp_subs[@]}; _gi++ )); do
+					local _gere
+					_gere=$(_csig_compile_subsig "${_grp_subs[$_gi]}")
+					if [ -z "$_gere" ]; then
+						eout "{csig} WARNING: failed to compile group subsig, skipping rule: ${_signame}" 1
+						_compile_ok=0
+						break 2
+					fi
+					# RS-delimited within group
+					if [ -z "$_grp_eres" ]; then
+						_grp_eres="$_gere"
+					else
+						_grp_eres="${_grp_eres}"$'\x1e'"${_gere}"
+					fi
+					local _gpfx
+					_gpfx=$(_csig_extract_prefix "${_grp_subs[$_gi]}")
+					[ -n "$_gpfx" ] && _grp_pfxs="${_grp_pfxs:+${_grp_pfxs},}${_gpfx}"
+				done
+
+				# Encode group spec: or:THRESHOLD:ERE1\x1eERE2\x1e...
+				local _grp_spec="or:${_grp_thresh}:${_grp_eres}"
+				_compiled_eres="${_compiled_eres:+${_compiled_eres}	}${_grp_spec}"
+				[ -n "$_grp_pfxs" ] && _all_prefixes="${_all_prefixes:+${_all_prefixes},}${_grp_pfxs}"
+				;;
+			*)
+				# Plain subsig
+				local _ere
+				_ere=$(_csig_compile_subsig "$_sub")
+				if [ -z "$_ere" ]; then
+					eout "{csig} WARNING: failed to compile subsig, skipping rule: ${_signame}" 1
+					_compile_ok=0
+					break
+				fi
+				_compiled_eres="${_compiled_eres:+${_compiled_eres}	}${_ere}"
+				local _pfx
+				_pfx=$(_csig_extract_prefix "$_sub")
+				[ -n "$_pfx" ] && _all_prefixes="${_all_prefixes:+${_all_prefixes},}${_pfx}"
+				;;
+			esac
+		done
+
+		[ "$_compile_ok" -eq 0 ] && continue
+
+		# Prepend {CSIG} to signame if not already present
+		case "$_signame" in
+			"{CSIG}"*) ;;
+			*) _signame="{CSIG}${_signame}" ;;
+		esac
+
+		# Write compiled rule: SIGNAME\tTYPE\tTHRESHOLD\tPREFIXES\tERE1\tERE2...
+		# Use sentinel "-" for empty prefixes — IFS=$'\t' read collapses
+		# consecutive tabs (tab is IFS whitespace), losing empty fields.
+		printf '%s\t%s\t%s\t%s\t%s\n' \
+			"$_signame" "$_rule_type" "$_threshold" "${_all_prefixes:--}" "$_compiled_eres" \
+			>> "$runtime_csig_compiled"
+
+		# Add prefixes to global prefix file (for batch pre-screening)
+		if [ -n "$_all_prefixes" ]; then
+			echo "$_all_prefixes" | tr ',' '\n' >> "$runtime_csig_prefixes"
+		fi
+		_compiled_count=$((_compiled_count + 1))
+	done < "$_csig_src"
+
+	# Deduplicate prefix file
+	if [ -s "$runtime_csig_prefixes" ]; then
+		local _pfx_tmp
+		_pfx_tmp=$(mktemp "$tmpdir/.csig_pfx_tmp.XXXXXX")
+		sort -u "$runtime_csig_prefixes" > "$_pfx_tmp"
+		cat "$_pfx_tmp" > "$runtime_csig_prefixes"
+		rm -f "$_pfx_tmp"
+	fi
+
+	runtime_csig_count=$_compiled_count
+}
+
+_csig_eval_subsig() {
+	# Test one compiled ERE pattern against a hex buffer file.
+	# Returns 0 (match) or 1 (no match).
+	local _ere="$1" _hexfile="$2"
+	grep -Eq "$_ere" "$_hexfile" 2>/dev/null
+}
+
+_csig_eval_rule() {
+	# Evaluate one compiled csig rule against a hex buffer file.
+	# Returns 0 if the rule matches, 1 if not.
+	# $1 = rule type (single, and, or, group)
+	# $2 = threshold
+	# $3 = hex buffer file
+	# $4... = ERE patterns (tab-separated in caller, passed as remaining args)
+	local _type="$1" _threshold="$2" _hexfile="$3"
+	shift 3
+
+	case "$_type" in
+	single)
+		_csig_eval_subsig "$1" "$_hexfile"
+		return $?
+		;;
+	and)
+		# All subsigs must match; short-circuit on first miss
+		local _aere
+		for _aere in "$@"; do
+			if ! _csig_eval_subsig "$_aere" "$_hexfile"; then
+				return 1
+			fi
+		done
+		return 0
+		;;
+	or)
+		# At least $_threshold subsigs must match; short-circuit when met
+		local _oere _omatch=0
+		for _oere in "$@"; do
+			if _csig_eval_subsig "$_oere" "$_hexfile"; then
+				_omatch=$((_omatch + 1))
+				if [ "$_omatch" -ge "$_threshold" ]; then
+					return 0
+				fi
+			fi
+		done
+		return 1
+		;;
+	group)
+		# AND across top-level elements; some elements may be OR groups.
+		# OR groups encoded as: or:THRESHOLD:ERE1\x1eERE2\x1e...
+		local _garg
+		for _garg in "$@"; do
+			case "$_garg" in
+			or:*)
+				# Parse group spec: or:THRESHOLD:ERE1\x1eERE2\x1e...
+				local _gspec="${_garg#or:}"
+				local _gthresh="${_gspec%%:*}"
+				local _gbody="${_gspec#*:}"
+				# Defense-in-depth: reject threshold<=0 at runtime
+				if [ "$_gthresh" -le 0 ] 2>/dev/null; then  # safe: suppress error if non-numeric (corrupted compiled rule)
+					return 1
+				fi
+				# Split on RS (\x1e)
+				local _geres _gmatch=0
+				_geres=()
+				while IFS= read -r -d $'\x1e' _ge || [ -n "$_ge" ]; do
+					[ -n "$_ge" ] && _geres+=("$_ge")
+				done <<< "$_gbody"
+				for _ge in "${_geres[@]}"; do
+					if _csig_eval_subsig "$_ge" "$_hexfile"; then
+						_gmatch=$((_gmatch + 1))
+						if [ "$_gmatch" -ge "$_gthresh" ]; then
+							break
+						fi
+					fi
+				done
+				if [ "$_gmatch" -lt "$_gthresh" ]; then
+					return 1  # group AND failed
+				fi
+				;;
+			*)
+				# Plain subsig in group context — must match (AND)
+				if ! _csig_eval_subsig "$_garg" "$_hexfile"; then
+					return 1
+				fi
+				;;
+			esac
+		done
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_csig_scan_file() {
+	# Single-file csig evaluation (for _clean_rescan path).
+	# Evaluates all compiled csig rules against one file.
+	# On match: records hit in scan_session and processes via _flush_hit_batch.
+	local _file="$1" _clean_check="$2"
+	[ -f "$_file" ] && [ -r "$_file" ] || return 0
+	[ -n "$runtime_csig_compiled" ] && [ -s "$runtime_csig_compiled" ] || return 0
+
+	local _depth="${scan_hexdepth:-524288}"
+	local _hex_buf
+	_hex_buf=$(mktemp "$tmpdir/.csig_single.XXXXXX")
+	_hex_extract_file "$_file" "$_depth" > "$_hex_buf"
+
+	# Pre-screen with prefix file
+	local _matched_pfxs=""
+	if [ -s "$runtime_csig_prefixes" ]; then
+		_matched_pfxs=$(grep -Fo -f "$runtime_csig_prefixes" "$_hex_buf" 2>/dev/null | sort -u) || true  # safe: no prefix match is valid
+	fi
+
+	local _rline _signame _rtype _rthresh _rprefixes _reres
+	while IFS=$'\t' read -r _signame _rtype _rthresh _rprefixes _reres; do
+		[ -z "$_signame" ] && continue
+
+		# Prefix pre-filter (sentinel "-" = no prefixes)
+		if [ -n "$_rprefixes" ] && [ "$_rprefixes" != "-" ]; then
+			local _skip=0
+			if [ "$_rtype" == "and" ] || [ "$_rtype" == "single" ] || [ "$_rtype" == "group" ]; then
+				# AND/single/group: all prefixes must be present
+				local _pf
+				while IFS=',' read -r -d ',' _pf || [ -n "$_pf" ]; do
+					[ -z "$_pf" ] && continue
+					if ! echo "$_matched_pfxs" | grep -qF "$_pf" 2>/dev/null; then
+						_skip=1
+						break
+					fi
+				done <<< "$_rprefixes,"
+			fi
+			# OR: at least threshold prefixes must be present — skipping complex
+			# check here for single-file mode (low-volume path)
+			[ "$_skip" -eq 1 ] && continue
+		fi
+
+		# Parse ERE fields (tab-separated after field 4)
+		local _eres
+		_eres=()
+		local _rest="$_reres"
+		while [ -n "$_rest" ]; do
+			local _epart="${_rest%%	*}"
+			if [ "$_epart" == "$_rest" ]; then
+				_eres+=("$_epart")
+				break
+			fi
+			_eres+=("$_epart")
+			_rest="${_rest#*	}"
+		done
+
+		if _csig_eval_rule "$_rtype" "$_rthresh" "$_hex_buf" "${_eres[@]}"; then
+			# Hit — clean_check gate (same as YARA/stage2 paths)
+			if [ "$_clean_check" == "1" ]; then
+				clean_failed=1
+			else
+				local _csig_manifest
+				_csig_manifest=$(mktemp "$tmpdir/.csig_manifest.XXXXXX")
+				printf '%s\t%s\n' "$_file" "$_signame" > "$_csig_manifest"
+				_flush_hit_batch "$_csig_manifest" "csig"
+				rm -f "$_csig_manifest"
+			fi
+			break  # first-match-wins
+		fi
+	done < "$runtime_csig_compiled"
+
+	rm -f "$_hex_buf"
 }
 
 _hex_lookup_name() {
@@ -3779,7 +4604,7 @@ monitor_check() {
 			tot_files=$($wc -l < "$_mon_find_results")
 			hrspath="monitor"
 			if [ "$tot_files" -gt 0 ]; then
-				if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ]; then
+				if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ] || { [ "$scan_csig" == "1" ] && [ -z "$_gensigs_csig_done" ]; }; then
 					gensigs
 				fi
 				# Note: inotify_verbose per-file logging applies only to the ClamAV
@@ -4031,6 +4856,7 @@ gensigs() {
 	rm -f "$runtime_ndb" "$runtime_hdb" "$runtime_hexstrings" "$runtime_md5" \
 		"$runtime_sha256" "$runtime_hsb" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
+		"$runtime_csig_compiled" "$runtime_csig_prefixes" \
 		2>/dev/null  # vars empty on first call
 	runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.XXXXXX")
 	runtime_hdb=""
@@ -4094,7 +4920,7 @@ gensigs() {
 			done < <(sed 's/{HEX}//' "$sig_user_hex_file" | tr ':' '%' | grep -vE "^\s*$")
 			cat "$sig_cav_hex_file" >> "$runtime_ndb"
 		else
-			cp $sig_cav_hex_file $runtime_ndb
+			command cp "$sig_cav_hex_file" "$runtime_ndb"
 		fi
 		# ClamAV .hdb (MD5 hash DB) — only when hashtype includes md5
 		if [ -n "$runtime_hdb" ]; then
@@ -4172,6 +4998,41 @@ gensigs() {
 			echo "$_hex_pat" >> "$runtime_hex_literal"
 		fi
 	done < "$runtime_hexstrings"
+
+	# Build compound signature (csig) runtime files
+	runtime_csig_compiled=""
+	runtime_csig_prefixes=""
+	runtime_csig_count=0
+	_gensigs_csig_done=1  # flag: csig compilation attempted (prevents re-trigger loop)
+	if [ "$scan_csig" == "1" ]; then
+		local _runtime_csig
+		_runtime_csig=$(mktemp "$tmpdir/.runtime.csig.XXXXXX")
+		if [ -f "$sig_csig_file" ] && [ -s "$sig_csig_file" ]; then
+			if [ -f "$sig_user_csig_file" ] && [ -s "$sig_user_csig_file" ]; then
+				grep -h -vE '^\s*$' "$sig_csig_file" "$sig_user_csig_file" > "$_runtime_csig"
+			else
+				cat "$sig_csig_file" > "$_runtime_csig"
+			fi
+		elif [ -f "$sig_user_csig_file" ] && [ -s "$sig_user_csig_file" ]; then
+			grep -vE '^\s*$' "$sig_user_csig_file" > "$_runtime_csig"
+		else
+			: > "$_runtime_csig"
+		fi
+		# Apply ignore_sigs filtering to csig
+		if [ -f "$ignore_sigs" ] && [ -s "$ignore_sigs" ] && [ -s "$_runtime_csig" ]; then
+			local _csig_filt
+			_csig_filt=$(mktemp "$tmpdir/.csig_filt.XXXXXX")
+			grep -E -vf "$ignore_sigs" "$_runtime_csig" > "$_csig_filt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
+			cat "$_csig_filt" > "$_runtime_csig"
+			rm -f "$_csig_filt"
+		fi
+		if [ -s "$_runtime_csig" ]; then
+			runtime_csig_compiled=$(mktemp "$tmpdir/.runtime.csig_compiled.XXXXXX")
+			runtime_csig_prefixes=$(mktemp "$tmpdir/.runtime.csig_prefixes.XXXXXX")
+			_csig_compile_rules "$_runtime_csig"
+		fi
+		rm -f "$_runtime_csig"
+	fi
 }
 
 
@@ -4240,7 +5101,8 @@ lmdup() {
 		local _ver_re='^[0-9]+\.[0-9]+\.[0-9]+$'
 		if ! [[ "$upstreamver_readable" =~ $_ver_re ]]; then
 			eout "{update} upstream version string failed format validation: '$upstreamver_readable'" 1
-			cd "$inspath" ; rm -rf "$tmpwd"
+			cd "$inspath" || true  # safe: cleanup and exit follow
+			rm -rf "$tmpwd"
 			clean_exit
 			exit 1
 		fi
@@ -4279,7 +5141,8 @@ lmdup() {
 				fi
 			else
 				eout "{update} could not download upstream hash file ($_hash_remote_url), please try again later." 1
-				cd "$inspath" ; rm -rf "$tmpwd"
+				cd "$inspath" || true  # safe: cleanup and exit follow
+				rm -rf "$tmpwd"
 				clean_exit
 				exit 1
 			fi
@@ -4288,7 +5151,8 @@ lmdup() {
 		fi
 	else
 		eout "{update} could not download version file from server, please try again later." 1
-		cd "$inspath" ; rm -rf "$tmpwd"
+		cd "$inspath" || true  # safe: cleanup and exit follow
+		rm -rf "$tmpwd"
 		clean_exit
 		exit 1
 	fi
@@ -4311,7 +5175,7 @@ lmdup() {
 			exit 1
 		fi
 		if [ -s "$tmpwd/${lmd_current_tgzfile}" ]; then
-			tar xfz "${lmd_current_tgzfile}"
+			tar --no-same-owner -xzf "${lmd_current_tgzfile}"
 			rm -f "${lmd_current_tgzfile}" "${lmd_current_tgzfile}".{sha256,md5}
 			cd "maldetect-${upstreamver_readable}" || { eout "{update} failed to cd to extracted directory maldetect-${upstreamver_readable}, aborting update" 1; cd "$inspath"; rm -rf "$tmpwd"; clean_exit; exit 1; }
 			chmod 750 install.sh
@@ -4403,7 +5267,7 @@ sigup() {
 			sigpackfail=1
 		else
 			if [ -f "$tmpwd/maldet-sigpack.tgz" ] && [ -s "$tmpwd/maldet-sigpack.tgz" ]; then
-				tar xfz "$tmpwd/maldet-sigpack.tgz" 2> /dev/null
+				tar --no-same-owner -xzf "$tmpwd/maldet-sigpack.tgz" 2> /dev/null
 				if [ -d "$tmpwd/sigs" ]; then
 					mkdir -p "$sigdir.old" 2> /dev/null
 					rm -f "$sigdir.old"/* 2> /dev/null
@@ -4429,7 +5293,7 @@ sigup() {
 			clpackfail=1
 		else
 			if [ -f "$tmpwd/maldet-clean.tgz" ] && [ -s "$tmpwd/maldet-clean.tgz" ]; then
-				tar xfz "$tmpwd/maldet-clean.tgz"
+				tar --no-same-owner -xzf "$tmpwd/maldet-clean.tgz"
 				if [ -d "$tmpwd/clean" ]; then
 					cp -f "$tmpwd"/clean/* "$cldir"
 					eout "{sigup} unpacked and installed maldet-clean.tgz" 1
@@ -4455,7 +5319,7 @@ sigup() {
 			if [ "$scan_yara" != "1" ]; then
 				yara_label="YARA(cav)"
 			fi
-			eout "{sigup} $tot_sigs signatures ($md5_sigs MD5 | $hex_sigs HEX | $yara_sigs $yara_label | $user_sigs USER)" 1
+			eout "{sigup} $tot_sigs signatures ($md5_sigs MD5 | $sha256_sigs SHA256 | $hex_sigs HEX | $csig_sigs CSIG | $yara_sigs $yara_label | $user_sigs USER)" 1
 		fi
 		cd "$inspath"
 		rm -rf "$tmpwd"

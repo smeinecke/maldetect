@@ -22,6 +22,7 @@ inspath='/usr/local/maldetect'
 sig_version_file="$inspath/sigs/maldet.sigs.ver"
 event_log="$inspath/logs/event_log"
 watchdog_stale_days="${LMD_WATCHDOG_STALE_DAYS:-7}"
+[[ "$watchdog_stale_days" =~ ^[0-9]+$ ]] || watchdog_stale_days=7
 
 # Check signature freshness by file modification time
 if [ -f "$sig_version_file" ]; then

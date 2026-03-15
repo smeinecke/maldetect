@@ -134,8 +134,8 @@ teardown() {
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
         import_config_url=""
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         web_proxy=""
         get_proxy_arg=""
         echo "2024010100000" > "'"$LMD_INSTALL"'/sigs/maldet.sigs.ver"
@@ -163,8 +163,8 @@ teardown() {
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
         import_config_url=""
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         web_proxy=""
         get_proxy_arg=""
         echo "2024010100000" > "'"$LMD_INSTALL"'/sigs/maldet.sigs.ver"
@@ -190,8 +190,8 @@ teardown() {
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
         import_config_url=""
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         web_proxy=""
         get_proxy_arg=""
         echo "2024010100000" > "'"$LMD_INSTALL"'/sigs/maldet.sigs.ver"
@@ -215,8 +215,8 @@ teardown() {
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
         import_config_url=""
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         web_proxy=""
         get_proxy_arg=""
         # Set matching version — normally would skip
@@ -245,8 +245,8 @@ teardown() {
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
         import_config_url=""
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         web_proxy=""
         get_proxy_arg=""
         # Set matching version
@@ -276,8 +276,8 @@ teardown() {
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
         import_config_url=""
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         web_proxy=""
         get_proxy_arg=""
         echo "2024010100000" > "'"$LMD_INSTALL"'/sigs/maldet.sigs.ver"
@@ -608,12 +608,12 @@ MOCK
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
-        import_custsigs_yara_url="https://cdn.rfxn.com/downloads/custom_yara_rules.yar"
+        sig_import_yara_url="https://cdn.rfxn.com/downloads/custom_yara_rules.yar"
         import_user_sigs
     '
     assert_success
@@ -635,12 +635,12 @@ MOCK
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
-        import_custsigs_yara_url="https://cdn.rfxn.com/downloads/bad_yara_rules.yar"
+        sig_import_yara_url="https://cdn.rfxn.com/downloads/bad_yara_rules.yar"
         import_user_sigs
     '
     assert_success
@@ -669,12 +669,12 @@ RULE
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
-        import_custsigs_yara_url="https://cdn.rfxn.com/downloads/bad_yara_rules.yar"
+        sig_import_yara_url="https://cdn.rfxn.com/downloads/bad_yara_rules.yar"
         import_user_sigs
     '
     assert_success
@@ -682,6 +682,39 @@ RULE
     run grep "pre_existing_rule" "$LMD_INSTALL/sigs/custom.yara"
     assert_success
     run grep "WARNING: downloaded YARA rules from" "$LMD_INSTALL/logs/event_log"
+    assert_success
+}
+
+
+# ============================================================
+# import_user_sigs() csig URL tests
+# ============================================================
+
+@test "import_user_sigs imports csig data from sig_import_csig_url" {
+    # Create a local csig fixture file
+    set_fixture "custom_csig_rules.dat" "435349475f554e495155455f4d41524b45525f53494e474c45:{CSIG}test.csig.import.1"
+
+    run bash -c '
+        source /opt/tests/helpers/mock-update-server.sh
+        setup_mock_update_server
+        source "'"$LMD_INSTALL"'/internals/internals.conf"
+        source "'"$LMD_INSTALL"'/conf.maldet"
+        if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
+        source "'"$LMD_INSTALL"'/internals/functions"
+        sig_import_md5_url=""
+        sig_import_hex_url=""
+        sig_import_yara_url=""
+        sig_import_sha256_url=""
+        import_config_url=""
+        web_proxy=""
+        get_proxy_arg=""
+        sig_import_csig_url="https://cdn.rfxn.com/downloads/custom_csig_rules.dat"
+        import_user_sigs
+    '
+    assert_success
+    run grep "test.csig.import.1" "$LMD_INSTALL/sigs/custom.csig.dat"
+    assert_success
+    run grep "imported custom compound signature data from" "$LMD_INSTALL/logs/event_log"
     assert_success
 }
 
@@ -702,8 +735,8 @@ RULE
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
         source "'"$LMD_INSTALL"'/internals/functions"
         import_config_url=""
-        import_custsigs_md5_url=""
-        import_custsigs_hex_url=""
+        sig_import_md5_url=""
+        sig_import_hex_url=""
         web_proxy=""
         get_proxy_arg=""
         # Force sha256sum unavailable

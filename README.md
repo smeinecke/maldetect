@@ -101,6 +101,7 @@ LMD focuses on the malware classes that traditional AV products frequently miss:
 **Detection Stages**
 - MD5 file hash matching for exact threat identification
 - HEX pattern matching via native batch grep engine with parallel workers
+- Compound signature (csig) scanning with multi-pattern boolean logic (AND/OR/threshold), case-insensitive matching, wide (UTF-16LE) matching, and bounded gap wildcards
 - Native YARA rule scanning with full module support and custom rules
 - Statistical string-length analysis for detecting obfuscated threats (base64, gzinflate)
 - ClamAV integration for extended coverage with LMD-maintained ClamAV signatures
@@ -196,9 +197,9 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `scan_days` | Days to look back for modified files in daily cron scans | `1` |
 | `import_config_url` | URL to download remote configuration override | — |
 | `import_config_expire` | Cache expiry for imported config (seconds) | `43200` |
-| `import_custsigs_md5_url` | URL to download custom MD5 signatures | — |
-| `import_custsigs_hex_url` | URL to download custom HEX signatures | — |
-| `import_custsigs_yara_url` | URL to download custom YARA rules | — |
+| `sig_import_md5_url` | URL to download custom MD5 signatures | — |
+| `sig_import_hex_url` | URL to download custom HEX signatures | — |
+| `sig_import_yara_url` | URL to download custom YARA rules | — |
 
 ### 3.2 Alerting
 
@@ -232,12 +233,13 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `scan_hashtype` | Hash algorithm for stage 1: `auto`, `sha256`, `md5`, `both` | `auto` |
+| `scan_hashtype` | Hash algorithm for stage 1: `auto`, `sha256`, `md5` | `auto` |
 | `scan_max_depth` | Maximum directory depth for find | `15` |
 | `scan_min_filesize` | Minimum file size to scan | `24` bytes |
 | `scan_max_filesize` | Maximum file size to scan | `2048k` |
 | `scan_hexdepth` | Byte depth for HEX signature matching | `524288` |
-| `scan_workers` | Parallel workers for MD5, SHA-256, and HEX scan passes (0=auto) | `0` |
+| `scan_csig` | Enable compound signature (csig) scanning (native mode only) | `1` |
+| `scan_workers` | Parallel workers for MD5, SHA-256, HEX, and CSIG scan passes | `auto` |
 | `scan_cpunice` | Nice priority for scan process (-19 to 19) | `19` |
 | `scan_ionice` | IO scheduling class priority (0-7) | `6` |
 | `scan_cpulimit` | Hard CPU limit percentage (0=disabled) | `0` |
@@ -261,7 +263,7 @@ Native YARA scanning invokes the `yara` binary (or `yr` from YARA-X) independent
 | `scan_yara` | Enable native YARA scan stage | `0` |
 | `scan_yara_timeout` | Timeout in seconds (0=no timeout) | `300` |
 | `scan_yara_scope` | Rule scope when ClamAV is also active: `all` (full native scan) or `custom` (only custom rules natively, ClamAV handles rfxn.yara) | `custom` |
-| `import_custsigs_yara_url` | URL to download custom YARA rules on signature update | — |
+| `sig_import_yara_url` | URL to download custom YARA rules on signature update | — |
 
 **Custom YARA rules** can be placed in two locations, both preserved across upgrades:
 - `sigs/custom.yara` — single-file rules
@@ -520,13 +522,14 @@ Alerting in monitor mode uses daily digest reports via the cron job rather than 
 
 ## 8. Signature System
 
-LMD ships with four signature types:
+LMD ships with five signature types:
 
 | Type | File | Format | Count |
 |------|------|--------|-------|
 | MD5 hashes | `sigs/md5v2.dat` | `HASH:SIZE:{MD5}sig.name.N` | ~14,801 |
 | SHA-256 hashes | `sigs/sha256v2.dat` | `HASH:SIZE:{SHA256}sig.name.N` | CDN |
 | HEX patterns | `sigs/hex.dat` | `HEXSTRING:{HEX}sig.name.N` | ~2,054 |
+| Compound sigs | `sigs/csig.dat` | `SUBSIG1\|\|SUBSIG2:signame` | CDN |
 | YARA rules | `sigs/rfxn.yara` | YARA syntax | ~783 rules |
 | Compiled YARA | `sigs/compiled.yarc` | `yarac` output | optional |
 
@@ -546,6 +549,7 @@ Categories include: `bin.` (binary), `c.` (C language), `exp.` (exploit), `php.`
 | `{MD5}` | MD5 hash match (stage 1) |
 | `{SHA256}` | SHA-256 hash match (stage 1) |
 | `{HEX}` | HEX pattern match (stage 2) |
+| `{CSIG}` | Compound signature match (stage 2.5) |
 | `{SA}` | Statistical analysis (string length) |
 | `{YARA}` | Native YARA scan (`scan_yara=1`) |
 | `{CAV}` | ClamAV engine (clamd/clamscan) |
@@ -568,6 +572,7 @@ Custom signatures can be added in three formats, all preserved across upgrades:
 | Custom MD5 | `sigs/custom.md5.dat` | Same as `md5v2.dat` |
 | Custom SHA-256 | `sigs/custom.sha256.dat` | Same as `sha256v2.dat` |
 | Custom HEX | `sigs/custom.hex.dat` | Same as `hex.dat` |
+| Custom CSIG | `sigs/custom.csig.dat` | Same as `csig.dat` |
 | Custom YARA | `sigs/custom.yara` | YARA rule syntax |
 | Custom YARA (drop-in) | `sigs/custom.yara.d/*.yar` | YARA rule files |
 | Compiled YARA | `sigs/compiled.yarc` | `yarac` output (optional) |
@@ -576,10 +581,11 @@ Remote import URLs can be configured for automatic download during signature upd
 
 | Variable | Purpose |
 |----------|---------|
-| `import_custsigs_md5_url` | URL for custom MD5 signatures |
-| `import_custsigs_sha256_url` | URL for custom SHA-256 signatures |
-| `import_custsigs_hex_url` | URL for custom HEX signatures |
-| `import_custsigs_yara_url` | URL for custom YARA rules |
+| `sig_import_md5_url` | URL for custom MD5 signatures |
+| `sig_import_sha256_url` | URL for custom SHA-256 signatures |
+| `sig_import_hex_url` | URL for custom HEX signatures |
+| `sig_import_csig_url` | URL for custom compound signatures |
+| `sig_import_yara_url` | URL for custom YARA rules |
 
 ---
 

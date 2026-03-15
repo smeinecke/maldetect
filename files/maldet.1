@@ -9,7 +9,8 @@ maldet \- Linux malware scanner for shared hosting environments
 (Linux Malware Detect) is an open\-source malware scanner designed for
 Linux shared hosting environments.
 It provides multi\-stage detection using MD5 and SHA\-256 hashes, HEX patterns,
-statistical analysis, native YARA rules, and optional ClamAV integration.
+compound signatures (csig), statistical analysis, native YARA rules, and
+optional ClamAV integration.
 Detected threats can be quarantined, cleaned, or reported via email,
 Slack, Telegram, and Discord.
 .SH OPTIONS
@@ -158,7 +159,13 @@ Shared incremental log reading library.
 Shared structured event logging library.
 .TP
 .I /usr/local/maldetect/sigs/
-Signature directory (MD5, SHA\-256, HEX, YARA, ClamAV).
+Signature directory (MD5, SHA\-256, HEX, CSIG, YARA, ClamAV).
+.TP
+.I /usr/local/maldetect/sigs/csig.dat
+Compound signature rules (multi\-pattern boolean logic).
+.TP
+.I /usr/local/maldetect/sigs/custom.csig.dat
+User\-defined compound signature rules.
 .TP
 .I /usr/local/maldetect/sigs/sha256v2.dat
 SHA\-256 hash signatures (HASH:SIZE:{SHA256}sig.name.N).
@@ -211,6 +218,7 @@ Key variables by category:
 .B Scanning:
 .BR scan_hashtype ,
 .BR scan_clamscan ,
+.BR scan_csig ,
 .BR scan_yara ,
 .BR scan_yara_scope ,
 .BR scan_workers ,
@@ -253,13 +261,20 @@ Default: 1.
 .B scan_hashtype
 selects the hash algorithm for file\-hash signature matching (stage 1).
 Values: \fBauto\fR (use SHA\-256 if CPU has hardware acceleration, else MD5),
-\fBsha256\fR (always SHA\-256), \fBmd5\fR (always MD5, legacy),
-\fBboth\fR (check both MD5 and SHA\-256 signatures).
+\fBsha256\fR (always SHA\-256),
+\fBmd5\fR (always MD5; preserves performance on older CPUs without SHA\-NI).
 Default: auto.
 .PP
+.B scan_csig
+enables compound signature (csig) scanning.
+Compound signatures support multi\-pattern boolean logic (AND/OR/threshold),
+case\-insensitive matching, wide (UTF\-16LE) matching, and bounded gap wildcards.
+Runs in native mode only (not with ClamAV).
+Default: 1.
+.PP
 .B scan_workers
-sets the number of parallel workers for native MD5, SHA\-256, and HEX scan passes.
-A value of 0 (default) uses automatic detection: 2 workers per CPU core, up to 8.
+sets the number of parallel workers for native MD5, SHA\-256, HEX, and CSIG scan passes.
+A value of \fBauto\fR (default) uses automatic detection: 2 workers per CPU core, up to 8.
 Set to 1 for single\-threaded operation.
 Maximum value: 8.
 .PP

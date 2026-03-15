@@ -2,6 +2,11 @@ v2.0.1 | Mar 10 2026:
 
   -- New Features --
 
+[New] Compound signature (csig) scanning: multi-pattern boolean logic
+      (AND/OR/threshold), case-insensitive matching (i:), wide UTF-16LE
+      matching (w:), bounded gap wildcards ({N-M}); batch parallel workers;
+      csig.dat and custom.csig.dat signature files; native mode only;
+      scan_csig config var; prefix pre-screening optimization
 [New] SHA-256 hash-based scanning: auto-detects CPU hardware acceleration
       (SHA-NI on x86, SHA2 on ARM) and selects optimal hash algorithm;
       scan_hashtype config (auto/sha256/md5/both); sha256v2.dat signature
@@ -67,9 +72,17 @@ v2.0.1 | Mar 10 2026:
       scenarios covering YARA, ClamAV, alerting, signatures, cron, and
       monitor); GitHub Actions CI with 9-target matrix
 [New] -v/--version flag displays version information and exits 0
+[New] Test coverage: compat.conf sig_import_*_url rename migration tests;
+      import_user_sigs() csig URL import path test; csig group threshold=0
+      rejection guard test
+[New] Tests: _safe_source_conf unknown variable rejection; -co allowlist
+      enforcement via _safe_source_conf; quar_hitlist batch dedup guard
 
   -- Bug Fixes --
 
+[Fix] _count_signatures() always reported 0 CSIG and 0 SHA-256 in sigup
+      summary; counted from runtime variables only set during gensigs() at
+      scan time — now counts directly from on-disk signature files
 [Fix] clamav_linksigs() copied empty lmd.user.ndb/hdb to ClamAV data dirs
       causing "Malformed database" errors; gensigs() called clamav_linksigs()
       before runtime user sig files were populated — reordered to copy after
@@ -285,9 +298,48 @@ v2.0.1 | Mar 10 2026:
       may appear before or after action flags (-a, -r, -f);
       -qd with non-existent directory now exits 1 instead of silent ignore;
       -qd override preserved when combined with -U/--user
+[Fix] portability: replace /usr/bin/cp with command cp in clamav_linksigs()
+      and install.sh ClamAV sig copy; quote bare cp args in gensigs();
+      add cd failure guards in prerun(), scan file list builder, lmdup(),
+      and sigup(); fix args="$@" to args="$*" in prerun(); inline || true
+      comment per shell standards
+[Fix] _safe_source_conf(): replace blocklist with true allowlist of
+      conf.maldet variable names; prevents override of internal path vars
+      (inspath, sigdir, cldir) via compromised import_config_url
+[Fix] _lmd_alert_init(): remove export from all ALERT_* variables;
+      alert_lib.sh is sourced in same process, export unnecessary;
+      add Slack placeholder token warning when slack_alert=1
+[Fix] scan_find_timeout: quote $tmpdir and $scanid inside generated
+      script body; move rm -f of find_sleep script inside background
+      job to eliminate race condition
+[Fix] cron.watchdog: validate watchdog_stale_days as numeric; reject
+      non-numeric LMD_WATCHDOG_STALE_DAYS with safe default
+[Fix] csig: reject group threshold=0 at compile time (always-match);
+      add runtime defense-in-depth guard in _csig_eval_rule() for
+      threshold<=0 in OR group handler
+[Fix] alert registry: add CSIG (Compound Sig) and SHA256 (SHA-256 Hash)
+      hit type entries to _lmd_parse_hitlist() color/label map
+[Fix] conf.maldet: document Slack API scope change (files:write,
+      files:read) required for v2.0.1 upgrade from v1.x
+[Fix] tar extraction in lmdup() and sigup(): add --no-same-owner flag
+      to preserve ownership on extract; path traversal already prevented
+      by GNU tar default (absolute path stripping)
+[Fix] -co/--config-option: replace dot-source with _safe_source_conf()
+      allowlist parser; CLI config overrides now use the same printf -v
+      safe assignment and 79-var allowlist as import_conf(); metachar
+      pre-check retained as defense-in-depth fast-fail
+[Fix] quar_hitlist() batch path: call _batch_stat_gather and
+      _batch_quarantine directly, skipping _batch_record_hits; prevents
+      duplicate hits_history entries when quarantining previously-scanned
+      files via -q/--quarantine SCANID
 
   -- Changes --
 
+[Change] scan_workers default changed from "0" to "auto" for consistency with
+      scan_hashtype convention; "0" silently accepted as auto for backward compat
+[Change] Rename import_custsigs_*_url config variables to sig_import_*_url
+      for consistency with sig_* namespace; compat.conf migration maps old
+      names to new; install.sh _import_config() migrates on upgrade
 [Change] Update verification (sigpack, cleanpack, tarball, version tamper
       check) prefers SHA-256 over MD5; graceful MD5 fallback when sha256sum
       binary is absent; new _verify_download() helper eliminates inline

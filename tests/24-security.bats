@@ -275,3 +275,30 @@ _source_lmd_stack() {
     # File should be restored (normal behavior still works)
     assert_output --partial "restored"
 }
+
+# PR-006: _safe_source_conf rejects arbitrary unknown variables
+@test "_safe_source_conf rejects unknown variable while accepting known" {
+    local tmpfile
+    tmpfile=$(mktemp)
+    printf 'MY_UNKNOWN_VAR=pwned\nemail_alert=1\n' > "$tmpfile"
+    _source_lmd_stack
+    unset MY_UNKNOWN_VAR 2>/dev/null || true
+    _safe_source_conf "$tmpfile"
+    # Unknown variable must NOT be set
+    [ -z "${MY_UNKNOWN_VAR:-}" ]
+    # Known variable must be applied
+    [ "$email_alert" = "1" ]
+    rm -f "$tmpfile"
+}
+
+# PR-004: -co handler rejects non-conf.maldet variable via allowlist
+@test "-co rejects non-allowlisted variable name" {
+    mkdir -p /tmp/lmd-co-test
+    echo "clean" > /tmp/lmd-co-test/file.txt
+    local log="$LMD_INSTALL/logs/event_log"
+    run maldet -co MY_EVIL_VAR=test -e list
+    # _safe_source_conf rejects the unknown variable; warning goes to event_log
+    run grep "rejected unknown variable" "$log"
+    assert_success
+    rm -rf /tmp/lmd-co-test
+}

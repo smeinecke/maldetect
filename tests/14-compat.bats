@@ -144,6 +144,41 @@ _source_compat() {
     [ "$scan_user_access_minuid" = "500" ]
 }
 
+@test "deprecated import_custsigs_md5_url maps to sig_import_md5_url" {
+    unset sig_import_md5_url
+    import_custsigs_md5_url="https://example.com/custom-md5.dat"
+    _source_compat
+    [ "$sig_import_md5_url" = "https://example.com/custom-md5.dat" ]
+}
+
+@test "deprecated import_custsigs_hex_url maps to sig_import_hex_url" {
+    unset sig_import_hex_url
+    import_custsigs_hex_url="https://example.com/custom-hex.dat"
+    _source_compat
+    [ "$sig_import_hex_url" = "https://example.com/custom-hex.dat" ]
+}
+
+@test "deprecated import_custsigs_yara_url maps to sig_import_yara_url" {
+    unset sig_import_yara_url
+    import_custsigs_yara_url="https://example.com/custom-yara.yar"
+    _source_compat
+    [ "$sig_import_yara_url" = "https://example.com/custom-yara.yar" ]
+}
+
+@test "deprecated import_custsigs_sha256_url maps to sig_import_sha256_url" {
+    unset sig_import_sha256_url
+    import_custsigs_sha256_url="https://example.com/custom-sha256.dat"
+    _source_compat
+    [ "$sig_import_sha256_url" = "https://example.com/custom-sha256.dat" ]
+}
+
+@test "deprecated import_custsigs_csig_url maps to sig_import_csig_url" {
+    unset sig_import_csig_url
+    import_custsigs_csig_url="https://example.com/custom-csig.dat"
+    _source_compat
+    [ "$sig_import_csig_url" = "https://example.com/custom-csig.dat" ]
+}
+
 @test "compat.conf sourced after conf.maldet in maldet entry point" {
     run grep -n 'source.*compatcnf' "$LMD_INSTALL/maldet"
     assert_success

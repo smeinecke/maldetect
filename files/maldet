@@ -225,7 +225,7 @@ else
 					eout "{config} WARNING: rejected unsafe -co value" 1
 					rm -f "$tmpco"
 				else
-					. "$tmpco"
+					_safe_source_conf "$tmpco"
 					_lmd_cli_co_applied=1
 					rm -f "$tmpco"
 				fi

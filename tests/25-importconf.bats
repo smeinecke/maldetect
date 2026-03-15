@@ -124,12 +124,12 @@ _run_compat_migrate() {
     assert_output 'scan_yara_scope="all"'
 }
 
-@test "config merge preserves import_custsigs_yara_url" {
+@test "config merge preserves sig_import_yara_url" {
     cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's|^import_custsigs_yara_url=.*|import_custsigs_yara_url="http://example.com/rules.yar"|' "$_BATS_OLD_CONF"
+    sed -i 's|^sig_import_yara_url=.*|sig_import_yara_url="http://example.com/rules.yar"|' "$_BATS_OLD_CONF"
     _run_merge
-    run grep '^import_custsigs_yara_url=' "$_BATS_MERGED"
-    assert_output 'import_custsigs_yara_url="http://example.com/rules.yar"'
+    run grep '^sig_import_yara_url=' "$_BATS_MERGED"
+    assert_output 'sig_import_yara_url="http://example.com/rules.yar"'
 }
 
 @test "config merge preserves scan_tmpdir_paths (not hardcoded)" {
