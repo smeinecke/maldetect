@@ -444,6 +444,16 @@ elk_port=""
 elk_index=""
 
 ##
+# [ SESSION FORMAT ]
+##
+# Generate legacy plaintext session files alongside TSV for backward
+# compatibility with external integrations that parse session.* files.
+# [auto] = detect old-format sessions, enable if found (default)
+# [1]    = always generate plaintext session files
+# [0]    = TSV only, no plaintext
+session_legacy_compat="auto"
+
+##
 # [ STATISTICAL ANALYSIS ]
 # This is an EXPERIMENTAL feature and should be used with caution.
 # Currently, this feature can have a substantially negative impact

@@ -200,6 +200,7 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `sig_import_md5_url` | URL to download custom MD5 signatures | — |
 | `sig_import_hex_url` | URL to download custom HEX signatures | — |
 | `sig_import_yara_url` | URL to download custom YARA rules | — |
+| `session_legacy_compat` | Generate legacy plaintext session files alongside TSV: `auto` (detect old-format sessions), `1` (always), `0` (TSV only) | `auto` |
 
 ### 3.2 Alerting
 
@@ -379,6 +380,7 @@ QUARANTINE & RESTORE:
 REPORTING:
   -e, --report [SCANID] [email] view or email scan report
   -E, --dump-report [SCANID]    dump report to stdout
+  --json-report [SCANID|list]   output scan report as JSON
   --alert-daily                 generate inotify monitor digest alert
   -l, --log                     view event log
 
@@ -416,9 +418,21 @@ maldet -e
 # Email a specific report
 maldet -e 050910-1534.21135 admin@example.com
 
+# Output scan report as JSON (pipe to jq for formatting)
+maldet --json-report 050910-1534.21135
+
+# List all reports as JSON
+maldet --json-report list
+
 # Restore all quarantined files from a scan
 maldet -s 050910-1534.21135
 ```
+
+**JSON Output:** The `--json-report` command outputs structured JSON (v1.0 schema) with
+scanner metadata, scan details (path, times, file counts), per-hit entries with signature
+name, file path, hit type, owner, permissions, and quarantine status, plus a summary with
+per-type breakdowns. Requires TSV session format (default in v2.0.1); returns a JSON
+error object for legacy plaintext sessions.
 
 ---
 

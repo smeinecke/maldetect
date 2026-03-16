@@ -52,98 +52,47 @@ _run_compat_migrate() {
 
 # --- Merge tests (was: importconf variable expansion tests) ---
 
-@test "config merge preserves email_alert=1 from old config" {
+@test "config merge preserves all user-set values" {
     cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^email_alert=.*/email_alert="1"/' "$_BATS_OLD_CONF"
+    # Set all 12 config values in old config that should survive a merge
+    sed -i \
+        -e 's/^email_alert=.*/email_alert="1"/' \
+        -e 's/^email_ignore_clean=.*/email_ignore_clean="0"/' \
+        -e 's/^scan_max_filesize=.*/scan_max_filesize="4096k"/' \
+        -e 's/^inotify_sleep=.*/inotify_sleep="15"/' \
+        -e 's/^autoupdate_signatures=.*/autoupdate_signatures="0"/' \
+        -e 's/^email_subj=.*/email_subj="custom subject"/' \
+        -e 's/^scan_yara=.*/scan_yara="1"/' \
+        -e 's/^scan_yara_timeout=.*/scan_yara_timeout="600"/' \
+        -e 's/^scan_yara_scope=.*/scan_yara_scope="all"/' \
+        -e 's|^sig_import_yara_url=.*|sig_import_yara_url="http://example.com/rules.yar"|' \
+        -e 's|^scan_tmpdir_paths=.*|scan_tmpdir_paths="/tmp /var/tmp /dev/shm /var/fcgi_ipc"|' \
+        -e 's/^string_length_scan=.*/string_length_scan="1"/' \
+        "$_BATS_OLD_CONF"
     _run_merge
+    # Assert each value preserved in merged config
     run grep '^email_alert=' "$_BATS_MERGED"
     assert_output 'email_alert="1"'
-}
-
-@test "config merge preserves email_ignore_clean=0 (not hardcoded to 1)" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^email_ignore_clean=.*/email_ignore_clean="0"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^email_ignore_clean=' "$_BATS_MERGED"
     assert_output 'email_ignore_clean="0"'
-}
-
-@test "config merge preserves scan_max_filesize (not hardcoded)" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^scan_max_filesize=.*/scan_max_filesize="4096k"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^scan_max_filesize=' "$_BATS_MERGED"
     assert_output 'scan_max_filesize="4096k"'
-}
-
-@test "config merge preserves inotify_sleep=15 (not hardcoded to 30)" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^inotify_sleep=.*/inotify_sleep="15"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^inotify_sleep=' "$_BATS_MERGED"
     assert_output 'inotify_sleep="15"'
-}
-
-@test "config merge preserves autoupdate_signatures=0 (not hardcoded to 1)" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^autoupdate_signatures=.*/autoupdate_signatures="0"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^autoupdate_signatures=' "$_BATS_MERGED"
     assert_output 'autoupdate_signatures="0"'
-}
-
-@test "config merge preserves custom email_subj" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^email_subj=.*/email_subj="custom subject"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^email_subj=' "$_BATS_MERGED"
     assert_output 'email_subj="custom subject"'
-}
-
-@test "config merge preserves scan_yara=1" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^scan_yara=.*/scan_yara="1"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^scan_yara=' "$_BATS_MERGED"
     assert_output 'scan_yara="1"'
-}
-
-@test "config merge preserves scan_yara_timeout=600" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^scan_yara_timeout=.*/scan_yara_timeout="600"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^scan_yara_timeout=' "$_BATS_MERGED"
     assert_output 'scan_yara_timeout="600"'
-}
-
-@test "config merge preserves scan_yara_scope=all" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^scan_yara_scope=.*/scan_yara_scope="all"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^scan_yara_scope=' "$_BATS_MERGED"
     assert_output 'scan_yara_scope="all"'
-}
-
-@test "config merge preserves sig_import_yara_url" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's|^sig_import_yara_url=.*|sig_import_yara_url="http://example.com/rules.yar"|' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^sig_import_yara_url=' "$_BATS_MERGED"
     assert_output 'sig_import_yara_url="http://example.com/rules.yar"'
-}
-
-@test "config merge preserves scan_tmpdir_paths (not hardcoded)" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's|^scan_tmpdir_paths=.*|scan_tmpdir_paths="/tmp /var/tmp /dev/shm /var/fcgi_ipc"|' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^scan_tmpdir_paths=' "$_BATS_MERGED"
     assert_output 'scan_tmpdir_paths="/tmp /var/tmp /dev/shm /var/fcgi_ipc"'
-}
-
-@test "config merge preserves string_length_scan=1" {
-    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
-    sed -i 's/^string_length_scan=.*/string_length_scan="1"/' "$_BATS_OLD_CONF"
-    _run_merge
     run grep '^string_length_scan=' "$_BATS_MERGED"
     assert_output --partial 'string_length_scan="1"'
 }

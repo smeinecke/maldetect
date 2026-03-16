@@ -25,7 +25,8 @@ teardown() {
     scanid=$(get_last_scanid)
     run maldet -E "$scanid"
     assert_success
-    assert_output --partial "SCAN ID"
+    # TSV header starts with #LMD:v1; legacy text contains "SCAN ID"
+    [[ "$output" == *"SCAN ID"* ]] || [[ "$output" == *"#LMD:v1"* ]]
 }
 
 @test "--dump-report outputs report to stdout" {
@@ -45,7 +46,8 @@ teardown() {
     scanid=$(get_last_scanid)
     run maldet -E "$scanid"
     assert_success
-    assert_output --partial "EICAR"
+    # Sig name case varies by hash engine (EICAR for MD5, eicar for SHA-256/HEX)
+    assert_output --regexp '[Ee][Ii][Cc][Aa][Rr]'
 }
 
 @test "report contains file path" {
@@ -71,18 +73,20 @@ teardown() {
 @test "session files created for each scan" {
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
     maldet -a "$TEST_SCAN_DIR"
-    local scanid
+    local scanid report
     scanid=$(get_last_scanid)
-    [ -f "$LMD_INSTALL/sess/session.$scanid" ]
+    report=$(get_session_report_file "$scanid")
+    [ -n "$report" ] && [ -f "$report" ]
 }
 
 @test "no persistent HTML session file after scan" {
     lmd_set_config email_format "html"
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     maldet -a "$TEST_SCAN_DIR" || true
-    local scanid
+    local scanid report
     scanid=$(get_last_scanid)
-    # Text session always created; HTML rendered on-demand, not stored
-    [ -f "$LMD_INSTALL/sess/session.$scanid" ]
+    # Session file (TSV or plaintext) always created; HTML rendered on-demand, not stored
+    report=$(get_session_report_file "$scanid")
+    [ -n "$report" ] && [ -f "$report" ]
     [ ! -f "$LMD_INSTALL/sess/session.${scanid}.html" ]
 }

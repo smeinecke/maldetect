@@ -27,8 +27,8 @@ teardown() {
     run maldet -co scan_hashtype=sha256 -a "$TEST_SCAN_DIR"
     assert_scan_completed
     assert_output --partial "malware hits 1"
-    # Verify SHA-256 sig count appears in signature loaded line
-    assert_output --partial "1 SHA256"
+    # Verify custom SHA-256 sig counted in USER category
+    assert_output --partial "1 USER"
 }
 
 @test "SHA-256 batch workers: multiple infected files" {

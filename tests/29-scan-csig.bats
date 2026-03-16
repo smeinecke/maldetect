@@ -89,7 +89,8 @@ teardown() {
     # Verify hit is from MD5 (in session file), not CSIG
     local scanid
     scanid=$(get_last_scanid)
-    run grep "{MD5}" "$LMD_INSTALL/sess/session.hits.$scanid"
+    local hitsfile; hitsfile=$(get_session_hits_file "$scanid")
+    run grep "{MD5}" "$hitsfile"
     assert_success
 }
 
@@ -107,9 +108,10 @@ teardown() {
     # Check session hits file for first rule, not second
     local scanid
     scanid=$(get_last_scanid)
-    run grep "test.csig.first" "$LMD_INSTALL/sess/session.hits.$scanid"
+    local hitsfile; hitsfile=$(get_session_hits_file "$scanid")
+    run grep "test.csig.first" "$hitsfile"
     assert_success
-    run grep "test.csig.second" "$LMD_INSTALL/sess/session.hits.$scanid"
+    run grep "test.csig.second" "$hitsfile"
     assert_failure
 }
 
@@ -196,7 +198,8 @@ teardown() {
     # Verify {CSIG} prefix in session hits file
     local scanid
     scanid=$(get_last_scanid)
-    run grep "{CSIG}test.csig.single" "$LMD_INSTALL/sess/session.hits.$scanid"
+    local hitsfile; hitsfile=$(get_session_hits_file "$scanid")
+    run grep "{CSIG}test.csig.single" "$hitsfile"
     assert_success
 }
 
@@ -206,7 +209,7 @@ teardown() {
     cp "$SAMPLES_DIR/test-csig-single.php" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"
     assert_scan_completed
-    assert_output --partial "1 CSIG"
+    assert_output --partial "1 USER"
 }
 
 # --- Test 17: ignore_sigs filters csig rules ---

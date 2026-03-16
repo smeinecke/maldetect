@@ -415,7 +415,7 @@ EOF
     echo "6576616c286261736536345f6465636f646528:base64.inject.unclassed.99" \
         > "$LMD_INSTALL/sigs/custom.hex.dat"
     # Suppress builtin sigs that match the same pattern but have no clean script
-    echo "php.base64.inject" > "$LMD_INSTALL/ignore_sigs"
+    printf '%s\n' "php.base64.inject" "php.inject.inject" > "$LMD_INSTALL/ignore_sigs"
     lmd_set_config quarantine_hits 1
     lmd_set_config quarantine_clean 1
     lmd_set_config scan_yara 1

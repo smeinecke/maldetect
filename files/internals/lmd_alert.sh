@@ -34,6 +34,42 @@ _lmd_parse_hitlist() {
 	if [ ! -f "$hitlist_file" ] || [ ! -s "$hitlist_file" ]; then
 		return 1
 	fi
+	# Detect TSV format (with or without header) and convert to 6-field manifest.
+	# Header format: first line starts with "#LMD:v1".
+	# Headerless TSV (e.g., tlog_read output from monitor digest): first non-empty
+	# line has 11 tab-delimited fields (10 tab chars).
+	local _first_line _is_tsv=0
+	IFS= read -r _first_line < "$hitlist_file"
+	case "$_first_line" in
+		"#LMD:v1"*) _is_tsv=1 ;;
+		*)
+			# Detect headerless TSV: count tabs in first line (11 fields = 10 tabs)
+			local _tab_count
+			_tab_count="${_first_line//[^	]/}"
+			if [ "${#_tab_count}" -ge 10 ]; then
+				_is_tsv=1
+			fi
+			;;
+	esac
+	if [ "$_is_tsv" = "1" ]; then
+		# TSV format: extract fields and map to 6-field manifest
+		awk -F'\t' '
+		BEGIN {
+			ht_color["MD5"]  = "#0891b2"; ht_color["HEX"]  = "#dc2626"
+			ht_color["YARA"] = "#d97706"; ht_color["SA"]   = "#16a34a"
+			ht_color["CAV"]  = "#7c3aed"; ht_color["CSIG"] = "#ea580c"
+			ht_color["SHA256"] = "#0d9488"; default_color = "#0891b2"
+		}
+		!/^#/ {
+			sig=$1; fp=$2; qp=$3; ht=$4; htl=$5
+			if (sig == "") next
+			if (qp == "-") qp = ""
+			color = (ht in ht_color) ? ht_color[ht] : default_color
+			printf "%s\t%s\t%s\t%s\t%s\t%s\n", sig, fp, (qp=="" ? "-" : qp), ht, color, htl
+		}' "$hitlist_file"
+		return
+	fi
+	# Legacy format: "sig : path" or "sig : path => quarpath"
 	awk -F' : ' '
 	BEGIN {
 		# Hit type registry: type key -> display color and label
@@ -80,7 +116,7 @@ _lmd_parse_hitlist() {
 
 # _lmd_set_global_vars alert_type — export global template variables to ENVIRON
 # alert_type: scan, digest, or panel
-# Reads from shell variables set by the calling context (gen_report/genalert).
+# Reads from shell variables set by the calling context (_scan_finalize_session/genalert).
 # shellcheck disable=SC2154
 _lmd_set_global_vars() {
 	local alert_type="$1"
@@ -175,8 +211,9 @@ $(cat "$_slist")
 }
 
 # _lmd_compute_summary manifest_file — compute summary variables from manifest
-# Single-pass awk over tab-delimited manifest (6-field: sig through hit_type_label).
+# Single-pass awk over tab-delimited manifest (6-field or 11-field TSV).
 # Exports SUMMARY_* variables. For empty manifests, sets all tokens to zero.
+# Skips TSV header lines (starting with #).
 _lmd_compute_summary() {
 	local manifest_file="$1"
 	if [ ! -f "$manifest_file" ] || [ ! -s "$manifest_file" ]; then
@@ -191,6 +228,7 @@ _lmd_compute_summary() {
 
 	local _summary
 	_summary=$(awk -F'\t' '
+	/^#/ { next }
 	{
 		total++
 		type = $4
@@ -231,8 +269,9 @@ _lmd_compute_summary() {
 	export SUMMARY_TOTAL_CLEANED="${tot_cl:-0}"
 }
 
-# _lmd_elk_post_hits manifest_file — post hits to ELK stack
-# Posts each hit from the tab-delimited manifest to the configured ELK endpoint.
+# _lmd_elk_post_hits tsv_file — post hits to ELK stack
+# Reads 11-field TSV hit records directly (skips header), posts each hit
+# to the configured ELK endpoint with enriched metadata.
 # shellcheck disable=SC2154
 _lmd_elk_post_hits() {
 	local manifest_file="$1"
@@ -259,16 +298,18 @@ _lmd_elk_post_hits() {
 	elk_date=$(date +%s)
 	elk_hostname=$(hostname)
 
-	local _sig _filepath _quarpath _hit_type _htcolor _htlabel
-	while IFS=$'\t' read -r _sig _filepath _quarpath _hit_type _htcolor _htlabel; do
+	local _sig _filepath _quarpath _hit_type _htlabel _hash _size _owner _group _mode _mtime
+	while IFS=$'\t' read -r _sig _filepath _quarpath _hit_type _htlabel _hash _size _owner _group _mode _mtime; do
 		[ -z "$_sig" ] && continue
+		[[ "$_sig" == "#"* ]] && continue  # skip header
 		[ "$_quarpath" = "-" ] && _quarpath=""
 		_sig=$(_alert_json_escape "$_sig")
 		_filepath=$(_alert_json_escape "$_filepath")
+		_hash=$(_alert_json_escape "${_hash:--}")
 		$curl --output /dev/null --silent --show-error \
 			-XPOST "$elk_url" \
 			-H 'Content-Type: application/json' \
-			-d "{\"date\":\"$elk_date\",\"hit\":\"$_sig\",\"file\":\"$_filepath\",\"hostname\":\"$elk_hostname\"}"
+			-d "{\"date\":\"$elk_date\",\"hit\":\"$_sig\",\"file\":\"$_filepath\",\"hostname\":\"$elk_hostname\",\"hash\":\"$_hash\",\"size\":\"${_size:--}\",\"owner\":\"${_owner:--}\"}"
 	done < "$manifest_file"
 }
 
@@ -278,6 +319,13 @@ _lmd_elk_post_hits() {
 # substitutes {{TOKENS}} in the template, outputs rendered entries to stdout.
 # Falls back to ENVIRON for tokens not in the per-entry set (supports global
 # tokens in custom.d/ entry template overrides).
+# Supports two input formats via field-count detection:
+#   11-field TSV: sig, filepath, quarpath, hit_type, hit_type_label, file_hash,
+#                 file_size, file_owner, file_group, file_mode, file_mtime
+#    6-field manifest: sig, filepath, quarpath, hit_type, hit_type_color, hit_type_label
+# The 11-field path carries the hit_type->color registry in awk BEGIN and adds
+# enriched template tokens: HIT_HASH, HIT_SIZE, HIT_OWNER, HIT_GROUP, HIT_MODE,
+# HIT_MTIME. Header lines (starting with #) are skipped.
 _lmd_render_entries() {
 	local template_file="$1" manifest_file="$2" total="$3"
 	if [ ! -f "$template_file" ] || [ ! -f "$manifest_file" ]; then
@@ -306,16 +354,55 @@ _lmd_render_entries() {
 		}
 		return out
 	}
+	function sentinel(v) { return (v == "-" || v == "") ? "" : v }
+	BEGIN {
+		# Hit type -> color registry (used for 11-field TSV path where
+		# the color is not present in the data; relocated from _lmd_parse_hitlist)
+		ht_color["MD5"]    = "#0891b2"
+		ht_color["HEX"]    = "#dc2626"
+		ht_color["YARA"]   = "#d97706"
+		ht_color["SA"]     = "#16a34a"
+		ht_color["CAV"]    = "#7c3aed"
+		ht_color["CSIG"]   = "#ea580c"
+		ht_color["SHA256"] = "#0d9488"
+		default_color = "#0891b2"
+	}
 	NR == FNR {
 		tpl[FNR] = $0
 		tpl_lines = FNR
 		next
 	}
+	/^#/ { next }
 	{
 		sig = $1; filepath = $2; quarpath = $3
-		hit_type_color = $5; hit_type_label = $6
 		if (sig == "") next
 		if (quarpath == "-") quarpath = ""
+
+		# Field-count detection: 11-field TSV vs 6-field manifest
+		if (NF >= 11) {
+			# 11-field TSV: sig, filepath, quarpath, hit_type, hit_type_label,
+			#   file_hash, file_size, file_owner, file_group, file_mode, file_mtime
+			hit_type = $4
+			hit_type_label = $5
+			hit_type_color = (hit_type in ht_color) ? ht_color[hit_type] : default_color
+			file_hash  = sentinel($6)
+			file_size  = sentinel($7)
+			file_owner = sentinel($8)
+			file_group = sentinel($9)
+			file_mode  = sentinel($10)
+			file_mtime = sentinel($11)
+		} else {
+			# 6-field manifest: sig, filepath, quarpath, hit_type, hit_type_color, hit_type_label
+			hit_type = $4
+			hit_type_color = $5
+			hit_type_label = $6
+			file_hash  = ""
+			file_size  = ""
+			file_owner = ""
+			file_group = ""
+			file_mode  = ""
+			file_mtime = ""
+		}
 		n++
 
 		# Per-entry token map
@@ -323,7 +410,7 @@ _lmd_render_entries() {
 		tokens["ENTRY_TOTAL"] = total
 		tokens["HIT_SIGNATURE"] = sig
 		tokens["HIT_FILE"] = filepath
-		tokens["HIT_TYPE"] = $4
+		tokens["HIT_TYPE"] = hit_type
 		tokens["HIT_TYPE_LABEL"] = hit_type_label
 		tokens["HIT_TYPE_COLOR"] = hit_type_color
 		if (quarpath != "") {
@@ -339,6 +426,14 @@ _lmd_render_entries() {
 		tokens["HIT_SIGNATURE_HTML"] = html_escape(sig)
 		tokens["HIT_FILE_JSON"] = json_escape(filepath)
 		tokens["HIT_SIGNATURE_JSON"] = json_escape(sig)
+
+		# Enriched tokens from 11-field TSV (empty string when 6-field)
+		tokens["HIT_HASH"]  = file_hash
+		tokens["HIT_SIZE"]  = file_size
+		tokens["HIT_OWNER"] = file_owner
+		tokens["HIT_GROUP"] = file_group
+		tokens["HIT_MODE"]  = file_mode
+		tokens["HIT_MTIME"] = file_mtime
 
 		# Render template with token substitution
 		for (i = 1; i <= tpl_lines; i++) {
@@ -358,6 +453,161 @@ _lmd_render_entries() {
 	' "$template_file" "$manifest_file"
 }
 
+# _lmd_render_json tsv_file — render JSON report from TSV session file to stdout
+# Reads 19-field header + 11-field hit records. Outputs JSON v1.0 schema.
+# mawk-compatible: no gensub, match(s,p,arr), strftime.
+_lmd_render_json() {
+	local tsv_file="$1"
+	[ -f "$tsv_file" ] || return 1
+	awk -F'\t' '
+	function json_esc(s,    out, i, c, n) {
+		out = ""
+		n = length(s)
+		for (i = 1; i <= n; i++) {
+			c = substr(s, i, 1)
+			if (c == "\\") out = out "\\\\"
+			else if (c == "\"") out = out "\\\""
+			else if (c == "\n") out = out "\\n"
+			else if (c == "\t") out = out "\\t"
+			else if (c == "\r") out = out "\\r"
+			else out = out c
+		}
+		return out
+	}
+	function jbool(v) { return (v == "1") ? "true" : "false" }
+	function jnum_or_null(v) { return (v == "-" || v == "") ? "null" : v+0 }
+	function jstr_or_null(v) { return (v == "-" || v == "") ? "null" : "\"" json_esc(v) "\"" }
+	BEGIN {
+		ht_label["MD5"]    = "MD5 Hash"
+		ht_label["HEX"]    = "HEX Pattern"
+		ht_label["YARA"]   = "YARA Rule"
+		ht_label["SA"]     = "String Analysis"
+		ht_label["CAV"]    = "ClamAV"
+		ht_label["CSIG"]   = "Compound Sig"
+		ht_label["SHA256"] = "SHA-256 Hash"
+	}
+	NR == 1 && /^#/ {
+		# Parse 19-field header
+		fmt=$1; alert_type=$2; scan_id=$3; hostname=$4; path=$5; range=$6
+		started=$7; completed=$8; elapsed=$9; filelist=$10
+		total_files=$11; total_hits=$12; total_cleaned=$13
+		scanner_ver=$14; sig_ver=$15; hashtype=$16; engine=$17
+		quar_enabled=$18; host_id=$19
+		next
+	}
+	/^#/ { next }
+	{
+		# Parse 11-field hit records
+		hit_n++
+		sig[hit_n]=$1; fp[hit_n]=$2; qp[hit_n]=$3
+		ht[hit_n]=$4; htl[hit_n]=$5; hash[hit_n]=$6
+		sz[hit_n]=$7; own[hit_n]=$8; grp[hit_n]=$9
+		mode[hit_n]=$10; mtime[hit_n]=$11
+		# Count by type
+		if ($3 != "-" && $3 != "") quarantined++
+		types[$4]++
+	}
+	END {
+		printf "{\n"
+		printf "  \"version\": \"1.0\",\n"
+		printf "  \"type\": \"%s\",\n", json_esc(alert_type)
+		printf "  \"scanner\": {\n"
+		printf "    \"name\": \"Linux Malware Detect\",\n"
+		printf "    \"version\": %s,\n", jstr_or_null(scanner_ver)
+		printf "    \"sig_version\": %s\n", jstr_or_null(sig_ver)
+		printf "  },\n"
+		printf "  \"scan\": {\n"
+		printf "    \"id\": \"%s\",\n", json_esc(scan_id)
+		printf "    \"hostname\": \"%s\",\n", json_esc(hostname)
+		printf "    \"host_id\": %s,\n", jstr_or_null(host_id)
+		printf "    \"path\": \"%s\",\n", json_esc(path)
+		if (range ~ /^[0-9]+$/) printf "    \"range_days\": %d,\n", range+0
+		else printf "    \"range_days\": %s,\n", jstr_or_null(range)
+		printf "    \"started\": %s,\n", jstr_or_null(started)
+		printf "    \"completed\": %s,\n", jstr_or_null(completed)
+		printf "    \"elapsed_seconds\": %s,\n", jnum_or_null(elapsed)
+		printf "    \"filelist_seconds\": %s,\n", jnum_or_null(filelist)
+		printf "    \"total_files\": %s,\n", jnum_or_null(total_files)
+		printf "    \"total_hits\": %s,\n", jnum_or_null(total_hits)
+		printf "    \"total_cleaned\": %s,\n", jnum_or_null(total_cleaned)
+		printf "    \"engine\": %s,\n", jstr_or_null(engine)
+		printf "    \"hash_type\": %s,\n", jstr_or_null(hashtype)
+		printf "    \"quarantine_enabled\": %s\n", jbool(quar_enabled)
+		printf "  },\n"
+		printf "  \"hits\": ["
+		for (i = 1; i <= hit_n; i++) {
+			if (i > 1) printf ","
+			printf "\n    {\n"
+			printf "      \"index\": %d,\n", i
+			printf "      \"signature\": \"%s\",\n", json_esc(sig[i])
+			printf "      \"file\": \"%s\",\n", json_esc(fp[i])
+			printf "      \"hit_type\": \"%s\",\n", json_esc(ht[i])
+			hl = (ht[i] in ht_label) ? ht_label[ht[i]] : ht[i]
+			printf "      \"hit_type_label\": \"%s\",\n", json_esc(hl)
+			is_q = (qp[i] != "-" && qp[i] != "")
+			printf "      \"quarantined\": %s,\n", (is_q ? "true" : "false")
+			if (is_q) printf "      \"quarantine_path\": \"%s\",\n", json_esc(qp[i])
+			printf "      \"hash\": %s,\n", jstr_or_null(hash[i])
+			printf "      \"size\": %s,\n", jnum_or_null(sz[i])
+			printf "      \"owner\": %s,\n", jstr_or_null(own[i])
+			printf "      \"group\": %s,\n", jstr_or_null(grp[i])
+			printf "      \"mode\": %s,\n", jstr_or_null(mode[i])
+			printf "      \"mtime\": %s\n", jnum_or_null(mtime[i])
+			printf "    }"
+		}
+		printf "\n  ],\n"
+		printf "  \"summary\": {\n"
+		printf "    \"total_hits\": %d,\n", hit_n+0
+		printf "    \"total_quarantined\": %d,\n", quarantined+0
+		printf "    \"total_cleaned\": %s,\n", jnum_or_null(total_cleaned)
+		if (quarantined == hit_n && hit_n > 0) qstat = "All threats quarantined"
+		else if (quarantined > 0) qstat = quarantined " of " hit_n " quarantined"
+		else qstat = "None quarantined"
+		printf "    \"quarantine_status\": \"%s\",\n", json_esc(qstat)
+		printf "    \"by_type\": {"
+		sep = ""
+		for (t in types) {
+			printf "%s\"%s\": %d", sep, json_esc(t), types[t]
+			sep = ", "
+		}
+		printf "}\n"
+		printf "  }\n"
+		printf "}\n"
+	}' "$tsv_file"
+}
+
+# _lmd_render_json_list — render all session reports as JSON array
+# Iterates session.tsv.* files in $sessdir, reads metadata from each,
+# and outputs a JSON object with a "reports" array.
+# shellcheck disable=SC2154
+_lmd_render_json_list() {
+	printf '{\n  "version": "1.0",\n  "type": "report_list",\n  "reports": ['
+	local _first=1
+	local _file
+	for _file in "$sessdir"/session.tsv.[0-9]*; do
+		[ -f "$_file" ] || continue
+		_session_read_meta "$_file"
+		[ -z "$scanid" ] && continue
+		if [ "$_first" != "1" ]; then printf ","; fi
+		_first=0
+		printf '\n    {'
+		printf '"scan_id": "%s", ' "$scanid"
+		if [ "$scan_start_hr" = "-" ]; then printf '"started": null, '
+		else printf '"started": "%s", ' "$scan_start_hr"; fi
+		if [ "$tot_files" = "-" ]; then printf '"total_files": null, '
+		else printf '"total_files": %s, ' "$tot_files"; fi
+		if [ "$tot_hits" = "-" ]; then printf '"total_hits": null, '
+		else printf '"total_hits": %s, ' "$tot_hits"; fi
+		local _jval="${tot_cl:-0}"
+		[ "$_jval" = "-" ] && _jval="0"
+		printf '"total_cleaned": %s, ' "$_jval"
+		if [ "$scan_et" = "-" ]; then printf '"elapsed_seconds": null'
+		else printf '"elapsed_seconds": %s' "$scan_et"; fi
+		printf '}'
+	done
+	printf '\n  ]\n}\n'
+}
+
 # ---------------------------------------------------------------------------
 # Rendering Pipeline
 # ---------------------------------------------------------------------------
@@ -372,7 +622,7 @@ _lmd_render() {
 	local format="$1" manifest_file="$2" alert_type="$3" template_dir="$4"
 	local total
 
-	total=$(awk 'END{print NR}' "$manifest_file")
+	total=$(awk '/^#/{next} {c++} END{print c+0}' "$manifest_file")
 
 	_lmd_set_global_vars "$alert_type"
 
@@ -442,7 +692,7 @@ _lmd_render_messaging() {
 	[ "$_any_enabled" = "1" ] || return 0
 
 	local total
-	total=$(awk 'END{print NR}' "$manifest_file")
+	total=$(awk '/^#/{next} {c++} END{print c+0}' "$manifest_file")
 
 	_lmd_set_global_vars "scan"
 

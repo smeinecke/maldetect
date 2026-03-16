@@ -72,6 +72,11 @@ Append an email address to send the report.
 \fB\-E\fR, \fB\-\-dump\-report\fR [\fISCANID\fR]
 Dump a scan report to stdout.
 .TP
+\fB\-\-json\-report\fR [\fISCANID\fR|\fBlist\fR]
+Output a JSON\-formatted scan report for the given \fISCANID\fR.
+Use \fBlist\fR to output all scan reports as a JSON array.
+Requires TSV session format; legacy plaintext sessions return a JSON error.
+.TP
 \fB\-\-alert\-daily\fR (also: \fB\-\-monitor\-report\fR)
 Generate a digest alert summarizing inotify monitor activity.
 Requires monitor mode to be running.
@@ -178,6 +183,11 @@ ClamAV SHA\-256 hash signature database (ClamAV >= 0.97).
 .TP
 .I /usr/local/maldetect/quarantine/
 Quarantine storage for detected malware.
+.TP
+.I /usr/local/maldetect/sess/session.tsv.*
+TSV\-format scan session data files containing a 19\-field metadata header
+and 11\-field hit records.
+Canonical format as of v2.0.1.
 .TP
 .I /usr/local/maldetect/logs/event_log
 Event log.
@@ -314,6 +324,13 @@ and
 .B smtp_pass
 set SMTP authentication credentials for relay delivery.
 .PP
+.B session_legacy_compat
+controls generation of legacy plaintext session files alongside TSV.
+Values: \fBauto\fR (detect old\-format sessions, enable if found \(em default),
+\fB1\fR (always generate plaintext),
+\fB0\fR (TSV only).
+Default: auto.
+.PP
 See
 .I conf.maldet
 for the full list with descriptions.
@@ -330,6 +347,12 @@ View the most recent scan report:
 .TP
 List all scan reports:
 .B maldet \-e list
+.TP
+Output a scan report as JSON:
+.B maldet \-\-json\-report SCANID
+.TP
+List all reports as JSON:
+.B maldet \-\-json\-report list
 .TP
 Quarantine all hits from a scan:
 .B maldet \-q SCANID

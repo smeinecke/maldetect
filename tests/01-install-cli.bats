@@ -5,7 +5,7 @@ load '/usr/local/lib/bats/bats-assert/load'
 
 LMD_INSTALL="/usr/local/maldetect"
 
-setup() {
+setup_file() {
     source /opt/tests/helpers/reset-lmd.sh
 }
 
@@ -242,15 +242,11 @@ setup() {
     assert_output --partial "requires a directory"
 }
 
-# UAT-003: -v flag shows version
-@test "maldet -v exits 0 and shows version" {
+# UAT-003: version flags
+@test "maldet -v and --version both show version" {
     run maldet -v
     assert_success
     assert_output --partial "2.0.1"
-}
-
-# UAT-003: --version flag shows version
-@test "maldet --version exits 0 and shows version" {
     run maldet --version
     assert_success
     assert_output --partial "2.0.1"

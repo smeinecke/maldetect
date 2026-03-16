@@ -5,7 +5,7 @@ load '/usr/local/lib/bats/bats-assert/load'
 
 LMD_INSTALL="/usr/local/maldetect"
 
-setup() {
+setup_file() {
     source /opt/tests/helpers/reset-lmd.sh
 }
 

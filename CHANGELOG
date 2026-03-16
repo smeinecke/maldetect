@@ -1,7 +1,60 @@
 v2.0.1 | Mar 10 2026:
 
+  -- Changes --
+
+[Fix] JSON list schema: elapsed_seconds integer matches single-report format
+[Fix] view_report list shows TSV sessions when session_legacy_compat=0
+[Fix] view_report renders text on-demand from TSV instead of raw cat
+[Fix] JSON error messages escape scan ID to prevent injection
+[Change] Documentation: --json-report command, session_legacy_compat config,
+      session.tsv files added to man page; README updated with JSON output format,
+      new config variable, CLI reference; ref #473
+[Change] Dead code review: stale gen_report() comment reference updated in
+      lmd_alert.sh; _parse_session_metadata() and _resolve_html_for_session()
+      retained for legacy plaintext session compatibility; ref #473
+[Change] TSV canonical session format: _batch_record_hits() writes 11-field TSV
+      hit records; _scan_finalize_session() replaces gen_report() with TSV header
+      + data pipeline; all scan-pipeline dedup sites updated to TSV field extraction;
+      _batch_quarantine() uses in-place field update instead of grep -vFxf;
+      _lmd_elk_post_hits() reads 11-field TSV with enriched JSON payload;
+      _lmd_parse_hitlist() detects TSV format (with and without header);
+      restore_hitlist/clean_hitlist/quar_hitlist handle both TSV and legacy formats;
+      ref #470
+[Change] Alert pipeline migrated to TSV session format: _genalert_scan() reads
+      TSV directly via _lmd_parse_hitlist for HTML rendering; _genalert_panel()
+      dual-path TSV field parsing with legacy regex fallback; _genalert_digest()
+      writes session.tsv with complete metadata header, renders legacy plaintext
+      via _session_render_legacy_text, posts to ELK from TSV; ref #471
+[Change] Monitor mode migrated to TSV session format: monitor_init() creates
+      session.tsv with partial metadata header using - sentinel for unknown
+      fields; ref #472
+[Change] Render pipeline expanded to 11-field TSV: _lmd_render_entries() detects
+      field count (11-field TSV vs 6-field manifest) and maps hit_type->color from
+      BEGIN registry; _lmd_compute_summary() skips TSV header lines; new per-entry
+      template tokens HIT_HASH, HIT_SIZE, HIT_OWNER, HIT_GROUP, HIT_MODE,
+      HIT_MTIME; ref #472
+[Change] Update vendored tlog_lib.sh and tlog to v2.0.4 (shell alias safety,
+      inline comment standards)
+
   -- New Features --
 
+[New] Test suite for TSV session format (19 tests) and JSON report output
+      (12 tests): TSV helper unit tests, format detection, metadata parsing,
+      legacy compat mode, scan integration, JSON schema validation, CLI tests;
+      ref #473
+[New] JSON report output via --json-report CLI command: _lmd_render_json() pure awk
+      JSON generator from TSV session files (v1.0 schema); _lmd_render_json_list()
+      renders all sessions as JSON array; view_report_json() CLI handler for
+      --json-report [SCANID|list|newest]; graceful degradation for legacy sessions;
+      ref #473
+[New] session_legacy_compat config variable (auto/0/1) controls plaintext session
+      generation alongside TSV; auto-detection caches format in $sessdir/.session_format;
+      _session_legacy_check() detects old-format sessions; _session_render_legacy_text()
+      gated by compat setting; view_report() and _resolve_html_for_session() handle
+      both TSV and plaintext session files; purge() resets detection cache; ref #470
+[New] TSV session helpers: _session_is_tsv (format detection), _session_read_meta
+      (metadata parser), _session_write_header (19-field header writer),
+      _session_resolve (file lookup with legacy fallback); ref #470
 [New] Compound signature (csig) scanning: multi-pattern boolean logic
       (AND/OR/threshold), case-insensitive matching (i:), wide UTF-16LE
       matching (w:), bounded gap wildcards ({N-M}); batch parallel workers;
@@ -80,6 +133,15 @@ v2.0.1 | Mar 10 2026:
 
   -- Bug Fixes --
 
+[Fix] CI: Dockerfile sig restoration step deleted CDN-downloaded signatures
+      because files/sigs/ is not in git; replaced with a build-time assertion
+      that fails fast when CDN is unreachable
+[Fix] CI: 2 UAT tests failed on SHA-NI hardware (GHA runners) because
+      scan_hashtype=auto resolved to sha256; force MD5 mode for MD5-specific
+      test assertions
+[Fix] CI: UAT ignore-by-sig and gensigs-merge tests used payloads that CDN
+      HEX sigs also match; replaced with unique sentinel payloads for
+      CDN-independent test assertions
 [Fix] _count_signatures() always reported 0 CSIG and 0 SHA-256 in sigup
       summary; counted from runtime variables only set during gensigs() at
       scan time — now counts directly from on-disk signature files

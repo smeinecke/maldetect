@@ -49,7 +49,8 @@ teardown_file() {
     echo "${file_md5}:${file_size}:{MD5}uat.sig.md5.test.1" \
         > "$LMD_INSTALL/sigs/custom.md5.dat"
 
-    uat_capture "sig-mgmt" maldet -a "$TEST_DIR"
+    # Force MD5 mode — custom MD5 sig only matches in MD5 scan stage
+    uat_capture "sig-mgmt" maldet -co scan_hashtype=md5 -a "$TEST_DIR"
     [ "$status" -eq 2 ]
     assert_output --partial "malware hits 1"
 }
@@ -80,14 +81,13 @@ teardown_file() {
     rm -rf "$LMD_INSTALL/sess/"*
     : > "$LMD_INSTALL/sigs/custom.md5.dat"
 
-    # Inject a custom HEX sig and scan a matching file
-    echo "6576616c286261736536345f6465636f646528:uat.merge.test.1" \
+    # Use a unique payload that no CDN sig will match — avoids CDN HEX sigs
+    # shadowing the custom sig via dedup (HEX stage skips files already matched)
+    # Hex of "uat_merge_sentinel_marker_": 7561745f6d657267655f73656e74696e656c5f6d61726b65725f
+    echo "7561745f6d657267655f73656e74696e656c5f6d61726b65725f:uat.merge.test.1" \
         > "$LMD_INSTALL/sigs/custom.hex.dat"
 
-    # Suppress builtin sigs that match the same pattern so the custom one shows
-    echo "php.base64.inject" > "$LMD_INSTALL/ignore_sigs"
-
-    printf '<?php eval(base64_decode("test")); ?>' > "$TEST_DIR/merge-test.php"
+    printf 'uat_merge_sentinel_marker_test_payload_pad' > "$TEST_DIR/merge-test.txt"
 
     run maldet -a "$TEST_DIR"
     [ "$status" -eq 2 ]
@@ -100,7 +100,4 @@ teardown_file() {
     uat_capture "sig-mgmt" maldet -e "$scanid"
     assert_success
     assert_output --partial "uat.merge.test"
-
-    # Clean up ignore override
-    : > "$LMD_INSTALL/ignore_sigs"
 }

@@ -376,6 +376,10 @@ else
 				shift
 				dump_report "$1"
 			;;
+			--json-report)
+				shift
+				view_report_json "$1"
+			;;
 			-p|--purge)
 				header
 				purge
@@ -409,7 +413,7 @@ else
 					echo "ERROR: -s/--restore requires a SCANID or file argument"
 					exit 1
 				fi
-				if [ -f "$sessdir/session.hits.$1" ]; then
+				if [ -f "$sessdir/session.tsv.$1" ] || [ -f "$sessdir/session.hits.$1" ]; then
 					restore_hitlist "$1" || exit 1
 				else
 					restore "$1" || exit 1

@@ -5,7 +5,7 @@ load '/usr/local/lib/bats/bats-assert/load'
 
 LMD_INSTALL="/usr/local/maldetect"
 
-setup() {
+setup_file() {
     source /opt/tests/helpers/reset-lmd.sh
 }
 
@@ -16,46 +16,41 @@ _source_compat() {
     set -u
 }
 
-@test "deprecated maxdepth maps to scan_max_depth" {
-    unset scan_max_depth
-    maxdepth=5
-    _source_compat
-    [ "$scan_max_depth" = "5" ]
-}
-
-@test "deprecated quar_clean maps to quarantine_clean" {
-    unset quarantine_clean
-    quar_clean=1
-    _source_compat
-    [ "$quarantine_clean" = "1" ]
-}
-
-@test "deprecated quar_susp maps to quarantine_suspend_user" {
-    unset quarantine_suspend_user
-    quar_susp=1
-    _source_compat
-    [ "$quarantine_suspend_user" = "1" ]
-}
-
-@test "deprecated scan_nice maps to scan_cpunice" {
-    unset scan_cpunice
-    scan_nice=15
-    _source_compat
-    [ "$scan_cpunice" = "15" ]
-}
-
-@test "deprecated inotify_stime maps to inotify_sleep" {
-    unset inotify_sleep
-    inotify_stime=30
-    _source_compat
-    [ "$inotify_sleep" = "30" ]
-}
-
-@test "deprecated inotify_webdir maps to inotify_docroot" {
-    unset inotify_docroot
-    inotify_webdir="public_html"
-    _source_compat
-    [ "$inotify_docroot" = "public_html" ]
+@test "all simple 1:1 deprecated vars migrate correctly" {
+    # Each entry: "old_var new_var test_value"
+    # read -r puts remainder (including spaces) into test_val
+    local mappings=(
+        "maxdepth scan_max_depth 5"
+        "quar_clean quarantine_clean 1"
+        "quar_susp quarantine_suspend_user 1"
+        "scan_nice scan_cpunice 15"
+        "inotify_stime inotify_sleep 30"
+        "inotify_webdir inotify_docroot public_html"
+        "clamav_scan scan_clamscan 1"
+        "suppress_cleanhit email_ignore_clean 1"
+        "minfilesize scan_min_filesize 1024"
+        "maxfilesize scan_max_filesize 2048000"
+        "hexdepth scan_hexdepth 65536"
+        "tmpdir_paths scan_tmpdir_paths /tmp /var/tmp"
+        "scan_hex_workers scan_workers 3"
+        "pubuser_minuid scan_user_access_minuid 500"
+        "import_custsigs_md5_url sig_import_md5_url https://example.com/custom-md5.dat"
+        "import_custsigs_hex_url sig_import_hex_url https://example.com/custom-hex.dat"
+        "import_custsigs_yara_url sig_import_yara_url https://example.com/custom-yara.yar"
+        "import_custsigs_sha256_url sig_import_sha256_url https://example.com/custom-sha256.dat"
+        "import_custsigs_csig_url sig_import_csig_url https://example.com/custom-csig.dat"
+    )
+    local entry old_var new_var test_val
+    for entry in "${mappings[@]}"; do
+        read -r old_var new_var test_val <<< "$entry"
+        unset "$new_var" "$old_var" 2>/dev/null || true
+        eval "$old_var=\"$test_val\""
+        _source_compat
+        [ "${!new_var}" = "$test_val" ] || {
+            echo "FAIL: $old_var=$test_val did not migrate to $new_var (got: ${!new_var:-<unset>})"
+            return 1
+        }
+    done
 }
 
 @test "deprecated hex_fifo_depth migrates to scan_hexdepth via scan_hexfifo" {
@@ -63,20 +58,6 @@ _source_compat() {
     scan_hexfifo_depth=1048576
     _source_compat
     [ "$scan_hexdepth" = "1048576" ]
-}
-
-@test "deprecated clamav_scan maps to scan_clamscan" {
-    unset scan_clamscan
-    clamav_scan=1
-    _source_compat
-    [ "$scan_clamscan" = "1" ]
-}
-
-@test "deprecated suppress_cleanhit maps to email_ignore_clean" {
-    unset email_ignore_clean
-    suppress_cleanhit=1
-    _source_compat
-    [ "$email_ignore_clean" = "1" ]
 }
 
 @test "new variable takes priority over deprecated" {
@@ -95,88 +76,11 @@ _source_compat() {
     [ "$scan_cpunice" = "15" ]
 }
 
-@test "deprecated minfilesize maps to scan_min_filesize" {
-    unset scan_min_filesize
-    minfilesize=1024
-    _source_compat
-    [ "$scan_min_filesize" = "1024" ]
-}
-
-@test "deprecated maxfilesize maps to scan_max_filesize" {
-    unset scan_max_filesize
-    maxfilesize=2048000
-    _source_compat
-    [ "$scan_max_filesize" = "2048000" ]
-}
-
-@test "deprecated hexdepth maps to scan_hexdepth" {
-    unset scan_hexdepth
-    hexdepth=65536
-    _source_compat
-    [ "$scan_hexdepth" = "65536" ]
-}
-
-@test "deprecated tmpdir_paths maps to scan_tmpdir_paths" {
-    unset scan_tmpdir_paths
-    tmpdir_paths="/tmp /var/tmp"
-    _source_compat
-    [ "$scan_tmpdir_paths" = "/tmp /var/tmp" ]
-}
-
-@test "deprecated scan_hex_workers maps to scan_workers" {
-    unset scan_workers
-    scan_hex_workers=3
-    _source_compat
-    [ "$scan_workers" = "3" ]
-}
-
 @test "scan_hex_workers overrides default scan_workers value" {
     scan_workers="0"
     scan_hex_workers=4
     _source_compat
     [ "$scan_workers" = "4" ]
-}
-
-@test "deprecated pubuser_minuid maps to scan_user_access_minuid" {
-    unset scan_user_access_minuid
-    pubuser_minuid=500
-    _source_compat
-    [ "$scan_user_access_minuid" = "500" ]
-}
-
-@test "deprecated import_custsigs_md5_url maps to sig_import_md5_url" {
-    unset sig_import_md5_url
-    import_custsigs_md5_url="https://example.com/custom-md5.dat"
-    _source_compat
-    [ "$sig_import_md5_url" = "https://example.com/custom-md5.dat" ]
-}
-
-@test "deprecated import_custsigs_hex_url maps to sig_import_hex_url" {
-    unset sig_import_hex_url
-    import_custsigs_hex_url="https://example.com/custom-hex.dat"
-    _source_compat
-    [ "$sig_import_hex_url" = "https://example.com/custom-hex.dat" ]
-}
-
-@test "deprecated import_custsigs_yara_url maps to sig_import_yara_url" {
-    unset sig_import_yara_url
-    import_custsigs_yara_url="https://example.com/custom-yara.yar"
-    _source_compat
-    [ "$sig_import_yara_url" = "https://example.com/custom-yara.yar" ]
-}
-
-@test "deprecated import_custsigs_sha256_url maps to sig_import_sha256_url" {
-    unset sig_import_sha256_url
-    import_custsigs_sha256_url="https://example.com/custom-sha256.dat"
-    _source_compat
-    [ "$sig_import_sha256_url" = "https://example.com/custom-sha256.dat" ]
-}
-
-@test "deprecated import_custsigs_csig_url maps to sig_import_csig_url" {
-    unset sig_import_csig_url
-    import_custsigs_csig_url="https://example.com/custom-csig.dat"
-    _source_compat
-    [ "$sig_import_csig_url" = "https://example.com/custom-csig.dat" ]
 }
 
 @test "compat.conf sourced after conf.maldet in maldet entry point" {

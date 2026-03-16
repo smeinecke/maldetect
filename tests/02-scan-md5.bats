@@ -31,7 +31,9 @@ teardown() {
     local scanid
     scanid=$(get_last_scanid)
     [ -n "$scanid" ]
-    [ -f "$LMD_INSTALL/sess/session.$scanid" ]
+    local report
+    report=$(get_session_report_file "$scanid")
+    [ -n "$report" ] && [ -f "$report" ]
 }
 
 @test "scan report lists detected signature name" {
@@ -40,7 +42,7 @@ teardown() {
     local scanid
     scanid=$(get_last_scanid)
     [ -n "$scanid" ]
-    assert_report_contains "$scanid" "EICAR"
+    assert_report_contains "$scanid" "eicar"
 }
 
 @test "exit code is 2 when malware detected" {

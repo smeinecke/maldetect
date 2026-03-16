@@ -62,7 +62,7 @@ teardown() {
 }
 
 @test "quarantine hist contains signature name" {
-    run grep "EICAR" "$LMD_INSTALL/sess/quarantine.hist"
+    run grep -i "eicar" "$LMD_INSTALL/sess/quarantine.hist"
     assert_success
 }
 

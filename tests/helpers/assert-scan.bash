@@ -28,18 +28,34 @@ assert_quarantined() {
 }
 
 # Assert that a scan report contains a pattern
+# Checks TSV session file first, falls back to legacy plaintext.
 # Usage: assert_report_contains SCANID PATTERN
 assert_report_contains() {
     local scanid="$1"
     local pattern="$2"
-    local report="$LMD_INSTALL/sess/session.${scanid}"
-    if [ ! -f "$report" ]; then
-        echo "# Report not found: $report" >&2
+    local report
+    report=$(get_session_report_file "$scanid")
+    if [ -z "$report" ] || [ ! -f "$report" ]; then
+        echo "# Report not found for scanid: $scanid" >&2
         return 1
     fi
-    if ! grep -q "$pattern" "$report"; then
+    if ! grep -qi "$pattern" "$report"; then
         echo "# Pattern '$pattern' not found in report $scanid" >&2
         return 1
+    fi
+}
+
+# Resolve session report file (TSV, legacy plaintext, or legacy hits)
+# Checks session.tsv.$scanid first, then session.$scanid, then session.hits.$scanid
+# Usage: local report; report=$(get_session_report_file "$scanid")
+get_session_report_file() {
+    local _sid="$1"
+    if [ -f "$LMD_INSTALL/sess/session.tsv.${_sid}" ]; then
+        echo "$LMD_INSTALL/sess/session.tsv.${_sid}"
+    elif [ -f "$LMD_INSTALL/sess/session.${_sid}" ]; then
+        echo "$LMD_INSTALL/sess/session.${_sid}"
+    elif [ -f "$LMD_INSTALL/sess/session.hits.${_sid}" ]; then
+        echo "$LMD_INSTALL/sess/session.hits.${_sid}"
     fi
 }
 
@@ -60,6 +76,17 @@ assert_scan_clean() {
         echo "# expected exit code 0 (clean scan), got $status" >&2
         echo "# output: $output" >&2
         return 1
+    fi
+}
+
+# Resolve session data file (TSV or legacy hits) for a scan ID
+# Usage: local hitsfile; hitsfile=$(get_session_hits_file "$scanid")
+get_session_hits_file() {
+    local _sid="$1"
+    if [ -f "$LMD_INSTALL/sess/session.tsv.${_sid}" ]; then
+        echo "$LMD_INSTALL/sess/session.tsv.${_sid}"
+    elif [ -f "$LMD_INSTALL/sess/session.hits.${_sid}" ]; then
+        echo "$LMD_INSTALL/sess/session.hits.${_sid}"
     fi
 }
 

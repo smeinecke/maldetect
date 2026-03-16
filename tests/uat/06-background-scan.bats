@@ -43,7 +43,8 @@ teardown_file() {
     scanid="$(uat_lmd_last_scanid)"
     [ -n "$scanid" ]
 
-    if ! uat_wait_for_file "$LMD_INSTALL/sess/session.hits.$scanid" 15; then
+    if ! uat_wait_for_file "$LMD_INSTALL/sess/session.tsv.$scanid" 15 && \
+       ! uat_wait_for_file "$LMD_INSTALL/sess/session.hits.$scanid" 15; then
         fail "Background scan did not create hits file within 15s"
     fi
 

@@ -84,18 +84,26 @@ teardown_file() {
 # bats test_tags=uat,uat:ignore-system
 @test "UAT: add signature to ignore_sigs" {
     : > "$LMD_INSTALL/ignore_file_ext"
-    # Signature names use format like EICAR.TEST — match the base name
-    echo "EICAR.TEST" >> "$LMD_INSTALL/ignore_sigs"
-    run grep -c "EICAR.TEST" "$LMD_INSTALL/ignore_sigs"
+    # Use a custom sig with a unique payload to avoid CDN sig interference.
+    # CDN sig names vary across releases — testing with a custom sig ensures
+    # the ignore mechanism is verified regardless of CDN content.
+    echo "7561745f69676e6f72655f73656e74696e656c5f:uat.ignore.sentinel.1" \
+        > "$LMD_INSTALL/sigs/custom.hex.dat"
+    echo "uat\\.ignore\\.sentinel" >> "$LMD_INSTALL/ignore_sigs"
+    run grep -c "uat" "$LMD_INSTALL/ignore_sigs"
     assert_success
 }
 
 # bats test_tags=uat,uat:ignore-system
-@test "UAT: EICAR ignored by signature name" {
+@test "UAT: custom sig ignored by signature name" {
     mkdir -p "$TEST_DIR/sig-test"
-    uat_lmd_create_eicar "$TEST_DIR/sig-test"
+    # Unique payload matching the custom sig above (hex of "uat_ignore_sentinel_")
+    printf 'uat_ignore_sentinel_test_payload_pad' > "$TEST_DIR/sig-test/test-ignore.txt"
 
     uat_capture "ignore-sig" maldet -a "$TEST_DIR/sig-test/"
-    # Should be clean because EICAR.TEST signature is ignored
+    # Should be clean because uat.ignore.sentinel is ignored via ignore_sigs
     assert_success
+
+    # Clean up custom sig
+    : > "$LMD_INSTALL/sigs/custom.hex.dat"
 }

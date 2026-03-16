@@ -48,7 +48,8 @@ teardown_file() {
     qcount="$(find "$LMD_INSTALL/quarantine" -type f 2>/dev/null | wc -l)"
     [ "$qcount" -eq 0 ]
 
-    # Session hits and scan data for this scan ID should be gone
+    # Session hits (TSV or legacy) and scan data for this scan ID should be gone
+    [ ! -f "$LMD_INSTALL/sess/session.tsv.$scanid" ]
     [ ! -f "$LMD_INSTALL/sess/session.hits.$scanid" ]
     [ ! -f "$LMD_INSTALL/sess/session.$scanid" ]
 }

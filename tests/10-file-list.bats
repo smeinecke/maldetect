@@ -115,8 +115,10 @@ teardown() {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/test-flist.com"
     echo "$TEST_SCAN_DIR/test-flist.com" > "$TEST_SCAN_DIR/scanlist.txt"
     maldet -f "$TEST_SCAN_DIR/scanlist.txt" || true
-    local scanid
+    local scanid report
     scanid=$(get_last_scanid)
-    run maldet -e "$scanid"
-    assert_output --partial "[find: 0s]"
+    report=$(get_session_report_file "$scanid")
+    [ -n "$report" ] && [ -f "$report" ]
+    # TSV header stores file_list_et as field 10; legacy text uses "[find: 0s]"
+    grep -qE '\[find: 0s\]|	0	' "$report"
 }

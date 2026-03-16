@@ -77,7 +77,8 @@ teardown_file() {
 
     rm -f "$TEST_DIR"/*
     echo "harmless" > "$TEST_DIR/clean.txt"
-    run maldet -a "$TEST_DIR"
+    # Force MD5 mode — .hdb is only created when hashtype != sha256
+    run maldet -co scan_hashtype=md5 -a "$TEST_DIR"
     assert_success
 
     # gensigs should have created symlinks

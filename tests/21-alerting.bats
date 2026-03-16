@@ -216,9 +216,9 @@ run_maldet_with_mocks() {
     maldet -a "$TEST_SCAN_DIR" || true
     local scanid
     scanid=$(get_last_scanid)
-    # No persistent HTML after scan — only text + hits files
+    # No persistent HTML after scan — only text + TSV (or legacy hits) files
     [ ! -f "$LMD_INSTALL/sess/session.${scanid}.html" ]
-    [ -f "$LMD_INSTALL/sess/session.hits.${scanid}" ]
+    [ -f "$LMD_INSTALL/sess/session.tsv.${scanid}" ] || [ -f "$LMD_INSTALL/sess/session.hits.${scanid}" ]
     # Email delivery should succeed — HTML rendered on demand
     run_maldet_with_mocks -e "$scanid" "test@example.com"
     assert_success
@@ -252,7 +252,7 @@ run_maldet_with_mocks() {
     scanid=$(get_last_scanid)
     # Remove both session and hits files to simulate worst-case
     rm -f "$LMD_INSTALL/sess/session.${scanid}"
-    rm -f "$LMD_INSTALL/sess/session.hits.${scanid}"
+    rm -f "$LMD_INSTALL/sess/session.hits.${scanid}" "$LMD_INSTALL/sess/session.tsv.${scanid}"
     # Report for missing session should error, not crash
     run_maldet_with_mocks -e "$scanid" "test@example.com"
     refute_output --partial "No such file or directory"

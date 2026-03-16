@@ -18,7 +18,7 @@ setup() {
         > "$LMD_INSTALL/sigs/custom.hex.dat"
 
     # Suppress builtin sigs that match the same pattern but have no clean script
-    echo "php.base64.inject" > "$LMD_INSTALL/ignore_sigs"
+    printf '%s\n' "php.base64.inject" "php.inject.inject" > "$LMD_INSTALL/ignore_sigs"
 }
 
 teardown() {
