@@ -2,6 +2,42 @@ v2.0.1 | Mar 10 2026:
 
   -- Changes --
 
+[Change] Scan output: gensigs timing, stage listing, hex+csig progress label
+[Change] Merged HEX+CSIG batch scanning into single worker pass; ~17x faster
+         CSIG scanning via set-based rule evaluation instead of per-file grep
+[Change] Subsig deduplication eliminates duplicate grep patterns across CSIG rules
+[Change] Hex extraction happens once per file instead of twice (HEX + CSIG merged)
+[Fix] clamav signature validation: use temp file instead of /dev/null as
+      clamscan scan target — older ClamAV exits 2 on device files
+[Fix] clamav signature validation: remove --quiet, capture stderr and exit
+      code for operator diagnostics
+[Change] clamav_linksigs() log messages: lowercase, single line per failure
+      with exit code, caller-supplied context prefix ({scan} vs {sigup})
+[New] ClamAV signature validation gate: validates sig files via clamscan -d
+      before deploying to ClamAV data directories; prevents malformed
+      databases from breaking ClamAV; issue #467
+[New] sigup_interval config: independent 6-hourly signature update cron job
+      via /etc/cron.d/maldet-sigup; configurable interval (default 6h, 0
+      to disable); flock-serialized with daily cron
+[New] --cron-sigup: internal cron handler for independent sig updates with
+      flock serialization and 0-120s random sleep
+[Change] clamav_linksigs() restructured with stage-validate-deploy pattern;
+      sig files staged in temp dir and validated before deployment to ClamAV
+      data directories; on failure, existing LMD sigs removed from ClamAV path
+[Change] sigup() SIGUSR2 to clamd gated on ClamAV validation success; reload
+      skipped with log message if all paths failed validation
+[Fix] bare rm/cp in clamav_linksigs() replaced with command rm/cp for
+      portable alias bypass
+[Fix] --cron-sigup: removed redundant outer flock that caused self-deadlock
+      with sigup() internal flock on same lock file; sigup() never executed
+[Fix] install.sh: re-evaluate sigup_interval after _import_config() to honor
+      user's sigup_interval=0 on upgrade
+[New] --format text|json|html position-independent flag for report output format
+[New] --mailto ADDRESS position-independent flag to email reports
+[New] Legacy JSON: --json-report and --format json work for legacy plaintext sessions
+[Change] --json-report list includes legacy sessions with "source": "legacy" marker
+[Change] -E/--dump-report suppressed from help; case handler retained for backward compat
+[Fix] Legacy JSON: sanitize bash 4.x {YARA\} artifact in pre-fix session data
 [Fix] JSON list schema: elapsed_seconds integer matches single-report format
 [Fix] view_report list shows TSV sessions when session_legacy_compat=0
 [Fix] view_report renders text on-demand from TSV instead of raw cat

@@ -45,7 +45,7 @@ teardown() {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"
     assert_scan_completed
-    assert_output --partial "signatures loaded"
+    assert_output --partial "signatures ready"
 }
 
 @test "signature files exist and are non-empty" {

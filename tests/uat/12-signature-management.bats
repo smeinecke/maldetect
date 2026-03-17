@@ -65,7 +65,7 @@ teardown_file() {
 
     uat_capture "sig-mgmt" maldet -a "$TEST_DIR"
     [ "$status" -eq 2 ]
-    assert_output --partial "signatures loaded"
+    assert_output --partial "signatures ready"
 }
 
 # bats test_tags=uat,uat:signatures

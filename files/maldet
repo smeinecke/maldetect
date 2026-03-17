@@ -104,6 +104,8 @@ prerun
 # Pre-parse: extract position-independent modifier flags from anywhere in argv
 _all_args=("$@")
 _remaining_args=()
+_report_format=""
+_report_mailto=""
 for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
 	case "${_all_args[$_i]}" in
 		-b|--background)
@@ -143,6 +145,32 @@ for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
 			eout "{scan} set quarantine path: ${_all_args[$_i]}" 1
 			quardir="${_all_args[$_i]}"
 			_qd_override=1
+		;;
+		--format)
+			((_i++))
+			if [ "$_i" -lt "${#_all_args[@]}" ]; then
+				_report_format="${_all_args[$_i]}"
+				case "$_report_format" in
+					text|json|html) ;;
+					*) echo "ERROR: --format requires text, json, or html" >&2; exit 1 ;;
+				esac
+			else
+				echo "ERROR: --format requires a format argument (text, json, html)" >&2
+				exit 1
+			fi
+		;;
+		--mailto)
+			((_i++))
+			if [ "$_i" -lt "${#_all_args[@]}" ]; then
+				_report_mailto="${_all_args[$_i]}"
+				case "$_report_mailto" in
+					*@*) ;;
+					*) echo "ERROR: --mailto requires a valid email address" >&2; exit 1 ;;
+				esac
+			else
+				echo "ERROR: --mailto requires an email address argument" >&2
+				exit 1
+			fi
 		;;
 		*)
 			_remaining_args+=("${_all_args[$_i]}")
@@ -363,7 +391,9 @@ else
 				view
 			;;
 			-e|--report)
-				header
+				if [ -z "${_report_format:-}" ] || [ "$_report_format" = "text" ]; then
+					header
+				fi
 				shift
 				view_report "$1" "$2"
 				# consume optional email argument
@@ -378,7 +408,8 @@ else
 			;;
 			--json-report)
 				shift
-				view_report_json "$1"
+				_report_format="json"
+				view_report "$1"
 			;;
 			-p|--purge)
 				header
@@ -406,6 +437,12 @@ else
                                 fi
                                 sigup
                         ;;
+			--cron-sigup)
+				# Independent cron sig update — silent, serialized via sigup() flock
+				[ -z "${LMD_TEST_MODE:-}" ] && sleep $(( RANDOM % 121 ))
+				sigup
+				exit 0
+			;;
 			-s|--restore)
 				header
 				shift

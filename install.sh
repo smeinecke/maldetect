@@ -77,6 +77,29 @@ _install_cron_service() {
 	pkg_cron_install cron.watchdog /etc/cron.weekly/maldet-watchdog
 	pkg_cron_install cron.d.pub /etc/cron.d/maldet_pub
 
+	# Independent sig update cron (sigup_interval, default 6h)
+	# Source installed conf.maldet to read sigup_interval — conf is already
+	# copied by _install_core() which runs before _install_cron_service().
+	# On upgrade, user's custom value is not yet imported (that happens in
+	# _import_config), so the default 6 is used. User changes to
+	# sigup_interval take effect on next install.sh run.
+	local _sigup_interval=6
+	if [ -f "$inspath/conf.maldet" ]; then
+		_sigup_interval=$(grep -m1 '^sigup_interval=' "$inspath/conf.maldet" \
+			| command sed 's/^sigup_interval="\{0,1\}\([^"]*\)"\{0,1\}/\1/' 2>/dev/null)
+		_sigup_interval="${_sigup_interval:-6}"
+	fi
+	if [ "$_sigup_interval" != "0" ] && [ "$_sigup_interval" -gt 0 ] 2>/dev/null; then
+		pkg_cron_install cron.d.sigup /etc/cron.d/maldet-sigup
+		# Replace default interval with configured value
+		if [ "$_sigup_interval" != "6" ]; then
+			command sed -i "s|\\*/6|\\*/$_sigup_interval|g" /etc/cron.d/maldet-sigup
+		fi
+	else
+		# sigup_interval=0: remove cron file if present (upgrade path)
+		command rm -f /etc/cron.d/maldet-sigup 2>/dev/null
+	fi
+
 	if [ "$(uname -s)" != "FreeBSD" ]; then
 		pkg_detect_os
 		_init_system=$(cat /proc/1/comm 2>/dev/null)
@@ -342,6 +365,17 @@ if [ -d "$inspath" ] && [ -d "files" ]; then
 
 	pkg_section "Importing configuration"
 	_import_config
+
+	# Re-evaluate sigup_interval after config import (user may have set to 0)
+	if [ -f "$inspath/conf.maldet" ]; then
+		_post_sigup_interval=$(grep -m1 '^sigup_interval=' "$inspath/conf.maldet" \
+			| command sed 's/^sigup_interval="\{0,1\}\([^"]*\)"\{0,1\}/\1/' 2>/dev/null)
+		_post_sigup_interval="${_post_sigup_interval:-6}"
+		if [ "$_post_sigup_interval" = "0" ] || ! [ "$_post_sigup_interval" -gt 0 ] 2>/dev/null; then
+			command rm -f /etc/cron.d/maldet-sigup 2>/dev/null  # safe: user disabled sigup
+		fi
+		unset _post_sigup_interval
+	fi
 
 	pkg_section "Updating signatures"
 	"$inspath/maldet" --update 1

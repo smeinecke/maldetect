@@ -192,6 +192,7 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `autoupdate_signatures` | Auto-update signatures daily via cron | `1` |
 | `autoupdate_version` | Auto-update LMD version daily via cron | `1` |
 | `autoupdate_version_hashed` | Verify LMD executable SHA-256 hash against upstream (falls back to MD5) | `1` |
+| `sigup_interval` | Hours between automatic signature update checks via independent cron job (`/etc/cron.d/maldet-sigup`); 0 = disabled | `6` |
 | `cron_prune_days` | Days to retain quarantine/session/temp data | `21` |
 | `cron_daily_scan` | Enable daily automatic scanning via cron | `1` |
 | `scan_days` | Days to look back for modified files in daily cron scans | `1` |
@@ -316,6 +317,8 @@ When `scan_clamscan=1`, LMD selects the best available ClamAV engine in priority
 
 LMD signatures are automatically symlinked to ClamAV data directories by `install.sh`, giving ClamAV access to LMD's MD5 (`rfxn.hdb`), HEX (`rfxn.ndb`), and YARA (`rfxn.yara`) signatures.
 
+**Signature validation gate:** Before deploying updated signatures to ClamAV data directories, LMD validates them via `clamscan -d` against a staging directory. If validation fails, existing LMD signatures are removed from the ClamAV path to prevent malformed databases from breaking ClamAV. The `SIGUSR2` reload signal to `clamd` is only sent when at least one ClamAV data directory passes validation (issue #467).
+
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `scan_clamscan` | Enable ClamAV as scan engine | `1` |
@@ -378,9 +381,10 @@ QUARANTINE & RESTORE:
   -qd PATH                      override quarantine directory for this run
 
 REPORTING:
-  -e, --report [SCANID] [email] view or email scan report
-  -E, --dump-report [SCANID]    dump report to stdout
-  --json-report [SCANID|list]   output scan report as JSON
+  -e, --report [SCANID|list]    view scan report
+  --format text|json|html       set report output format (default: text)
+  --mailto ADDRESS              email report to address
+  --json-report [SCANID|list]   shorthand: --report --format json
   --alert-daily                 generate inotify monitor digest alert
   -l, --log                     view event log
 
@@ -416,23 +420,27 @@ maldet -b -co email_addr=admin@example.com -a /var/www
 maldet -e
 
 # Email a specific report
-maldet -e 050910-1534.21135 admin@example.com
+maldet --mailto admin@example.com -e 050910-1534.21135
 
 # Output scan report as JSON (pipe to jq for formatting)
-maldet --json-report 050910-1534.21135
+maldet --format json -e 050910-1534.21135
 
 # List all reports as JSON
-maldet --json-report list
+maldet --format json -e list
+
+# Shorthand JSON output (equivalent to --format json -e)
+maldet --json-report 050910-1534.21135
 
 # Restore all quarantined files from a scan
 maldet -s 050910-1534.21135
 ```
 
-**JSON Output:** The `--json-report` command outputs structured JSON (v1.0 schema) with
-scanner metadata, scan details (path, times, file counts), per-hit entries with signature
-name, file path, hit type, owner, permissions, and quarantine status, plus a summary with
-per-type breakdowns. Requires TSV session format (default in v2.0.1); returns a JSON
-error object for legacy plaintext sessions.
+**JSON Output:** Use `--format json -e` or `--json-report` to output structured JSON
+(v1.0 schema) with scanner metadata, scan details (path, times, file counts), per-hit
+entries with signature name, file path, hit type, owner, permissions, and quarantine
+status, plus a summary with per-type breakdowns. Both TSV and legacy plaintext sessions
+are supported; legacy sessions include `"source": "legacy"` and render unavailable
+enriched fields (hash, size, owner, etc.) as `null`.
 
 ---
 

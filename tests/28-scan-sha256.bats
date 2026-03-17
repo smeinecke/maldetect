@@ -73,7 +73,7 @@ teardown() {
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"
     assert_success
-    assert_output --partial "hash engine:"
+    assert_output --partial "hashing"
 }
 
 @test "signature count includes SHA-256" {

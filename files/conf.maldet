@@ -120,6 +120,13 @@ discord_webhook_url=""
 # [0 = disabled, 1 = enabled]
 autoupdate_signatures="1"
 
+# The interval in hours for automatic signature update checks via
+# the independent cron job (/etc/cron.d/maldet-sigup). This runs
+# separately from cron.daily and is idempotent with maldet -u.
+# Set to 0 to disable the independent cron job.
+# [ default = 6, 0 = disabled, valid range 1-24 ]
+sigup_interval="6"
+
 # This controls the daily automatic updates of the LMD installation.
 # The installation update process preserves all configuration options
 # along with custom signature and cleaner files. It is recommended that

@@ -206,3 +206,269 @@ _source_lmd_stack_clamav() {
     rm -f "$mock_results" "$scan_session_file" "$hits_history"
     rm -rf "$colon_dir"
 }
+
+# --- ClamAV signature validation gate ---
+
+@test "clamav_validate_sigs: valid hdb passes validation" {
+    _source_lmd_stack_clamav
+    set -e  # restore errexit after sourcing (set +eu in _source_lmd_stack_clamav)
+    # Create mock clamscan that succeeds (simulates valid database)
+    local mockbin
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+    chmod +x "$mockbin/clamscan"
+    local staging
+    staging=$(mktemp -d)
+    echo "44d88612fea8a8f36de82e1278abb02f:68:EICAR-Test" > "$staging/rfxn.hdb"
+    PATH="$mockbin" run _clamav_validate_sigs "$staging"
+    rm -rf "$staging" "$mockbin"
+    assert_success
+}
+
+@test "clamav_validate_sigs: malformed hdb fails validation (issue 467)" {
+    _source_lmd_stack_clamav
+    set -e  # restore errexit after sourcing
+    # Create mock clamscan that fails (simulates malformed database rejection)
+    local mockbin
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+echo "LibClamAV Error: Malformed database" >&2
+exit 2
+MOCK
+    chmod +x "$mockbin/clamscan"
+    local staging
+    staging=$(mktemp -d)
+    echo "/536f24111b28ff9febcdaef4ceb47adb:9385:{MD5}bin.downloader.nemucod" > "$staging/rfxn.hdb"
+    PATH="$mockbin" run _clamav_validate_sigs "$staging"
+    rm -rf "$staging" "$mockbin"
+    assert_failure
+}
+
+@test "clamav_validate_sigs: missing clamscan binary degrades to pass" {
+    _source_lmd_stack_clamav
+    set -e  # restore errexit after sourcing
+    # Override PATH to hide clamscan; assumes no cPanel installation
+    # (Docker test containers do not have /usr/local/cpanel/)
+    local staging
+    staging=$(mktemp -d)
+    echo "/INVALID:0:bad" > "$staging/rfxn.hdb"
+    PATH="/nonexistent" run _clamav_validate_sigs "$staging"
+    rm -rf "$staging"
+    assert_success
+}
+
+@test "clamav_validate_sigs: exit code captured in _clamav_validate_rc" {
+    _source_lmd_stack_clamav
+    set -e
+    local mockbin
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+echo "LibClamAV Error: Malformed database" >&2
+exit 2
+MOCK
+    chmod +x "$mockbin/clamscan"
+    local staging
+    staging=$(mktemp -d)
+    echo "/INVALID:0:bad" > "$staging/rfxn.hdb"
+    PATH="$mockbin" run _clamav_validate_sigs "$staging"
+    rm -rf "$staging" "$mockbin"
+    assert_failure
+    # Verify exit code was captured (global, not local to run subshell)
+    # Re-run outside of `run` to check the global
+    _source_lmd_stack_clamav
+    set -e
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+echo "LibClamAV Error: Malformed database" >&2
+exit 2
+MOCK
+    chmod +x "$mockbin/clamscan"
+    staging=$(mktemp -d)
+    echo "/INVALID:0:bad" > "$staging/rfxn.hdb"
+    PATH="$mockbin" _clamav_validate_sigs "$staging" || true
+    rm -rf "$staging" "$mockbin"
+    [ "$_clamav_validate_rc" = "2" ]
+}
+
+# --- ClamAV linksigs validation gate ---
+
+@test "clamav_linksigs: valid sigs are copied to ClamAV path (validation gate)" {
+    _source_lmd_stack_clamav
+    set -e  # restore errexit after sourcing
+    # Create mock clamscan that succeeds (simulates valid database)
+    local mockbin
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+    chmod +x "$mockbin/clamscan"
+    export PATH="$mockbin:$PATH"
+    local cpath
+    cpath=$(mktemp -d)
+    # Seed sigdir with valid files
+    echo "44d88612fea8a8f36de82e1278abb02f:68:EICAR-Test" > "$sigdir/rfxn.hdb"
+    echo "EICAR:0:*:4549434152" > "$sigdir/rfxn.ndb"
+    touch "$sigdir/rfxn.yara"
+    _effective_hashtype="md5"
+    run clamav_linksigs "$cpath"
+    assert_success
+    [ -f "$cpath/rfxn.hdb" ]
+    [ -f "$cpath/rfxn.ndb" ]
+    rm -rf "$cpath" "$mockbin"
+}
+
+@test "clamav_linksigs: malformed sigs are NOT copied and existing removed" {
+    _source_lmd_stack_clamav
+    set -e  # restore errexit after sourcing
+    # Create mock clamscan that fails (simulates malformed database rejection)
+    local mockbin
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+echo "LibClamAV Error: Malformed database" >&2
+exit 2
+MOCK
+    chmod +x "$mockbin/clamscan"
+    export PATH="$mockbin:$PATH"
+    local cpath
+    cpath=$(mktemp -d)
+    # Pre-plant an old rfxn.hdb in the ClamAV path (simulates existing deployment)
+    echo "valid_old_content" > "$cpath/rfxn.hdb"
+    # Seed sigdir with malformed file (issue #467)
+    echo "/BADHASH:9385:{MD5}bad.sig" > "$sigdir/rfxn.hdb"
+    echo "EICAR:0:*:4549434152" > "$sigdir/rfxn.ndb"
+    touch "$sigdir/rfxn.yara"
+    _effective_hashtype="md5"
+    run clamav_linksigs "$cpath"
+    assert_failure
+    # Old rfxn.hdb must have been removed to protect ClamAV
+    [ ! -f "$cpath/rfxn.hdb" ]
+    rm -rf "$cpath" "$mockbin"
+}
+
+@test "clamav_linksigs: failure log message is lowercase with exit code" {
+    _source_lmd_stack_clamav
+    set -e
+    local mockbin
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+echo "LibClamAV Error: Malformed database" >&2
+exit 2
+MOCK
+    chmod +x "$mockbin/clamscan"
+    export PATH="$mockbin:$PATH"
+    local cpath
+    cpath=$(mktemp -d)
+    echo "valid_old_content" > "$cpath/rfxn.hdb"
+    echo "/BADHASH:9385:{MD5}bad.sig" > "$sigdir/rfxn.hdb"
+    echo "EICAR:0:*:4549434152" > "$sigdir/rfxn.ndb"
+    touch "$sigdir/rfxn.yara"
+    _effective_hashtype="md5"
+    # Capture eout output by overriding it
+    local _eout_log
+    _eout_log=$(mktemp)
+    eval 'eout() { echo "$1" >> "'"$_eout_log"'"; }'
+    clamav_linksigs "$cpath" "scan" || true
+    # Verify single line, lowercase, includes rc and path
+    local _msg
+    _msg=$(cat "$_eout_log")
+    rm -f "$_eout_log"
+    rm -rf "$cpath" "$mockbin"
+    # Must contain lowercase "clamav signature validation failed"
+    echo "$_msg" | grep -q 'clamav signature validation failed'
+    # Must contain the exit code
+    echo "$_msg" | grep -q 'rc=2'
+    # Must contain the context tag {scan}
+    echo "$_msg" | grep -q '{scan}'
+    # Must NOT contain uppercase "ClamAV" or "FAILED" or "LMD"
+    ! echo "$_msg" | grep -q 'ClamAV'
+    ! echo "$_msg" | grep -q 'FAILED'
+    ! echo "$_msg" | grep -q 'LMD signatures'
+}
+
+# --- YARA rule validation in ClamAV path ---
+
+@test "clamav_validate_sigs: malformed YARA rule fails validation" {
+    _source_lmd_stack_clamav
+    set -e
+    # Mock clamscan that fails when staging dir contains a .yara file
+    # (simulates ClamAV rejecting malformed YARA syntax)
+    local mockbin
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+echo "LibClamAV Error: Can't parse YARA rule at line 1" >&2
+exit 2
+MOCK
+    chmod +x "$mockbin/clamscan"
+    local staging
+    staging=$(mktemp -d)
+    # Broken YARA: unclosed rule block
+    echo 'rule broken_rule {' > "$staging/rfxn.yara"
+    PATH="$mockbin" run _clamav_validate_sigs "$staging"
+    rm -rf "$staging" "$mockbin"
+    assert_failure
+}
+
+@test "clamav_linksigs: malformed YARA blocks deployment and removes existing" {
+    _source_lmd_stack_clamav
+    set -e
+    # Mock clamscan that fails (simulates ClamAV rejecting YARA syntax)
+    local mockbin
+    mockbin=$(mktemp -d)
+    cat > "$mockbin/clamscan" << 'MOCK'
+#!/bin/bash
+echo "LibClamAV Error: Can't parse YARA rule at line 1" >&2
+exit 2
+MOCK
+    chmod +x "$mockbin/clamscan"
+    export PATH="$mockbin:$PATH"
+    local cpath
+    cpath=$(mktemp -d)
+    # Pre-plant existing LMD sigs in ClamAV path (simulates prior deployment)
+    echo "valid_hdb" > "$cpath/rfxn.hdb"
+    echo "valid_ndb" > "$cpath/rfxn.ndb"
+    echo "rule old_rule { condition: true }" > "$cpath/rfxn.yara"
+    # Seed sigdir with valid hash sigs but broken YARA
+    echo "44d88612fea8a8f36de82e1278abb02f:68:EICAR-Test" > "$sigdir/rfxn.hdb"
+    echo "EICAR:0:*:4549434152" > "$sigdir/rfxn.ndb"
+    echo 'rule broken_rule {' > "$sigdir/rfxn.yara"
+    _effective_hashtype="md5"
+    run clamav_linksigs "$cpath"
+    assert_failure
+    # All existing LMD sigs must be removed to protect ClamAV
+    [ ! -f "$cpath/rfxn.hdb" ]
+    [ ! -f "$cpath/rfxn.ndb" ]
+    [ ! -f "$cpath/rfxn.yara" ]
+    rm -rf "$cpath" "$mockbin"
+}
+
+@test "clamav_validate_sigs: real clamscan rejects malformed YARA (integration)" {
+    # Integration test: uses real clamscan binary — skip if unavailable
+    local real_clamscan=""
+    if [ -f "/usr/local/cpanel/3rdparty/bin/clamscan" ]; then
+        real_clamscan="/usr/local/cpanel/3rdparty/bin/clamscan"
+    else
+        real_clamscan=$(command -v clamscan 2>/dev/null) || true
+    fi
+    if [ -z "$real_clamscan" ]; then
+        skip "clamscan not available in this environment"
+    fi
+    _source_lmd_stack_clamav
+    set -e
+    local staging
+    staging=$(mktemp -d)
+    # Malformed YARA: unclosed rule block
+    echo 'rule broken_rule {' > "$staging/rfxn.yara"
+    run _clamav_validate_sigs "$staging"
+    rm -rf "$staging"
+    assert_failure
+}

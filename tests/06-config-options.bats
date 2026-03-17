@@ -71,7 +71,7 @@ teardown() {
     for val in auto md5 sha256 both; do
         run maldet -co scan_hashtype=$val -a "$TEST_SCAN_DIR"
         assert_success
-        assert_output --partial "hash engine:"
+        assert_output --partial "hashing"
     done
 }
 
@@ -83,5 +83,5 @@ teardown() {
     run maldet -co scan_hashtype=sha256 -a "$TEST_SCAN_DIR"
     assert_success
     assert_output --partial "sha256sum not found"
-    assert_output --partial "hash engine: md5"
+    assert_output --partial "md5 hashing"
 }

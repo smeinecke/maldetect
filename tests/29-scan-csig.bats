@@ -306,3 +306,214 @@ teardown() {
     assert_scan_completed
     assert_output --partial "malware hits 1"
 }
+
+# Helper to source the LMD function stack for direct function testing
+_source_lmd_stack() {
+    set +eu
+    source "$LMD_INSTALL/internals/internals.conf"
+    source "$LMD_INSTALL/conf.maldet"
+    source "$LMD_INSTALL/internals/functions"
+}
+
+# --- Test 25: Batch compilation produces SID-referenced files ---
+@test "csig: batch compilation produces literals/wildcards/universals files" {
+    _source_lmd_stack
+    local runtime_csig_compiled runtime_csig_prefixes
+    local runtime_csig_batch_compiled runtime_csig_literals
+    local runtime_csig_wildcards runtime_csig_universals
+    runtime_csig_compiled=$(mktemp)
+    runtime_csig_prefixes=$(mktemp)
+    runtime_csig_batch_compiled=$(mktemp)
+    runtime_csig_literals=$(mktemp)
+    runtime_csig_wildcards=$(mktemp)
+    runtime_csig_universals=$(mktemp)
+
+    # Create a csig source with one literal-only AND rule
+    local csig_src
+    csig_src=$(mktemp)
+    echo "${HEX_ALPHA}||${HEX_BRAVO}:{CSIG}test.batch.and.1" > "$csig_src"
+    _csig_compile_rules "$csig_src"
+
+    # Old format file must exist and have content
+    [ -s "$runtime_csig_compiled" ]
+    # New batch files must exist
+    [ -s "$runtime_csig_batch_compiled" ]
+    [ -s "$runtime_csig_literals" ]
+    # Batch compiled must have SID-referenced format (no ERE metacharacters in SPEC field)
+    local spec_field
+    spec_field=$(cut -f4 "$runtime_csig_batch_compiled")
+    # Should contain comma-separated SIDs (digits, commas, plus signs, or:)
+    [[ "$spec_field" =~ ^[0-9,+or:]+$ ]]
+
+    rm -f "$csig_src" "$runtime_csig_compiled" "$runtime_csig_prefixes" \
+        "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+        "$runtime_csig_wildcards" "$runtime_csig_universals"
+}
+
+# --- Test 26: Subsig dedup — shared pattern gets one SID ---
+@test "csig: shared subsig across rules gets single SID in literals" {
+    _source_lmd_stack
+    local runtime_csig_compiled runtime_csig_prefixes
+    local runtime_csig_batch_compiled runtime_csig_literals
+    local runtime_csig_wildcards runtime_csig_universals
+    runtime_csig_compiled=$(mktemp)
+    runtime_csig_prefixes=$(mktemp)
+    runtime_csig_batch_compiled=$(mktemp)
+    runtime_csig_literals=$(mktemp)
+    runtime_csig_wildcards=$(mktemp)
+    runtime_csig_universals=$(mktemp)
+
+    # Two rules sharing HEX_ALPHA as a subsig
+    local csig_src
+    csig_src=$(mktemp)
+    printf '%s\n' \
+        "${HEX_ALPHA}:{CSIG}test.dedup.rule1" \
+        "${HEX_ALPHA}||${HEX_BRAVO}:{CSIG}test.dedup.rule2" \
+        > "$csig_src"
+    _csig_compile_rules "$csig_src"
+
+    # HEX_ALPHA pattern should appear exactly once in literals file
+    local alpha_count
+    alpha_count=$(grep -cF "${HEX_ALPHA}" "$runtime_csig_literals" || echo 0)
+    [ "$alpha_count" -eq 1 ]
+
+    # Both rules should exist in batch compiled
+    grep -q "test.dedup.rule1" "$runtime_csig_batch_compiled"
+    grep -q "test.dedup.rule2" "$runtime_csig_batch_compiled"
+
+    rm -f "$csig_src" "$runtime_csig_compiled" "$runtime_csig_prefixes" \
+        "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+        "$runtime_csig_wildcards" "$runtime_csig_universals"
+}
+
+# --- Test 27: Wildcard subsig classified correctly ---
+@test "csig: wildcard subsig goes to wildcards file, not literals" {
+    _source_lmd_stack
+    local runtime_csig_compiled runtime_csig_prefixes
+    local runtime_csig_batch_compiled runtime_csig_literals
+    local runtime_csig_wildcards runtime_csig_universals
+    runtime_csig_compiled=$(mktemp)
+    runtime_csig_prefixes=$(mktemp)
+    runtime_csig_batch_compiled=$(mktemp)
+    runtime_csig_literals=$(mktemp)
+    runtime_csig_wildcards=$(mktemp)
+    runtime_csig_universals=$(mktemp)
+
+    # Rule with a bounded gap wildcard: CSIG_ {3-20} ALPHA
+    local csig_src
+    csig_src=$(mktemp)
+    echo "435349475f{3-20}414c504841:{CSIG}test.wc.1" > "$csig_src"
+    _csig_compile_rules "$csig_src"
+
+    # Wildcards file should have content (the compiled ERE)
+    [ -s "$runtime_csig_wildcards" ]
+    # Literals file should be empty (the pattern is a wildcard)
+    [ ! -s "$runtime_csig_literals" ]
+
+    rm -f "$csig_src" "$runtime_csig_compiled" "$runtime_csig_prefixes" \
+        "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+        "$runtime_csig_wildcards" "$runtime_csig_universals"
+}
+
+# --- Test 28: HEX hit suppresses CSIG on same file (merged worker) ---
+@test "csig: HEX hit on file suppresses CSIG detection for same file" {
+    # Create a file that matches BOTH a HEX sig and a CSIG sig
+    local test_file="$TEST_SCAN_DIR/dual-hit.php"
+    cp "$SAMPLES_DIR/test-csig-single.php" "$test_file"
+
+    # HEX sig matching the CSIG_UNIQUE_MARKER_SINGLE pattern
+    echo "${HEX_SINGLE}:{HEX}test.hex.single.1" > "$LMD_INSTALL/sigs/custom.hex.dat"
+    # CSIG sig matching the same pattern
+    echo "${HEX_SINGLE}:{CSIG}test.csig.single.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+
+    # Should be reported as HEX hit, not CSIG
+    local scanid
+    scanid=$(get_last_scanid)
+    local hitsfile; hitsfile=$(get_session_hits_file "$scanid")
+    run grep "{HEX}" "$hitsfile"
+    assert_success
+    run grep "{CSIG}" "$hitsfile"
+    assert_failure
+}
+
+# --- Test 29: Multi-file batch: mixed HEX and CSIG hits ---
+@test "csig: multi-file batch produces both HEX and CSIG hits" {
+    # File 1: matches CSIG only
+    local test_file_csig="$TEST_SCAN_DIR/csig-target.php"
+    cp "$SAMPLES_DIR/test-csig-single.php" "$test_file_csig"
+
+    # File 2: matches HEX only (unique content)
+    local hex_marker="4845585f554e495155455f4d41524b4552"  # HEX_UNIQUE_MARKER
+    local test_file_hex="$TEST_SCAN_DIR/hex-target.php"
+    printf '<?php // HEX_UNIQUE_MARKER\n' > "$test_file_hex"
+
+    echo "${hex_marker}:{HEX}test.hex.marker.1" > "$LMD_INSTALL/sigs/custom.hex.dat"
+    echo "${HEX_SINGLE}:{CSIG}test.csig.single.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 2"
+
+    local scanid
+    scanid=$(get_last_scanid)
+    local hitsfile; hitsfile=$(get_session_hits_file "$scanid")
+    run grep "{HEX}" "$hitsfile"
+    assert_success
+    run grep "{CSIG}" "$hitsfile"
+    assert_success
+}
+
+# --- Test 30: scan_csig=0 with merged worker still detects HEX ---
+@test "csig: scan_csig=0 still detects HEX patterns in merged worker" {
+    local test_file="$TEST_SCAN_DIR/hex-only.php"
+    cp "$SAMPLES_DIR/test-csig-single.php" "$test_file"
+
+    # Custom HEX sig that matches the csig single marker
+    echo "${HEX_SINGLE}:{HEX}test.hex.only.1" > "$LMD_INSTALL/sigs/custom.hex.dat"
+    # CSIG sig that would also match — but csig is disabled
+    echo "${HEX_SINGLE}:{CSIG}test.csig.disabled.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+
+    run maldet -co scan_csig=0 -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+
+    local scanid
+    scanid=$(get_last_scanid)
+    local hitsfile; hitsfile=$(get_session_hits_file "$scanid")
+    run grep "{HEX}" "$hitsfile"
+    assert_success
+}
+
+# --- Test 31: CSIG-only mode — no HEX sigs, only CSIG rules (edge case 2) ---
+@test "csig: CSIG detection works when no HEX signatures exist" {
+    # Clear all hex sigs so only CSIG rules are active
+    > "$LMD_INSTALL/sigs/hex.dat"
+    > "$LMD_INSTALL/sigs/custom.hex.dat"
+    echo "${HEX_SINGLE}:{CSIG}test.csig.only.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+    cp "$SAMPLES_DIR/test-csig-single.php" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+    local scanid
+    scanid=$(get_last_scanid)
+    local hitsfile; hitsfile=$(get_session_hits_file "$scanid")
+    run grep "{CSIG}" "$hitsfile"
+    assert_success
+}
+
+# --- Test 32: Universal subsig in OR group counts as match (edge case 4) ---
+@test "csig: universal subsig (short pattern) satisfies OR threshold" {
+    # OR rule: threshold 1 out of (CHARLIE + short_pattern)
+    # File has neither CHARLIE, but short_pattern (2 hex chars = 1 byte) is universal
+    # Universal subsigs always match → threshold met → hit
+    # "aa" is 2 hex chars (1 byte) — classified as universal (< 8 chars)
+    echo "(${HEX_CHARLIE}||aa);1:{CSIG}test.csig.uni.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+    cp "$SAMPLES_DIR/test-csig-single.php" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+}

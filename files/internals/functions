@@ -463,7 +463,7 @@ _safe_source_conf() {
 	_ssc_allowed_pat="${_ssc_allowed_pat}|slack_alert|slack_subj|slack_token|slack_channels"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|telegram_alert|telegram_file_caption|telegram_bot_token|telegram_channel_id"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|discord_alert|discord_webhook_url"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|autoupdate_signatures|autoupdate_version|autoupdate_version_hashed"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|autoupdate_signatures|autoupdate_version|autoupdate_version_hashed|sigup_interval"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|cron_prune_days|cron_daily_scan|scan_days"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|import_config_url|import_config_expire"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|sig_import_md5_url|sig_import_hex_url|sig_import_yara_url|sig_import_sha256_url|sig_import_csig_url"
@@ -562,30 +562,96 @@ import_conf() {
 	fi
 }
 
+# _clamav_validate_sigs staging_dir — verify ClamAV can load sig files
+# Runs clamscan -d against staging dir to detect malformed databases before
+# deployment to ClamAV data directories. Returns 0 on pass or if clamscan
+# binary is unavailable (degrade to current behavior). Returns 1 on failure.
+# Sets _clamav_validate_err with clamscan stderr on failure.
+# Sets _clamav_validate_rc with clamscan exit code on failure.
+# shellcheck disable=SC2034
+_clamav_validate_sigs() {
+	local _staging="$1"
+	local _clamscan_bin=""
+	_clamav_validate_err=""
+	_clamav_validate_rc=""
+	# Self-contained binary discovery — does not depend on clamselector()
+	if [ -f "/usr/local/cpanel/3rdparty/bin/clamscan" ]; then
+		_clamscan_bin="/usr/local/cpanel/3rdparty/bin/clamscan"
+	else
+		_clamscan_bin=$(command -v clamscan 2>/dev/null) # may be empty if clamscan not installed
+	fi
+	if [ -z "$_clamscan_bin" ]; then
+		# No clamscan available — skip validation, degrade to current behavior
+		return 0
+	fi
+	# Use a real temp file as scan target — /dev/null causes exit 2 on some
+	# ClamAV versions that reject device files ("Not supported file type")
+	local _scan_target
+	_scan_target=$(mktemp "$tmpdir/.clamval_target.XXXXXX")
+	# Test database loading: -d loads only from staging dir
+	# No --quiet: we need the error output for diagnostics
+	_clamav_validate_err=$("$_clamscan_bin" -d "$_staging" --no-summary "$_scan_target" 2>&1)
+	_clamav_validate_rc=$?
+	command rm -f "$_scan_target"
+	if [ "$_clamav_validate_rc" -ne 0 ]; then
+		return 1
+	fi
+	return 0
+}
+
 clamav_linksigs() {
 	local cpath="$1"
+	local _log_ctx="${2:-sigup}"  # caller passes "scan" or "sigup"
 	if [ -d "$cpath" ]; then
-		rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2> /dev/null
+		local _staging
+		_staging=$(mktemp -d "$tmpdir/.clamval.XXXXXX")
+		# Stage sig files into temp dir (same conditional logic as before)
 		# HEX (.ndb) and YARA always seeded regardless of hash mode
-		cp -f "$sigdir"/rfxn.{ndb,yara} "$cpath"/ 2> /dev/null
+		command cp -f "$sigdir"/rfxn.ndb "$_staging"/ 2>/dev/null
+		command cp -f "$sigdir"/rfxn.yara "$_staging"/ 2>/dev/null
 		# MD5 hash sigs (.hdb) — only when effective hashtype includes md5
 		if [ "$_effective_hashtype" != "sha256" ]; then
-			cp -f "$sigdir/rfxn.hdb" "$cpath"/ 2> /dev/null
+			command cp -f "$sigdir/rfxn.hdb" "$_staging"/ 2>/dev/null
 		fi
 		# SHA-256 hash sigs (.hsb) — only when effective hashtype includes sha256
 		# and ClamAV >= 0.97 (avoids "Malformed database" on CentOS 6)
 		if [ "$_effective_hashtype" != "md5" ] && [ -n "$_clamav_supports_hsb" ] \
 		   && [ -f "$sigdir/rfxn.hsb" ] && [ -s "$sigdir/rfxn.hsb" ]; then
-			command cp -f "$sigdir/rfxn.hsb" "$cpath"/ 2> /dev/null
+			command cp -f "$sigdir/rfxn.hsb" "$_staging"/ 2>/dev/null
 		fi
-		rm -f "$cpath"/lmd.user.* 2> /dev/null
-		[ -s "$sigdir/lmd.user.ndb" ] && command cp -f "$sigdir/lmd.user.ndb" "$cpath"/ 2> /dev/null
+		# User-supplied sigs (only if non-empty)
+		[ -s "$sigdir/lmd.user.ndb" ] && command cp -f "$sigdir/lmd.user.ndb" "$_staging"/ 2>/dev/null
 		if [ "$_effective_hashtype" != "sha256" ] && [ -s "$sigdir/lmd.user.hdb" ]; then
-			command cp -f "$sigdir/lmd.user.hdb" "$cpath"/ 2> /dev/null
+			command cp -f "$sigdir/lmd.user.hdb" "$_staging"/ 2>/dev/null
 		fi
 		if [ "$_effective_hashtype" != "md5" ] && [ -n "$_clamav_supports_hsb" ] \
 		   && [ -s "$sigdir/lmd.user.hsb" ]; then
-			command cp -f "$sigdir/lmd.user.hsb" "$cpath"/ 2> /dev/null
+			command cp -f "$sigdir/lmd.user.hsb" "$_staging"/ 2>/dev/null
+		fi
+		# Validate staged sigs before deploying to ClamAV path
+		if _clamav_validate_sigs "$_staging"; then
+			# Validation passed — deploy to ClamAV path
+			command rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null
+			command rm -f "$cpath"/lmd.user.* 2>/dev/null
+			command cp -f "$_staging"/* "$cpath"/ 2>/dev/null
+			command rm -rf "$_staging"
+			return 0
+		else
+			# Validation failed — protect ClamAV by removing LMD sigs
+			command rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null
+			command rm -f "$cpath"/lmd.user.* 2>/dev/null
+			local _err_detail=""
+			if [ -n "$_clamav_validate_err" ]; then
+				# First non-empty line of clamscan output
+				_err_detail=$(echo "$_clamav_validate_err" | grep -m1 '.')
+			fi
+			if [ -n "$_err_detail" ]; then
+				eout "{$_log_ctx} clamav signature validation failed for $cpath (rc=$_clamav_validate_rc): $_err_detail" 1
+			else
+				eout "{$_log_ctx} clamav signature validation failed for $cpath (rc=$_clamav_validate_rc)" 1
+			fi
+			command rm -rf "$_staging"
+			return 1
 		fi
 	fi
 }
@@ -618,11 +684,12 @@ usage: maldet [OPTION] [ARGUMENT]
     -s|--restore FILE|SCANID    restore quarantined file(s)
 
   reporting:
-    -e|--report [SCANID] [email]  view scan report
-    -E|--dump-report [SCANID]   dump report to stdout
-    --json-report [SCANID|list] output scan report as JSON
-    --alert-daily               generate inotify monitor digest alert
-    -l|--log                    view event log
+    -e|--report [SCANID|list]     view scan report
+    --format text|json|html       set report output format (default: text)
+    --mailto ADDRESS              email report to address
+    --json-report [SCANID|list]   shorthand: --report --format json
+    --alert-daily                 generate inotify monitor digest alert
+    -l|--log                      view event log
 
   updates:
     -u|--update-sigs [--force]  update malware signatures
@@ -722,21 +789,31 @@ QUARANTINE & RESTORE:
        e.g: maldet -q 050910-1534.21135 -qd /data/quarantine
 
 REPORTING:
-    -e, --report [SCANID] [email]
-       View scan report of most recent scan or of a specific SCANID;
-       optionally e-mail the report to a supplied address
+    -e, --report [SCANID|list]
+       View scan report of most recent scan or of a specific SCANID.
+       Use "list" to show all reports. Combine with --format and --mailto.
        e.g: maldet --report
        e.g: maldet --report list
        e.g: maldet --report 050910-1534.21135
-       e.g: maldet --report 050910-1534.21135 user@domain.com
+       e.g: maldet --format json -e 050910-1534.21135
+       e.g: maldet --mailto admin@example.com -e 050910-1534.21135
 
-    -E, --dump-report [SCANID]
-       Dump scan report to stdout (default: most recent scan)
-       e.g: maldet --dump-report 050910-1534.21135
+    --format text|json|html
+       Set report output format for -e/--report (default: text).
+       May appear anywhere in the command line.
+       e.g: maldet --format json -e list
+       e.g: maldet -e 050910-1534.21135 --format html
+
+    --mailto ADDRESS
+       Email the report to the specified address instead of stdout.
+       May appear anywhere in the command line.
+       e.g: maldet --mailto admin@example.com -e 050910-1534.21135
+       e.g: maldet --format json --mailto admin@example.com -e newest
 
     --json-report [SCANID|list]
-       Output scan report as structured JSON (v1.0 schema). Requires TSV
-       session format; returns JSON error for legacy sessions.
+       Shorthand for --report --format json. Output scan report as
+       structured JSON (v1.0 schema). Supports both TSV and legacy
+       plaintext sessions (legacy sessions include "source": "legacy").
        Use "list" to output all session reports as a JSON array.
        e.g: maldet --json-report
        e.g: maldet --json-report 050910-1534.21135
@@ -1345,6 +1422,7 @@ _parse_session_metadata() {
 			"TOTAL FILES")   tot_files="$_val" ;;
 			"TOTAL HITS")    tot_hits="$_val" ;;
 			"TOTAL CLEANED") tot_cl="$_val" ;;
+		"HOST")          _hostname="$_val" ;;
 		esac
 	done < "$_sess_file"
 }
@@ -1397,7 +1475,13 @@ _resolve_html_for_session() {
 
 view_report() {
 	local rid="$1"
+
+	# --- LIST MODE ---
 	if [ "$rid" == "list" ]; then
+		if [ "${_report_format:-}" = "json" ]; then
+			_lmd_render_json_list
+			exit 0
+		fi
 		tmpf=$(mktemp "$tmpdir/.areps.XXXXXX")
 		local _seen_ids=""
 		# Pass 1: TSV session files (preferred format)
@@ -1451,7 +1535,8 @@ view_report() {
 			exit 1
 		fi
 	fi
-	# Resolve "newest" or empty rid to the most recent scan ID
+
+	# --- RESOLVE RID (newest/empty) ---
 	if [ "$rid" == "newest" ] || [ "$rid" == "" ]; then
 		if [ -f "$sessdir/session.last" ]; then
 			rid=$(cat "$sessdir/session.last")
@@ -1460,7 +1545,39 @@ view_report() {
 			exit 1
 		fi
 	fi
-	# Resolve session file: prefer legacy plaintext, fall back to TSV
+
+	# --- DETERMINE EMAIL TARGET ---
+	local _mailto="${_report_mailto:-}"
+	[ -z "$_mailto" ] && [[ "${2:-}" == *@* ]] && _mailto="$2"
+
+	# --- JSON FORMAT (early exit, TSV-first resolution) ---
+	if [ "${_report_format:-}" = "json" ]; then
+		local _json_tmp
+		_json_tmp=$(mktemp "$tmpdir/.json_report.XXXXXX")
+		if [ -f "$sessdir/session.tsv.$rid" ]; then
+			_lmd_render_json "$sessdir/session.tsv.$rid" > "$_json_tmp"
+		elif [ -f "$sessdir/session.$rid" ] || [ -f "$sessdir/session.hits.$rid" ]; then
+			local _sess="" _hits=""
+			[ -f "$sessdir/session.$rid" ] && _sess="$sessdir/session.$rid"
+			[ -f "$sessdir/session.hits.$rid" ] && _hits="$sessdir/session.hits.$rid"
+			_lmd_render_json_legacy "$_sess" "$_hits" > "$_json_tmp"
+		else
+			command rm -f "$_json_tmp"
+			local _safe_rid="${rid//\"/\\\"}"
+			echo '{"error": "no report found for scan ID '"$_safe_rid"'"}' >&2
+			exit 1
+		fi
+		if [ -n "$_mailto" ]; then
+			_alert_deliver_email "$_mailto" "$email_subj" "$_json_tmp" "" "text"
+			eout "{report} JSON report ID $rid sent to $_mailto" 1
+		else
+			cat "$_json_tmp"
+		fi
+		command rm -f "$_json_tmp"
+		exit 0
+	fi
+
+	# --- RESOLVE SESSION FILE (text/html, legacy-first) ---
 	local _report_file=""
 	if [ -f "$sessdir/session.$rid" ]; then
 		_report_file="$sessdir/session.$rid"
@@ -1470,9 +1587,10 @@ view_report() {
 		eout "{report} no report found for scan ID $rid" 1
 		exit 1
 	fi
-	# Email report if second argument contains @
-	if [[ "$2" == *@* ]]; then
-		local _html="" _fmt="${email_format:-html}"
+
+	# --- EMAIL DISPATCH ---
+	if [ -n "$_mailto" ]; then
+		local _html="" _fmt="${_report_format:-${email_format:-html}}"
 		# Save _fmt before _resolve_html_for_session — _session_read_meta
 		# clobbers _fmt when reading TSV headers
 		local _save_fmt="$_fmt"
@@ -1480,18 +1598,29 @@ view_report() {
 		_fmt="$_save_fmt"
 		# Downgrade format when HTML unavailable and cannot be rendered
 		if [ -z "$_html" ] && [ "$_fmt" != "text" ]; then
-			eout "{report} HTML rendering unavailable, sending text format report" 1
+			eout "{report} HTML rendering unavailable, sending text format" 1
 			_fmt="text"
 		fi
-		if ! _alert_deliver_email "$2" "$email_subj" "$_report_file" "$_html" "$_fmt"; then
+		if ! _alert_deliver_email "$_mailto" "$email_subj" "$_report_file" "$_html" "$_fmt"; then
 			eout "{report} no \$mail or \$sendmail binaries found, e-mail alerts disabled." 1
 			exit 1
 		fi
-		eout "{report} report ID $rid sent to $2" 1
+		eout "{report} report ID $rid sent to $_mailto" 1
 		exit 0
 	fi
-	# Display report to terminal
-	if _session_is_tsv "$_report_file"; then
+
+	# --- TERMINAL DISPLAY ---
+	if [ "${_report_format:-}" = "html" ]; then
+		local _html=""
+		_resolve_html_for_session "$_report_file"
+		if [ -n "$_html" ]; then
+			cat "$_html"
+			command rm -f "$_html"
+		else
+			eout "{report} HTML rendering unavailable" 1
+			exit 1
+		fi
+	elif _session_is_tsv "$_report_file"; then
 		# TSV: render text on-demand
 		local _manifest _tpl_dir
 		_tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
@@ -1513,36 +1642,12 @@ dump_report() {
 }
 
 # view_report_json [SCANID|list|newest] — output scan report as JSON
-# Delegates to _lmd_render_json() for single-report output or
-# _lmd_render_json_list() for the "list" keyword.
-# Requires TSV session format; exits with JSON error for legacy sessions.
+# Thin wrapper: sets _report_format=json and delegates to view_report().
+# Retained for backward compatibility with --json-report case handler.
 # shellcheck disable=SC2154
 view_report_json() {
-	local rid="$1"
-	if [ "$rid" == "list" ]; then
-		_lmd_render_json_list
-		exit 0
-	fi
-	if [ "$rid" == "newest" ] || [ "$rid" == "" ]; then
-		if [ -f "$sessdir/session.last" ]; then
-			rid=$(cat "$sessdir/session.last")
-		else
-			echo '{"error": "no recent scan session found"}' >&2
-			exit 1
-		fi
-	fi
-	if [ -f "$sessdir/session.tsv.$rid" ]; then
-		_lmd_render_json "$sessdir/session.tsv.$rid"
-	elif [ -f "$sessdir/session.hits.$rid" ]; then
-		# Legacy: degraded JSON unavailable
-		local _safe_rid="${rid//\"/\\\"}"
-		echo '{"error": "legacy session format — enriched JSON unavailable", "scan_id": "'"$_safe_rid"'"}' >&2
-		exit 1
-	else
-		local _safe_rid="${rid//\"/\\\"}"
-		echo '{"error": "no report found for scan ID '"$_safe_rid"'"}' >&2
-		exit 1
-	fi
+	_report_format="json"
+	view_report "$1"
 }
 
 view() {
@@ -2263,6 +2368,8 @@ _scan_cleanup() {
 		"$clamscan_results" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 		"$runtime_csig_compiled" "$runtime_csig_prefixes" \
+		"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+		"$runtime_csig_wildcards" "$runtime_csig_universals" \
 		"$tmpdir"/.find_killed."$scanid" \
 		"$tmpdir"/.tmp* "$tmpdir"/.tmpf* "$tmpdir"/.yara_* \
 		"$tmpdir"/.hex_batch* "$tmpdir"/.hex_worker* "$tmpdir"/.hex_chunk* \
@@ -2278,9 +2385,11 @@ _scan_cleanup() {
 		"$tmpdir"/.yara_manifest* "$tmpdir"/.yara_filtered* "$tmpdir"/.yara_existing* "$tmpdir"/.yara_deduped* \
 		"$tmpdir"/.strlen_manifest* "$tmpdir"/.stage_hit* \
 		"$tmpdir"/.csig_worker* "$tmpdir"/.csig_chunk* "$tmpdir"/.csig_manifest* "$tmpdir"/.csig_batch_flist* \
+		"$tmpdir"/.hcb.* "$tmpdir"/.csig_lp.* "$tmpdir"/.csig_ll.* \
+		"$tmpdir"/.csig_or.* "$tmpdir"/.csig_all.* \
 		2>/dev/null  # files may not exist depending on scan path
 	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* \
-		"$tmpdir"/.csig_progress.* 2>/dev/null
+		"$tmpdir"/.csig_progress.* "$tmpdir"/.csig_mtx.* 2>/dev/null
 }
 
 # shellcheck disable=SC2154
@@ -2747,15 +2856,22 @@ _sha256_batch_worker() {
 	fi
 }
 
-_hex_batch_worker() {
-	# Self-contained batch hex scanner for a chunk of files.
+_hex_csig_batch_worker() {
+	# Self-contained merged HEX+CSIG batch scanner for a chunk of files.
 	# Runs in a subshell (backgrounded by caller).
 	# Outputs tab-delimited filepath\tsigname hit pairs to stdout.
-	local _chunk="$1" _depth="$2" _literals="$3" _regexes="$4" _sigmap="$5"
-	local _progress_file="${6:-}"
-	local _batch_hex _idx=0 _line _hit_line _hit_linenum _hit_pat _hit_name
-	_batch_hex=$(mktemp "$tmpdir/.hex_batch.XXXXXX")
-	# Build parallel arrays: _names[idx]=filepath, batch_hex has one hex line per file
+	# Phase 1: batch hex extraction (shared buffer)
+	# Phase 2: HEX pattern matching (literal + wildcard)
+	# Phase 3: CSIG pattern matching (literal fan-out + wildcard + rule eval)
+	local _chunk="$1" _depth="$2"
+	local _hex_literals="$3" _hex_regexes="$4" _hex_sigmap="$5"
+	local _csig_batch_compiled="${6:-}" _csig_lit="${7:-}" _csig_wc="${8:-}" _csig_uni="${9:-}"
+	local _progress_file="${10:-}"
+
+	local _batch_hex _idx=0 _line
+	_batch_hex=$(mktemp "$tmpdir/.hcb.XXXXXX")
+
+	# --- Phase 1: Batch hex extraction ---
 	local _names
 	_names=()
 	while IFS= read -r _line; do
@@ -2769,128 +2885,252 @@ _hex_batch_worker() {
 		fi
 	done < "$_chunk" > "$_batch_hex"
 	[ -n "$_progress_file" ] && echo "$_idx" > "$_progress_file"
-	# Literal pass: grep -Fno finds first match per line, awk deduplicates by line number
-	if [ -s "$_literals" ]; then
+
+	local _total_files=$_idx
+	if [ "$_total_files" -eq 0 ]; then
+		rm -f "$_batch_hex"
+		return 0
+	fi
+
+	# --- Phase 2: HEX pattern matching ---
+	if [ -s "$_hex_literals" ]; then
+		local _hit_linenum _hit_pat _hit_name
 		while IFS=: read -r _hit_linenum _hit_pat; do
 			local _fnum=$((_hit_linenum - 1))
 			if [ -n "${_names[$_fnum]+set}" ]; then
-				_hit_name=$(_hex_lookup_name "$_hit_pat" "$_sigmap")
+				_hit_name=$(_hex_lookup_name "$_hit_pat" "$_hex_sigmap")
 				if [ -n "$_hit_name" ]; then
 					printf '%s\t%s\n' "${_names[$_fnum]}" "$_hit_name"
 				fi
-				# Mark as hit so we skip in regex pass
 				_names[_fnum]=""
 			fi
-		done < <(grep -Fno -f "$_literals" "$_batch_hex" 2>/dev/null | awk -F: '!seen[$1]++')  # grep stderr: empty pattern file or no match
+		done < <(grep -Fno -f "$_hex_literals" "$_batch_hex" 2>/dev/null | awk -F: '!seen[$1]++')  # grep stderr: empty pattern file or no match
 	fi
-	# Wildcard pass: for each ERE pattern, scan remaining files
-	if [ -s "$_regexes" ]; then
+	if [ -s "$_hex_regexes" ]; then
 		local _orig_pat _ere_pat
 		while IFS=$'\t' read -r _orig_pat _ere_pat; do
-			while IFS=: read -r _hit_linenum _; do
-				local _fnum2=$((_hit_linenum - 1))
+			local _hit_linenum2 _
+			while IFS=: read -r _hit_linenum2 _; do
+				local _fnum2=$((_hit_linenum2 - 1))
 				if [ -n "${_names[$_fnum2]+set}" ] && [ -n "${_names[$_fnum2]}" ]; then
-					_hit_name=$(_hex_lookup_name "$_orig_pat" "$_sigmap")
+					_hit_name=$(_hex_lookup_name "$_orig_pat" "$_hex_sigmap")
 					if [ -n "$_hit_name" ]; then
 						printf '%s\t%s\n' "${_names[$_fnum2]}" "$_hit_name"
 					fi
 					_names[_fnum2]=""
 				fi
 			done < <(grep -Eno "$_ere_pat" "$_batch_hex" 2>/dev/null | awk -F: '!seen[$1]++')  # grep stderr: malformed ERE is non-fatal
-		done < "$_regexes"
+		done < "$_hex_regexes"
 	fi
-	rm -f "$_batch_hex"
-}
 
-_csig_batch_worker() {
-	# Self-contained batch csig scanner for a chunk of files.
-	# Runs in a subshell (backgrounded by caller).
-	# Outputs tab-delimited filepath\tsigname hit pairs to stdout.
-	local _chunk="$1" _depth="$2" _compiled="$3" _prefixes="$4"
-	local _progress_file="${5:-}"
-	local _idx=0 _line
+	# --- Phase 3: CSIG pattern matching (batch approach) ---
+	# Skip entirely if no compiled rules or scan_csig disabled
+	if [ -n "$_csig_batch_compiled" ] && [ -s "$_csig_batch_compiled" ]; then
+		local _match_dir
+		_match_dir=$(mktemp -d "$tmpdir/.csig_mtx.XXXXXX")
 
-	# Load compiled rules into indexed arrays (once per worker)
-	local _r_signames _r_types _r_thresholds _r_pfxs _r_eres _rcount=0
-	_r_signames=()
-	_r_types=()
-	_r_thresholds=()
-	_r_pfxs=()
-	_r_eres=()
-	while IFS=$'\t' read -r _rsig _rtype _rthresh _rpfx _rere_rest; do
-		[ -z "$_rsig" ] && continue
-		_r_signames[_rcount]="$_rsig"
-		_r_types[_rcount]="$_rtype"
-		_r_thresholds[_rcount]="$_rthresh"
-		_r_pfxs[_rcount]="$_rpfx"
-		_r_eres[_rcount]="$_rere_rest"
-		_rcount=$((_rcount + 1))
-	done < "$_compiled"
-
-	[ "$_rcount" -eq 0 ] && return 0
-
-	local _hex_buf
-	_hex_buf=$(mktemp "$tmpdir/.csig_hexbuf.XXXXXX")
-
-	while IFS= read -r _line; do
-		[ -f "$_line" ] && [ -r "$_line" ] || continue
-		_idx=$((_idx + 1))
-
-		# Extract hex content to temp file
-		_hex_extract_file "$_line" "$_depth" > "$_hex_buf"
-
-		# Batch prefix pre-screen: one grep for all prefixes
-		local _matched_pfxs=""
-		if [ -s "$_prefixes" ]; then
-			_matched_pfxs=$(grep -Fo -f "$_prefixes" "$_hex_buf" 2>/dev/null | sort -u) || true  # safe: no prefix match is valid
+		# Load universal subsig IDs
+		local _uni_sids=()
+		if [ -n "$_csig_uni" ] && [ -s "$_csig_uni" ]; then
+			local _usid
+			while IFS= read -r _usid; do
+				_uni_sids[$_usid]=1
+			done < "$_csig_uni"
 		fi
 
-		# Evaluate each rule (first-match-wins)
-		local _ri
-		for (( _ri=0; _ri<_rcount; _ri++ )); do
-			# Prefix pre-filter
-			if [ -n "${_r_pfxs[$_ri]}" ] && [ "${_r_pfxs[$_ri]}" != "-" ]; then
-				local _skip=0
-				if [ "${_r_types[$_ri]}" == "and" ] || [ "${_r_types[$_ri]}" == "single" ] || [ "${_r_types[$_ri]}" == "group" ]; then
-					local _pf
-					while IFS=',' read -r -d ',' _pf || [ -n "$_pf" ]; do
-						[ -z "$_pf" ] && continue
-						if ! echo "$_matched_pfxs" | grep -qF "$_pf" 2>/dev/null; then
-							_skip=1
+		# Tier 1: Literal pass — single grep -Fno, awk fan-out to per-SID files
+		if [ -n "$_csig_lit" ] && [ -s "$_csig_lit" ]; then
+			local _lit_pats _lit_lkup
+			_lit_pats=$(mktemp "$tmpdir/.csig_lp.XXXXXX")
+			_lit_lkup=$(mktemp "$tmpdir/.csig_ll.XXXXXX")
+			cut -f2 "$_csig_lit" > "$_lit_pats"
+			awk -F'\t' '{print $2 "\t" $1}' "$_csig_lit" > "$_lit_lkup"
+
+			# grep stderr: empty pattern file or no match — safe to ignore
+			grep -Fno -f "$_lit_pats" "$_batch_hex" 2>/dev/null |
+				awk -F: -v lkup="$_lit_lkup" -v outdir="$_match_dir" '
+				BEGIN {
+					while ((getline line < lkup) > 0) {
+						idx = index(line, "\t")
+						pat = substr(line, 1, idx - 1)
+						sid = substr(line, idx + 1)
+						if (pat in pat2sids)
+							pat2sids[pat] = pat2sids[pat] "," sid
+						else
+							pat2sids[pat] = sid
+					}
+				}
+				{
+					linenum = $1
+					pat = substr($0, length($1) + 2)
+					if (pat in pat2sids) {
+						n = split(pat2sids[pat], sids, ",")
+						for (i = 1; i <= n; i++) {
+							sid = sids[i]
+							key = sid SUBSEP linenum
+							if (!(key in seen)) {
+								seen[key] = 1
+								print linenum >> (outdir "/" sid)
+							}
+						}
+					}
+				}' || true  # safe: no match is valid
+
+			rm -f "$_lit_pats" "$_lit_lkup"
+		fi
+
+		# Tier 2: Wildcard pass — one grep -En per ERE
+		if [ -n "$_csig_wc" ] && [ -s "$_csig_wc" ]; then
+			local _wsid _were
+			while IFS=$'\t' read -r _wsid _were; do
+				# grep stderr: malformed ERE is non-fatal — safe to ignore
+				grep -En "$_were" "$_batch_hex" 2>/dev/null |
+					cut -d: -f1 | sort -un >> "${_match_dir}/${_wsid}" || true  # safe: no match is valid
+			done < "$_csig_wc"
+		fi
+
+		# Helper: check if SID matched on a given file line number
+		_check_sid_match() {
+			local __sid="$1" __linenum="$2"
+			[ -n "${_uni_sids[$__sid]:-}" ] && return 0
+			[ -s "${_match_dir}/${__sid}" ] && grep -qFx "$__linenum" "${_match_dir}/${__sid}" 2>/dev/null  # safe: grep exits 2 on missing/unreadable file
+		}
+
+		# Rule evaluation: iterate rules in source order (first-match-wins)
+		local _signame _rtype _threshold _rule_spec
+		while IFS=$'\t' read -r _signame _rtype _threshold _rule_spec; do
+			[ -z "$_signame" ] && continue
+			local _elements=()
+			IFS=',' read -ra _elements <<< "$_rule_spec"
+
+			case "$_rtype" in
+			single)
+				local _sid="${_elements[0]}"
+				if [ -n "${_uni_sids[$_sid]:-}" ]; then
+					local _fn
+					for (( _fn=1; _fn<=_total_files; _fn++ )); do
+						local _fi=$((_fn - 1))
+						[ -z "${_names[$_fi]:-}" ] && continue
+						printf '%s\t%s\n' "${_names[$_fi]}" "$_signame"
+						_names[$_fi]=""
+					done
+				elif [ -s "${_match_dir}/${_sid}" ]; then
+					local _fnum3
+					while IFS= read -r _fnum3; do
+						local _fidx=$((_fnum3 - 1))
+						[ -z "${_names[$_fidx]:-}" ] && continue
+						printf '%s\t%s\n' "${_names[$_fidx]}" "$_signame"
+						_names[$_fidx]=""
+					done < "${_match_dir}/${_sid}"
+				fi
+				;;
+
+			and|group)
+				# Build candidate set from first non-universal plain SID
+				local _cand_file="" _ei
+				for (( _ei=0; _ei<${#_elements[@]}; _ei++ )); do
+					local _elem="${_elements[$_ei]}"
+					case "$_elem" in
+					or:*) continue ;;
+					*)
+						if [ -n "${_uni_sids[$_elem]:-}" ]; then
+							continue
+						fi
+						if [ -s "${_match_dir}/${_elem}" ]; then
+							_cand_file="${_match_dir}/${_elem}"
+							break
+						else
+							_cand_file="__none__"
 							break
 						fi
-					done <<< "${_r_pfxs[$_ri]},"
+						;;
+					esac
+				done
+
+				[ "$_cand_file" == "__none__" ] && continue
+
+				# All-universal/all-OR: every file is a candidate
+				if [ -z "$_cand_file" ]; then
+					_cand_file=$(mktemp "$tmpdir/.csig_all.XXXXXX")
+					seq 1 "$_total_files" > "$_cand_file"
 				fi
-				[ "$_skip" -eq 1 ] && continue
-			fi
 
-			# Parse ERE fields from stored string
-			local _eres
-			_eres=()
-			local _rest="${_r_eres[$_ri]}"
-			while [ -n "$_rest" ]; do
-				local _epart="${_rest%%	*}"
-				if [ "$_epart" == "$_rest" ]; then
-					_eres+=("$_epart")
-					break
+				[ ! -s "$_cand_file" ] && continue
+
+				# Filter candidates through all elements
+				local _fnum4
+				while IFS= read -r _fnum4; do
+					local _fidx4=$((_fnum4 - 1))
+					[ -z "${_names[$_fidx4]:-}" ] && continue
+
+					local _pass=1 _elem2
+					for _elem2 in "${_elements[@]}"; do
+						case "$_elem2" in
+						or:*)
+							local _ospec="${_elem2#or:}"
+							local _othresh="${_ospec%%:*}"
+							local _osids_str="${_ospec#*:}"
+							local _osids=()
+							IFS='+' read -ra _osids <<< "$_osids_str"
+							local _ocount=0 _os
+							for _os in "${_osids[@]}"; do
+								if _check_sid_match "$_os" "$_fnum4"; then
+									_ocount=$((_ocount + 1))
+									[ "$_ocount" -ge "$_othresh" ] && break
+								fi
+							done
+							if [ "$_ocount" -lt "$_othresh" ]; then
+								_pass=0; break
+							fi
+							;;
+						*)
+							if ! _check_sid_match "$_elem2" "$_fnum4"; then
+								_pass=0; break
+							fi
+							;;
+						esac
+					done
+
+					if [ "$_pass" -eq 1 ]; then
+						printf '%s\t%s\n' "${_names[$_fidx4]}" "$_signame"
+						_names[$_fidx4]=""
+					fi
+				done < "$_cand_file"
+
+				rm -f "$tmpdir"/.csig_all.* 2>/dev/null  # safe: temp only exists for all-universal case
+				;;
+
+			or)
+				local _or_merge _elem
+				_or_merge=$(mktemp "$tmpdir/.csig_or.XXXXXX")
+
+				for _elem in "${_elements[@]}"; do
+					if [ -n "${_uni_sids[$_elem]:-}" ]; then
+						seq 1 "$_total_files"
+					elif [ -s "${_match_dir}/${_elem}" ]; then
+						cat "${_match_dir}/${_elem}"
+					fi
+				done | sort -n | uniq -c | awk -v thresh="$_threshold" \
+					'$1 >= thresh {print $2}' > "$_or_merge"
+
+				if [ -s "$_or_merge" ]; then
+					local _fnum5
+					while IFS= read -r _fnum5; do
+						local _fidx5=$((_fnum5 - 1))
+						[ -z "${_names[$_fidx5]:-}" ] && continue
+						printf '%s\t%s\n' "${_names[$_fidx5]}" "$_signame"
+						_names[$_fidx5]=""
+					done < "$_or_merge"
 				fi
-				_eres+=("$_epart")
-				_rest="${_rest#*	}"
-			done
+				rm -f "$_or_merge"
+				;;
+			esac
+		done < "$_csig_batch_compiled"
 
-			if _csig_eval_rule "${_r_types[$_ri]}" "${_r_thresholds[$_ri]}" "$_hex_buf" "${_eres[@]}"; then
-				printf '%s\t%s\n' "$_line" "${_r_signames[$_ri]}"
-				break  # first-match-wins
-			fi
-		done
+		rm -rf "$_match_dir"
+	fi
 
-		if [ -n "$_progress_file" ] && ((_idx % 100 == 0)); then
-			echo "$_idx" > "$_progress_file"
-		fi
-	done < "$_chunk"
-	[ -n "$_progress_file" ] && echo "$_idx" > "$_progress_file"
-
-	rm -f "$_hex_buf"
+	rm -f "$_batch_hex"
 }
 
 # shellcheck disable=SC2154
@@ -2898,7 +3138,37 @@ _scan_run_native() {
 	local _nworkers
 	_nworkers=$(_resolve_worker_count "$tot_files")
 	if [ -z "$hscan" ]; then
-		eout "{scan} using native scan engine ($_nworkers workers)..." 1
+		# Engine line with hash engine info
+		local _hash_desc="$_effective_hashtype hashing"
+		if [ "$_sha_capability" == "hardware" ]; then
+			_hash_desc="$_hash_desc (hardware sha256-ni)"
+		else
+			_hash_desc="$_hash_desc (no hardware sha256-ni)"
+		fi
+		eout "{scan} native engine: $_nworkers workers, $_hash_desc" 1
+
+		# Stage listing: enumerate active scan stages
+		local _stage_list=""
+		if [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; then
+			_stage_list="sha256 hash"
+		fi
+		if [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; then
+			_stage_list="${_stage_list:+${_stage_list}, }md5 hash"
+		fi
+		if [ "$scan_csig" == "1" ] && [ -n "$runtime_csig_batch_compiled" ] && [ -s "$runtime_csig_batch_compiled" ]; then
+			_stage_list="${_stage_list:+${_stage_list}, }hex+csig"
+		else
+			_stage_list="${_stage_list:+${_stage_list}, }hex"
+		fi
+		if [ "$string_length_scan" == "1" ]; then
+			_stage_list="${_stage_list:+${_stage_list}, }strlen"
+		fi
+		if [ "$scan_yara" == "1" ]; then
+			_stage_list="${_stage_list:+${_stage_list}, }yara"
+		elif [ -n "$yara_sigs" ] && [ "$yara_sigs" -gt 0 ]; then
+			_stage_list="${_stage_list:+${_stage_list}, }yara(cav)"
+		fi
+		eout "{scan} stages: $_stage_list" 1
 		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
 	fi
 	if [ ! -f "$scan_session" ]; then
@@ -3060,12 +3330,17 @@ _scan_run_native() {
 	rm -f "$_hash_hit_paths"
 	local _hex_file_count
 	_hex_file_count=$($wc -l < "$_hex_filelist")
-	if [ "$_hex_file_count" -gt 0 ] && { [ -s "$runtime_hex_literal" ] || [ -s "$runtime_hex_regex" ]; }; then
+	local _has_hex_sigs=0 _has_csig_sigs=0
+	{ [ -s "$runtime_hex_literal" ] || [ -s "$runtime_hex_regex" ]; } && _has_hex_sigs=1
+	[ "$scan_csig" == "1" ] && [ -n "$runtime_csig_batch_compiled" ] && [ -s "$runtime_csig_batch_compiled" ] && _has_csig_sigs=1
+	local _hex_stage_label="hex"
+	[ "$_has_csig_sigs" -eq 1 ] && _hex_stage_label="hex+csig"
+	if [ "$_hex_file_count" -gt 0 ] && { [ "$_has_hex_sigs" -eq 1 ] || [ "$_has_csig_sigs" -eq 1 ]; }; then
 		# Determine hex depth
 		_hex_depth="${scan_hexdepth:-524288}"
 		# Resolve worker count
 		_nworkers=$(_resolve_worker_count "$_hex_file_count")
-		_scan_progress "hex" "$_hex_file_count files"
+		_scan_progress "$_hex_stage_label" "$_hex_file_count files"
 		# Split file list into chunks via awk round-robin
 		local _chunk_prefix _w
 		_chunk_prefix="$tmpdir/.hex_chunk.$$"
@@ -3082,8 +3357,10 @@ _scan_run_native() {
 				# Skip progress writes in background mode for max throughput
 				_hex_pfile=""
 				[ "$set_background" != "1" ] && _hex_pfile="$_hex_progress_dir/$_w"
-				_hex_batch_worker "$_chunk_prefix.$_w" "$_hex_depth" \
+				_hex_csig_batch_worker "$_chunk_prefix.$_w" "$_hex_depth" \
 					"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
+					"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+					"$runtime_csig_wildcards" "$runtime_csig_universals" \
 					"$_hex_pfile" \
 					> "$_wout" 2>/dev/null &  # suppress worker file-access stderr
 				_worker_pids[_w]=$!
@@ -3092,9 +3369,9 @@ _scan_run_native() {
 			_w=$((_w + 1))
 		done
 		# Wait for all workers with progress updates
-		_wait_workers_with_progress "hex" "$_hex_file_count" "$_hex_progress_dir" "${_worker_pids[@]}"
+		_wait_workers_with_progress "$_hex_stage_label" "$_hex_file_count" "$_hex_progress_dir" "${_worker_pids[@]}"
 		# Merge worker outputs into single manifest and batch-process hits
-		_scan_progress "hex" "processing hits"
+		_scan_progress "$_hex_stage_label" "processing hits"
 		local _hex_manifest
 		_hex_manifest=$(mktemp "$tmpdir/.hex_manifest.XXXXXX")
 		for _wout in "${_worker_outputs[@]}"; do
@@ -3102,77 +3379,9 @@ _scan_run_native() {
 				cat "$_wout" >> "$_hex_manifest"
 			fi
 		done
-		_flush_hit_batch "$_hex_manifest" "hex"
+		_flush_hit_batch "$_hex_manifest" "$_hex_stage_label"
 		# Cleanup chunk, worker output, and manifest files
 		rm -f "$_hex_manifest" "$_chunk_prefix".* "$tmpdir"/.hex_worker."$$".* 2>/dev/null
-	fi
-
-	# --- Pass 2.5: CSIG batch (compound signatures, parallel workers) ---
-	# Runs only in native mode when scan_csig=1 and compiled rules exist.
-	# Reuses _hex_filelist, re-filtered via scan_session to exclude hex hits.
-	if [ "$scan_csig" == "1" ] && [ -n "$runtime_csig_compiled" ] && [ -s "$runtime_csig_compiled" ]; then
-		local _csig_filelist _csig_file_count
-		_csig_filelist=$(mktemp "$tmpdir/.csig_batch_flist.XXXXXX")
-		# Re-filter hex filelist against scan_session (exclude files hit by MD5/SHA256/HEX)
-		if [ -s "$scan_session" ] && [ -s "$_hex_filelist" ]; then
-			local _csig_hit_paths
-			_csig_hit_paths=$(mktemp "$tmpdir/.csig_hitpaths.XXXXXX")
-			awk -F'\t' '!/^#/{if ($2 != "") print $2}' "$scan_session" > "$_csig_hit_paths"
-			if [ -s "$_csig_hit_paths" ]; then
-				grep -vFxf "$_csig_hit_paths" "$_hex_filelist" > "$_csig_filelist" || true  # safe: all files may be hit
-			else
-				cat "$_hex_filelist" > "$_csig_filelist"
-			fi
-			rm -f "$_csig_hit_paths"
-		elif [ -s "$_hex_filelist" ]; then
-			cat "$_hex_filelist" > "$_csig_filelist"
-		fi
-		_csig_file_count=$($wc -l < "$_csig_filelist")
-		if [ "$_csig_file_count" -gt 0 ]; then
-			local _csig_depth="${scan_hexdepth:-524288}"
-			_nworkers=$(_resolve_worker_count "$_csig_file_count")
-			_scan_progress "csig" "$_csig_file_count files"
-			if [ "$_nworkers" -le 1 ]; then
-				_csig_batch_worker "$_csig_filelist" "$_csig_depth" \
-					"$runtime_csig_compiled" "$runtime_csig_prefixes" \
-					> "$tmpdir/.csig_worker.$$.0"
-			else
-				local _csig_chunk_prefix _w _csig_progress_dir _csig_pfile
-				_csig_chunk_prefix="$tmpdir/.csig_chunk.$$"
-				_csig_progress_dir=$(mktemp -d "$tmpdir/.csig_progress.$$.XXXXXX")
-				awk -v n="$_nworkers" -v prefix="$_csig_chunk_prefix" \
-					'{ print > (prefix "." ((NR-1) % n)) }' "$_csig_filelist"
-				local _csig_worker_pids
-				_csig_worker_pids=()
-				_w=0
-				while [ "$_w" -lt "$_nworkers" ]; do
-					if [ -f "$_csig_chunk_prefix.$_w" ]; then
-						_csig_pfile=""
-						[ "$set_background" != "1" ] && _csig_pfile="$_csig_progress_dir/$_w"
-						_csig_batch_worker "$_csig_chunk_prefix.$_w" "$_csig_depth" \
-							"$runtime_csig_compiled" "$runtime_csig_prefixes" \
-							"$_csig_pfile" \
-							> "$tmpdir/.csig_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
-						_csig_worker_pids[_w]=$!
-					fi
-					_w=$((_w + 1))
-				done
-				_wait_workers_with_progress "csig" "$_csig_file_count" "$_csig_progress_dir" "${_csig_worker_pids[@]}"
-				rm -f "$_csig_chunk_prefix".* 2>/dev/null
-			fi
-			# Merge worker outputs and batch-process hits
-			_scan_progress "csig" "processing hits"
-			local _csig_manifest
-			_csig_manifest=$(mktemp "$tmpdir/.csig_manifest.XXXXXX")
-			for _w in "$tmpdir"/.csig_worker."$$".*; do
-				if [ -f "$_w" ] && [ -s "$_w" ]; then
-					cat "$_w" >> "$_csig_manifest"
-				fi
-			done
-			_flush_hit_batch "$_csig_manifest" "csig"
-			rm -f "$_csig_manifest" "$tmpdir"/.csig_worker."$$".* 2>/dev/null
-		fi
-		rm -f "$_csig_filelist"
 	fi
 
 	# --- Pass 3: strlen (per-file, on MD5-miss files) ---
@@ -3307,22 +3516,34 @@ scan() {
 
 	# Resolve hash engine after -co overrides have been applied
 	_resolve_hashtype
+
+	# Pre-gensigs signature preview: count from on-disk files (fast, no compilation)
+	_count_signatures "$sig_md5_file" "$sig_hex_file"
+	local _gensigs_preview_types=""
+	{ [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; } && _gensigs_preview_types="md5"
+	{ [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } && _gensigs_preview_types="${_gensigs_preview_types:+${_gensigs_preview_types} }sha256"
+	[ "$hex_sigs" -gt 0 ] && _gensigs_preview_types="${_gensigs_preview_types:+${_gensigs_preview_types} }hex"
+	{ [ "$csig_sigs" -gt 0 ] || [ "$user_csig_sigs" -gt 0 ]; } && _gensigs_preview_types="${_gensigs_preview_types:+${_gensigs_preview_types} }csig"
+	{ [ "$yara_sigs" -gt 0 ] || [ "$user_yara_sigs" -gt 0 ]; } && _gensigs_preview_types="${_gensigs_preview_types:+${_gensigs_preview_types} }yara"
 	if [ -z "$hscan" ]; then
-		eout "{scan} hash engine: $_effective_hashtype (cpu: $_sha_capability)" 1
+		eout "{scan} compiling $tot_sigs signatures (${_gensigs_preview_types})..." 1
 	fi
 
+	local _gensigs_start=$SECONDS
 	gensigs
+	local _gensigs_elapsed=$(( SECONDS - _gensigs_start ))
 	if [ "$scan_clamscan" == "1" ]; then
 		clamselector
 	fi
 
+	# Re-count from runtime files (may differ from preview due to custom sig merging)
 	_count_signatures "$runtime_md5" "$runtime_hexstrings"
 	if [ -z "$hscan" ]; then
 		local yara_label="YARA"
 		if [ "$scan_yara" != "1" ]; then
 			yara_label="YARA(cav)"
 		fi
-		eout "{scan} signatures loaded: $tot_sigs ($md5_sigs MD5 | $sha256_sigs SHA256 | $hex_sigs HEX | $csig_sigs CSIG | $yara_sigs $yara_label | $user_sigs USER)" 1
+		eout "{scan} signatures ready in ${_gensigs_elapsed}s: $tot_sigs ($md5_sigs MD5 | $sha256_sigs SHA256 | $hex_sigs HEX | $csig_sigs CSIG | $yara_sigs $yara_label | $user_sigs USER)" 1
 	fi
 	_build_scan_filters
 	_scan_build_filelist
@@ -3777,6 +3998,51 @@ _csig_extract_prefix() {
 	fi
 }
 
+_csig_classify_subsig() {
+	# Classify a compiled subsig ERE and write to the appropriate batch file.
+	# $1=SID, $2=ERE, $3=literals_file, $4=wildcards_file, $5=universals_file
+	local _sid="$1" _ere="$2" _lit_f="$3" _wc_f="$4" _uni_f="$5"
+	# Universal: raw ERE shorter than 8 chars (< 4 bytes hex = zero selectivity)
+	if [ "${#_ere}" -lt 8 ]; then
+		echo "$_sid" >> "$_uni_f"
+		return
+	fi
+	# Wildcard: contains ERE metacharacters from _hex_compile_pattern output
+	# Check for: character class [0-9a-f], alternation group (a|b), or bare alternation |
+	local _wc_detect='(\[0-9a-f\]|\(.*\||\|)'
+	if [[ "$_ere" =~ $_wc_detect ]]; then
+		printf '%d\t%s\n' "$_sid" "$_ere" >> "$_wc_f"
+	else
+		printf '%d\t%s\n' "$_sid" "$_ere" >> "$_lit_f"
+	fi
+}
+
+_csig_dedup_subsig() {
+	# Assign a unique SID for a compiled ERE. Returns existing SID if pattern
+	# was already seen. Sets _result_sid as output (avoids subshell).
+	# Uses parallel indexed arrays for bash 4.1 compat (no declare -A).
+	# CONTRACT: Must only be called from _csig_compile_rules(). Relies on
+	# caller-scope locals: _dedup_eres, _dedup_sids, _dedup_count, _next_sid.
+	# Caller must declare: local _result_sid before each call.
+	local _ere="$1"
+	local _di
+	for (( _di=0; _di<_dedup_count; _di++ )); do
+		if [ "${_dedup_eres[$_di]}" == "$_ere" ]; then
+			_result_sid="${_dedup_sids[$_di]}"
+			return 0
+		fi
+	done
+	# New unique ERE
+	_result_sid="$_next_sid"
+	_dedup_eres[$_dedup_count]="$_ere"
+	_dedup_sids[$_dedup_count]="$_next_sid"
+	_dedup_count=$((_dedup_count + 1))
+	_next_sid=$((_next_sid + 1))
+	# Classify and write to tier file (only on first assignment)
+	_csig_classify_subsig "$_result_sid" "$_ere" \
+		"$runtime_csig_literals" "$runtime_csig_wildcards" "$runtime_csig_universals"
+}
+
 _csig_compile_rules() {
 	# Parse csig.dat lines and compile to pre-compiled rule format.
 	# Input: $1 = runtime csig file (merged base + custom, ignore-filtered)
@@ -3789,6 +4055,19 @@ _csig_compile_rules() {
 
 	: > "$runtime_csig_compiled"
 	: > "$runtime_csig_prefixes"
+
+	# Batch-format output files (empty string = caller did not provide)
+	if [ -n "$runtime_csig_batch_compiled" ]; then
+		: > "$runtime_csig_batch_compiled"
+		: > "$runtime_csig_literals"
+		: > "$runtime_csig_wildcards"
+		: > "$runtime_csig_universals"
+	fi
+
+	# Subsig dedup: parallel indexed arrays (bash 4.1 — no declare -A)
+	local _dedup_eres _dedup_sids _dedup_count=0 _next_sid=0
+	_dedup_eres=()
+	_dedup_sids=()
 
 	while IFS= read -r _line; do
 		# Skip empty lines and comments
@@ -3878,6 +4157,7 @@ _csig_compile_rules() {
 
 		# Compile each subsig and extract prefixes
 		local _compiled_eres="" _all_prefixes="" _compile_ok=1
+		local _batch_rule_spec=""
 		for (( _i=0; _i<_nsubs; _i++ )); do
 			local _sub="${_subsigs[$_i]}"
 
@@ -3903,7 +4183,7 @@ _csig_compile_rules() {
 				fi
 
 				# Split group subsigs on ||
-				local _grp_subs _grp_eres="" _grp_pfxs=""
+				local _grp_subs _grp_eres="" _grp_pfxs="" _grp_batch_sids=""
 				_grp_subs=()
 				while IFS= read -r _gsub; do
 					[ -n "$_gsub" ] && _grp_subs+=("$_gsub")
@@ -3924,6 +4204,12 @@ _csig_compile_rules() {
 					else
 						_grp_eres="${_grp_eres}"$'\x1e'"${_gere}"
 					fi
+					# Assign SID for batch format
+					if [ -n "$runtime_csig_batch_compiled" ]; then
+						local _result_sid
+						_csig_dedup_subsig "$_gere"
+						_grp_batch_sids="${_grp_batch_sids:+${_grp_batch_sids}+}${_result_sid}"
+					fi
 					local _gpfx
 					_gpfx=$(_csig_extract_prefix "${_grp_subs[$_gi]}")
 					[ -n "$_gpfx" ] && _grp_pfxs="${_grp_pfxs:+${_grp_pfxs},}${_gpfx}"
@@ -3933,6 +4219,10 @@ _csig_compile_rules() {
 				local _grp_spec="or:${_grp_thresh}:${_grp_eres}"
 				_compiled_eres="${_compiled_eres:+${_compiled_eres}	}${_grp_spec}"
 				[ -n "$_grp_pfxs" ] && _all_prefixes="${_all_prefixes:+${_all_prefixes},}${_grp_pfxs}"
+				# Batch format: or:THRESHOLD:SID1+SID2+...
+				if [ -n "$runtime_csig_batch_compiled" ]; then
+					_batch_rule_spec="${_batch_rule_spec:+${_batch_rule_spec},}or:${_grp_thresh}:${_grp_batch_sids}"
+				fi
 				;;
 			*)
 				# Plain subsig
@@ -3944,6 +4234,12 @@ _csig_compile_rules() {
 					break
 				fi
 				_compiled_eres="${_compiled_eres:+${_compiled_eres}	}${_ere}"
+				# Assign SID for batch format
+				if [ -n "$runtime_csig_batch_compiled" ]; then
+					local _result_sid
+					_csig_dedup_subsig "$_ere"
+					_batch_rule_spec="${_batch_rule_spec:+${_batch_rule_spec},}${_result_sid}"
+				fi
 				local _pfx
 				_pfx=$(_csig_extract_prefix "$_sub")
 				[ -n "$_pfx" ] && _all_prefixes="${_all_prefixes:+${_all_prefixes},}${_pfx}"
@@ -3965,6 +4261,13 @@ _csig_compile_rules() {
 		printf '%s\t%s\t%s\t%s\t%s\n' \
 			"$_signame" "$_rule_type" "$_threshold" "${_all_prefixes:--}" "$_compiled_eres" \
 			>> "$runtime_csig_compiled"
+
+		# Write batch-format rule: SIGNAME\tTYPE\tTHRESHOLD\tSPEC
+		if [ -n "$runtime_csig_batch_compiled" ]; then
+			printf '%s\t%s\t%s\t%s\n' \
+				"$_signame" "$_rule_type" "$_threshold" "$_batch_rule_spec" \
+				>> "$runtime_csig_batch_compiled"
+		fi
 
 		# Add prefixes to global prefix file (for batch pre-screening)
 		if [ -n "$_all_prefixes" ]; then
@@ -5307,6 +5610,8 @@ gensigs() {
 		"$runtime_sha256" "$runtime_hsb" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 		"$runtime_csig_compiled" "$runtime_csig_prefixes" \
+		"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+		"$runtime_csig_wildcards" "$runtime_csig_universals" \
 		2>/dev/null  # vars empty on first call
 	runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.XXXXXX")
 	runtime_hdb=""
@@ -5401,8 +5706,8 @@ gensigs() {
 	fi
 	# Copy sigs to ClamAV dirs AFTER runtime user sigs are populated;
 	# empty lmd.user.* files cause ClamAV "Malformed database" errors
-	for cp in $clamav_paths; do
-		clamav_linksigs "$cp"
+	for _cpath in $clamav_paths; do
+		clamav_linksigs "$_cpath" "scan"
 	done
 
 	# Apply ignore_sigs filtering to runtime copies (non-destructive)
@@ -5452,6 +5757,10 @@ gensigs() {
 	# Build compound signature (csig) runtime files
 	runtime_csig_compiled=""
 	runtime_csig_prefixes=""
+	runtime_csig_batch_compiled=""
+	runtime_csig_literals=""
+	runtime_csig_wildcards=""
+	runtime_csig_universals=""
 	runtime_csig_count=0
 	_gensigs_csig_done=1  # flag: csig compilation attempted (prevents re-trigger loop)
 	if [ "$scan_csig" == "1" ]; then
@@ -5479,6 +5788,10 @@ gensigs() {
 		if [ -s "$_runtime_csig" ]; then
 			runtime_csig_compiled=$(mktemp "$tmpdir/.runtime.csig_compiled.XXXXXX")
 			runtime_csig_prefixes=$(mktemp "$tmpdir/.runtime.csig_prefixes.XXXXXX")
+			runtime_csig_batch_compiled=$(mktemp "$tmpdir/.runtime.csig_batch_compiled.XXXXXX")
+			runtime_csig_literals=$(mktemp "$tmpdir/.runtime.csig_literals.XXXXXX")
+			runtime_csig_wildcards=$(mktemp "$tmpdir/.runtime.csig_wildcards.XXXXXX")
+			runtime_csig_universals=$(mktemp "$tmpdir/.runtime.csig_universals.XXXXXX")
 			_csig_compile_rules "$_runtime_csig"
 		fi
 		rm -f "$_runtime_csig"
@@ -5662,7 +5975,17 @@ lmdup() {
 
 sigup() {
 	eout "{sigup} performing signature update check..." 1
-	
+
+	# Serialize with --cron-sigup to prevent racing on $sigdir
+	local _sigup_lockfile="$tmpdir/.sigup.lock"
+	if command -v flock >/dev/null 2>&1; then
+		exec 8>"$_sigup_lockfile"
+		if ! flock -n 8; then
+			eout "{sigup} another signature update is running, skipping" 1
+			return 0
+		fi
+	fi
+
 	tmpwd=$(mktemp -d "$tmpdir/.sigup.XXXXXX")
 	chmod 700 "$tmpwd"
 
@@ -5724,10 +6047,22 @@ sigup() {
 					cp -f "$sigdir"/* "$sigdir.old"/ 2> /dev/null
 					cp -f "$tmpwd"/sigs/* "$sigdir" 2> /dev/null
 					eout "{sigup} unpacked and installed maldet-sigpack.tgz" 1
-					for cp in $clamav_paths; do
-						clamav_linksigs "$cp"
+					local _clamav_ok=0 _clamav_fail=0
+					for _cpath in $clamav_paths; do
+						if clamav_linksigs "$_cpath"; then
+							_clamav_ok=$(( _clamav_ok + 1 ))
+						else
+							_clamav_fail=$(( _clamav_fail + 1 ))
+						fi
 					done
-					killall -SIGUSR2 clamd 2> /dev/null
+					if [ "$_clamav_ok" -gt 0 ]; then
+						killall -SIGUSR2 clamd 2>/dev/null
+						if [ "$_clamav_fail" -gt 0 ]; then
+							eout "{sigup} clamav signature deployment: $_clamav_fail path(s) failed validation" 1
+						fi
+					else
+						eout "{sigup} clamav signature validation failed for all paths — clamd reload skipped" 1
+					fi
 				else
 					eout "{sigup} something went wrong unpacking $sig_sigpack_url, aborting!" 1
 					sigpackfail=1

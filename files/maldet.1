@@ -64,18 +64,24 @@ Override the quarantine directory for this run.
 May appear anywhere in the command line.
 .SS Reporting
 .TP
-\fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR] [\fIEMAIL\fR]
+\fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR|\fBlist\fR]
 View a scan report.
 Use \fBlist\fR to show all reports.
-Append an email address to send the report.
+Combine with \fB\-\-format\fR and \fB\-\-mailto\fR for output control.
 .TP
-\fB\-E\fR, \fB\-\-dump\-report\fR [\fISCANID\fR]
-Dump a scan report to stdout.
+\fB\-\-format\fR \fBtext\fR|\fBjson\fR|\fBhtml\fR
+Set report output format for \fB\-e\fR/\fB\-\-report\fR (default: text).
+May appear anywhere in the command line.
+.TP
+\fB\-\-mailto\fR \fIADDRESS\fR
+Email the report to the specified address instead of stdout.
+May appear anywhere in the command line.
 .TP
 \fB\-\-json\-report\fR [\fISCANID\fR|\fBlist\fR]
+Shorthand for \fB\-\-report \-\-format json\fR.
 Output a JSON\-formatted scan report for the given \fISCANID\fR.
 Use \fBlist\fR to output all scan reports as a JSON array.
-Requires TSV session format; legacy plaintext sessions return a JSON error.
+Supports both TSV and legacy plaintext sessions.
 .TP
 \fB\-\-alert\-daily\fR (also: \fB\-\-monitor\-report\fR)
 Generate a digest alert summarizing inotify monitor activity.
@@ -90,6 +96,14 @@ Update malware signatures from rfxn.com.
 .TP
 \fB\-d\fR, \fB\-\-update\-ver\fR [\fB\-\-force\fR|\fB\-\-beta\fR]
 Update the LMD installation to the latest version.
+.TP
+\fB\-\-cron\-sigup\fR
+Perform a signature update for the independent cron job.
+Serialized with \fBflock\fR to prevent concurrent runs.
+Includes a random 0\-120s sleep to avoid upstream stampede.
+Internal use only \(em invoked by
+.IR /etc/cron.d/maldet\-sigup ;
+not intended for direct invocation.
 .SS Other
 .TP
 \fB\-c\fR, \fB\-\-checkout\fR \fIFILE\fR
@@ -198,6 +212,9 @@ Daily cron job for automated scanning and updates.
 .I /etc/cron.weekly/maldet\-watchdog
 Weekly watchdog for fallback signature updates.
 .TP
+.I /etc/cron.d/maldet\-sigup
+Independent signature update cron job (interval set by \fBsigup_interval\fR).
+.TP
 .I /etc/sysconfig/maldet " or " /etc/default/maldet
 System\-level configuration overrides.
 .SH CONFIGURATION
@@ -257,6 +274,7 @@ Key variables by category:
 .BR autoupdate_signatures ,
 .BR autoupdate_version ,
 .BR autoupdate_version_hashed ,
+.BR sigup_interval ,
 .BR cron_prune_days ,
 .BR cron_daily_scan ,
 .BR scan_days .
@@ -267,6 +285,18 @@ upstream values on each update check.
 Falls back to MD5 verification if sha256sum is unavailable.
 Forces reinstallation on mismatch.
 Default: 1.
+.PP
+.B sigup_interval
+sets the interval in hours for automatic signature update checks via
+the independent cron job
+.RI ( /etc/cron.d/maldet\-sigup ).
+This runs separately from
+.I cron.daily
+and is idempotent with
+.BR "maldet \-u" .
+Set to 0 to disable the independent cron job.
+Valid range: 1\-24.
+Default: 6.
 .PP
 .B scan_hashtype
 selects the hash algorithm for file\-hash signature matching (stage 1).
@@ -330,6 +360,21 @@ Values: \fBauto\fR (detect old\-format sessions, enable if found \(em default),
 \fB1\fR (always generate plaintext),
 \fB0\fR (TSV only).
 Default: auto.
+.PP
+.B ClamAV Signature Validation
+.PP
+When ClamAV is installed, LMD validates signature files via
+.B clamscan \-d
+against a staging directory before deploying them to ClamAV data
+directories.
+If validation fails, existing LMD signatures are removed from the
+ClamAV path to protect ClamAV from loading malformed databases.
+The
+.B SIGUSR2
+reload signal to
+.B clamd
+is only sent when at least one ClamAV data directory passes validation.
+This prevents malformed signature updates from breaking ClamAV (issue #467).
 .PP
 See
 .I conf.maldet

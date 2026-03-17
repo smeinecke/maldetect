@@ -85,6 +85,10 @@ _lmd_parse_hitlist() {
 	{
 		sig = $1
 		rest = $2
+		# Sanitize bash 4.x artifact: {TYPE\} → {TYPE} (pre-4d914a3 session data)
+		if (sig ~ /^\{[A-Z][A-Z0-9]*\\\}/) {
+			sub(/\\\}/, "}", sig)
+		}
 		# Extract hit type from {TYPE} prefix
 		hit_type = ""
 		if (match(sig, /^\{[A-Z][A-Z0-9]*\}/)) {
@@ -576,18 +580,159 @@ _lmd_render_json() {
 	}' "$tsv_file"
 }
 
+# _lmd_render_json_legacy session_file hits_file — render JSON from legacy session
+# Parses legacy plaintext session header + hit list into the same v1.0 JSON schema
+# as _lmd_render_json(). Unavailable fields render as null. Adds top-level
+# "source": "legacy" marker. Either argument may be empty string if unavailable.
+# shellcheck disable=SC2154
+_lmd_render_json_legacy() {
+	local _sess_file="$1" _hits_file="$2"
+	local _manifest
+	_manifest=$(mktemp "$tmpdir/.json_legacy_manifest.XXXXXX")
+	# Initialize metadata vars to empty (prevent stale leaks from prior calls)
+	scanid="" scan_start_hr="" scan_end_hr="" scan_et="" file_list_et=""
+	hrspath="" days="" tot_files="" tot_hits="" tot_cl="" _hostname=""
+	# Parse session header if available
+	if [ -n "$_sess_file" ] && [ -f "$_sess_file" ]; then
+		_parse_session_metadata "$_sess_file"
+	fi
+	# Parse hits into 6-field manifest if available
+	if [ -n "$_hits_file" ] && [ -f "$_hits_file" ] && [ -s "$_hits_file" ]; then
+		_lmd_parse_hitlist "$_hits_file" > "$_manifest"
+	fi
+	# Render JSON via awk — same schema as _lmd_render_json() with null for
+	# enriched fields unavailable in legacy format
+	awk -F'\t' \
+		-v scan_id="$scanid" \
+		-v hostname="${_hostname:-}" \
+		-v path="$hrspath" \
+		-v range="$days" \
+		-v started="$scan_start_hr" \
+		-v completed="$scan_end_hr" \
+		-v elapsed="$scan_et" \
+		-v filelist="$file_list_et" \
+		-v total_files="$tot_files" \
+		-v total_hits="$tot_hits" \
+		-v total_cleaned="$tot_cl" \
+	'
+	function json_esc(s,    out, i, c, n) {
+		out = ""
+		n = length(s)
+		for (i = 1; i <= n; i++) {
+			c = substr(s, i, 1)
+			if (c == "\\") out = out "\\\\"
+			else if (c == "\"") out = out "\\\""
+			else if (c == "\n") out = out "\\n"
+			else if (c == "\t") out = out "\\t"
+			else if (c == "\r") out = out "\\r"
+			else out = out c
+		}
+		return out
+	}
+	function jnum_or_null(v) { return (v == "-" || v == "") ? "null" : v+0 }
+	function jstr_or_null(v) { return (v == "-" || v == "") ? "null" : "\"" json_esc(v) "\"" }
+	BEGIN {
+		ht_label["MD5"]    = "MD5 Hash"
+		ht_label["HEX"]    = "HEX Pattern"
+		ht_label["YARA"]   = "YARA Rule"
+		ht_label["SA"]     = "String Analysis"
+		ht_label["CAV"]    = "ClamAV"
+		ht_label["CSIG"]   = "Compound Sig"
+		ht_label["SHA256"] = "SHA-256 Hash"
+	}
+	{
+		# 6-field manifest: sig, filepath, quarpath, hit_type, color, label
+		hit_n++
+		sig[hit_n]=$1; fp[hit_n]=$2; qp[hit_n]=$3
+		ht[hit_n]=$4; htl[hit_n]=$6
+		if ($3 != "-" && $3 != "") quarantined++
+		types[$4]++
+	}
+	END {
+		printf "{\n"
+		printf "  \"version\": \"1.0\",\n"
+		printf "  \"source\": \"legacy\",\n"
+		printf "  \"type\": \"scan\",\n"
+		printf "  \"scanner\": {\n"
+		printf "    \"name\": \"Linux Malware Detect\",\n"
+		printf "    \"version\": null,\n"
+		printf "    \"sig_version\": null\n"
+		printf "  },\n"
+		printf "  \"scan\": {\n"
+		printf "    \"id\": %s,\n", jstr_or_null(scan_id)
+		printf "    \"hostname\": %s,\n", jstr_or_null(hostname)
+		printf "    \"host_id\": null,\n"
+		printf "    \"path\": %s,\n", jstr_or_null(path)
+		if (range ~ /^[0-9]+$/) printf "    \"range_days\": %d,\n", range+0
+		else printf "    \"range_days\": %s,\n", jstr_or_null(range)
+		printf "    \"started\": %s,\n", jstr_or_null(started)
+		printf "    \"completed\": %s,\n", jstr_or_null(completed)
+		printf "    \"elapsed_seconds\": %s,\n", jnum_or_null(elapsed)
+		printf "    \"filelist_seconds\": %s,\n", jnum_or_null(filelist)
+		printf "    \"total_files\": %s,\n", jnum_or_null(total_files)
+		printf "    \"total_hits\": %s,\n", jnum_or_null(total_hits)
+		printf "    \"total_cleaned\": %s,\n", jnum_or_null(total_cleaned)
+		printf "    \"engine\": null,\n"
+		printf "    \"hash_type\": null,\n"
+		printf "    \"quarantine_enabled\": null\n"
+		printf "  },\n"
+		printf "  \"hits\": ["
+		for (i = 1; i <= hit_n; i++) {
+			if (i > 1) printf ","
+			printf "\n    {\n"
+			printf "      \"index\": %d,\n", i
+			printf "      \"signature\": \"%s\",\n", json_esc(sig[i])
+			printf "      \"file\": \"%s\",\n", json_esc(fp[i])
+			printf "      \"hit_type\": \"%s\",\n", json_esc(ht[i])
+			hl = (ht[i] in ht_label) ? ht_label[ht[i]] : ht[i]
+			printf "      \"hit_type_label\": \"%s\",\n", json_esc(hl)
+			is_q = (qp[i] != "-" && qp[i] != "")
+			printf "      \"quarantined\": %s,\n", (is_q ? "true" : "false")
+			if (is_q) printf "      \"quarantine_path\": \"%s\",\n", json_esc(qp[i])
+			printf "      \"hash\": null,\n"
+			printf "      \"size\": null,\n"
+			printf "      \"owner\": null,\n"
+			printf "      \"group\": null,\n"
+			printf "      \"mode\": null,\n"
+			printf "      \"mtime\": null\n"
+			printf "    }"
+		}
+		printf "\n  ],\n"
+		printf "  \"summary\": {\n"
+		printf "    \"total_hits\": %d,\n", hit_n+0
+		printf "    \"total_quarantined\": %d,\n", quarantined+0
+		printf "    \"total_cleaned\": %s,\n", jnum_or_null(total_cleaned)
+		if (quarantined == hit_n && hit_n > 0) qstat = "All threats quarantined"
+		else if (quarantined > 0) qstat = quarantined " of " hit_n " quarantined"
+		else qstat = "None quarantined"
+		printf "    \"quarantine_status\": \"%s\",\n", json_esc(qstat)
+		printf "    \"by_type\": {"
+		sep = ""
+		for (t in types) {
+			printf "%s\"%s\": %d", sep, json_esc(t), types[t]
+			sep = ", "
+		}
+		printf "}\n"
+		printf "  }\n"
+		printf "}\n"
+	}' "$_manifest"
+	command rm -f "$_manifest"
+}
+
 # _lmd_render_json_list — render all session reports as JSON array
-# Iterates session.tsv.* files in $sessdir, reads metadata from each,
-# and outputs a JSON object with a "reports" array.
+# Iterates session files in $sessdir (TSV first, then legacy plaintext),
+# and outputs a JSON object with a "reports" array. Deduplicates by scanid.
 # shellcheck disable=SC2154
 _lmd_render_json_list() {
 	printf '{\n  "version": "1.0",\n  "type": "report_list",\n  "reports": ['
 	local _first=1
-	local _file
+	local _file _seen_ids=""
+	# Pass 1: TSV session files (preferred format)
 	for _file in "$sessdir"/session.tsv.[0-9]*; do
 		[ -f "$_file" ] || continue
 		_session_read_meta "$_file"
 		[ -z "$scanid" ] && continue
+		_seen_ids="$_seen_ids $scanid"
 		if [ "$_first" != "1" ]; then printf ","; fi
 		_first=0
 		printf '\n    {'
@@ -603,6 +748,34 @@ _lmd_render_json_list() {
 		printf '"total_cleaned": %s, ' "$_jval"
 		if [ "$scan_et" = "-" ]; then printf '"elapsed_seconds": null'
 		else printf '"elapsed_seconds": %s' "$scan_et"; fi
+		printf '}'
+	done
+	# Pass 2: Legacy plaintext session files (skip if TSV exists)
+	for _file in "$sessdir"/session.[0-9]*; do
+		[ -f "$_file" ] || continue
+		case "$_file" in *.tsv.*|*.hits.*) continue ;; esac
+		local _sid="${_file##*session.}"
+		case "$_seen_ids" in *" $_sid"*) continue ;; esac
+		# Clear vars before parsing (prevent stale data from prior iteration)
+		scanid="" scan_start_hr="" scan_end_hr="" scan_et="" tot_files="" tot_hits="" tot_cl=""
+		_parse_session_metadata "$_file"
+		[ -z "$scanid" ] && continue
+		if [ "$_first" != "1" ]; then printf ","; fi
+		_first=0
+		printf '\n    {'
+		printf '"scan_id": "%s", ' "$scanid"
+		if [ -z "$scan_start_hr" ]; then printf '"started": null, '
+		else printf '"started": "%s", ' "$scan_start_hr"; fi
+		if [ -z "$tot_files" ]; then printf '"total_files": null, '
+		else printf '"total_files": %s, ' "$tot_files"; fi
+		if [ -z "$tot_hits" ]; then printf '"total_hits": null, '
+		else printf '"total_hits": %s, ' "$tot_hits"; fi
+		local _jval="${tot_cl:-0}"
+		[ -z "$_jval" ] && _jval="0"
+		printf '"total_cleaned": %s, ' "$_jval"
+		if [ -z "$scan_et" ]; then printf '"elapsed_seconds": null, '
+		else printf '"elapsed_seconds": %s, ' "$scan_et"; fi
+		printf '"source": "legacy"'
 		printf '}'
 	done
 	printf '\n  ]\n}\n'
