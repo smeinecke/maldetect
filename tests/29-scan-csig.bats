@@ -318,11 +318,8 @@ _source_lmd_stack() {
 # --- Test 25: Batch compilation produces SID-referenced files ---
 @test "csig: batch compilation produces literals/wildcards/universals files" {
     _source_lmd_stack
-    local runtime_csig_compiled runtime_csig_prefixes
     local runtime_csig_batch_compiled runtime_csig_literals
     local runtime_csig_wildcards runtime_csig_universals
-    runtime_csig_compiled=$(mktemp)
-    runtime_csig_prefixes=$(mktemp)
     runtime_csig_batch_compiled=$(mktemp)
     runtime_csig_literals=$(mktemp)
     runtime_csig_wildcards=$(mktemp)
@@ -334,9 +331,7 @@ _source_lmd_stack() {
     echo "${HEX_ALPHA}||${HEX_BRAVO}:{CSIG}test.batch.and.1" > "$csig_src"
     _csig_compile_rules "$csig_src"
 
-    # Old format file must exist and have content
-    [ -s "$runtime_csig_compiled" ]
-    # New batch files must exist
+    # Batch files must exist
     [ -s "$runtime_csig_batch_compiled" ]
     [ -s "$runtime_csig_literals" ]
     # Batch compiled must have SID-referenced format (no ERE metacharacters in SPEC field)
@@ -345,19 +340,15 @@ _source_lmd_stack() {
     # Should contain comma-separated SIDs (digits, commas, plus signs, or:)
     [[ "$spec_field" =~ ^[0-9,+or:]+$ ]]
 
-    rm -f "$csig_src" "$runtime_csig_compiled" "$runtime_csig_prefixes" \
-        "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+    rm -f "$csig_src" "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
         "$runtime_csig_wildcards" "$runtime_csig_universals"
 }
 
 # --- Test 26: Subsig dedup — shared pattern gets one SID ---
 @test "csig: shared subsig across rules gets single SID in literals" {
     _source_lmd_stack
-    local runtime_csig_compiled runtime_csig_prefixes
     local runtime_csig_batch_compiled runtime_csig_literals
     local runtime_csig_wildcards runtime_csig_universals
-    runtime_csig_compiled=$(mktemp)
-    runtime_csig_prefixes=$(mktemp)
     runtime_csig_batch_compiled=$(mktemp)
     runtime_csig_literals=$(mktemp)
     runtime_csig_wildcards=$(mktemp)
@@ -381,19 +372,15 @@ _source_lmd_stack() {
     grep -q "test.dedup.rule1" "$runtime_csig_batch_compiled"
     grep -q "test.dedup.rule2" "$runtime_csig_batch_compiled"
 
-    rm -f "$csig_src" "$runtime_csig_compiled" "$runtime_csig_prefixes" \
-        "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+    rm -f "$csig_src" "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
         "$runtime_csig_wildcards" "$runtime_csig_universals"
 }
 
 # --- Test 27: Wildcard subsig classified correctly ---
 @test "csig: wildcard subsig goes to wildcards file, not literals" {
     _source_lmd_stack
-    local runtime_csig_compiled runtime_csig_prefixes
     local runtime_csig_batch_compiled runtime_csig_literals
     local runtime_csig_wildcards runtime_csig_universals
-    runtime_csig_compiled=$(mktemp)
-    runtime_csig_prefixes=$(mktemp)
     runtime_csig_batch_compiled=$(mktemp)
     runtime_csig_literals=$(mktemp)
     runtime_csig_wildcards=$(mktemp)
@@ -410,8 +397,7 @@ _source_lmd_stack() {
     # Literals file should be empty (the pattern is a wildcard)
     [ ! -s "$runtime_csig_literals" ]
 
-    rm -f "$csig_src" "$runtime_csig_compiled" "$runtime_csig_prefixes" \
-        "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
+    rm -f "$csig_src" "$runtime_csig_batch_compiled" "$runtime_csig_literals" \
         "$runtime_csig_wildcards" "$runtime_csig_universals"
 }
 

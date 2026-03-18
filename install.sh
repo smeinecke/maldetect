@@ -70,6 +70,22 @@ _install_core() {
 	killall -SIGUSR2 clamd 2>/dev/null  # safe: signal ClamAV to reload sigs
 }
 
+_read_conf_value() {
+	# Read a single variable value from conf.maldet.
+	# Handles both quoted (var="val") and unquoted (var=val) formats.
+	# Arg 1: variable name (e.g., sigup_interval)
+	# Arg 2: default value if not found
+	# Output: value on stdout
+	local _var="$1" _default="${2:-}"
+	local _val="$_default"
+	if [ -f "$inspath/conf.maldet" ]; then
+		_val=$(grep -m1 "^${_var}=" "$inspath/conf.maldet" \
+			| command sed "s/^${_var}="'"\{0,1\}\([^"]*\)"\{0,1\}/\1/' 2>/dev/null)
+		_val="${_val:-$_default}"
+	fi
+	echo "$_val"
+}
+
 # --- Cron & service installation ---
 
 _install_cron_service() {
@@ -83,12 +99,8 @@ _install_cron_service() {
 	# On upgrade, user's custom value is not yet imported (that happens in
 	# _import_config), so the default 6 is used. User changes to
 	# sigup_interval take effect on next install.sh run.
-	local _sigup_interval=6
-	if [ -f "$inspath/conf.maldet" ]; then
-		_sigup_interval=$(grep -m1 '^sigup_interval=' "$inspath/conf.maldet" \
-			| command sed 's/^sigup_interval="\{0,1\}\([^"]*\)"\{0,1\}/\1/' 2>/dev/null)
-		_sigup_interval="${_sigup_interval:-6}"
-	fi
+	local _sigup_interval
+	_sigup_interval=$(_read_conf_value "sigup_interval" "6")
 	if [ "$_sigup_interval" != "0" ] && [ "$_sigup_interval" -gt 0 ] 2>/dev/null; then
 		pkg_cron_install cron.d.sigup /etc/cron.d/maldet-sigup
 		# Replace default interval with configured value
@@ -367,15 +379,11 @@ if [ -d "$inspath" ] && [ -d "files" ]; then
 	_import_config
 
 	# Re-evaluate sigup_interval after config import (user may have set to 0)
-	if [ -f "$inspath/conf.maldet" ]; then
-		_post_sigup_interval=$(grep -m1 '^sigup_interval=' "$inspath/conf.maldet" \
-			| command sed 's/^sigup_interval="\{0,1\}\([^"]*\)"\{0,1\}/\1/' 2>/dev/null)
-		_post_sigup_interval="${_post_sigup_interval:-6}"
-		if [ "$_post_sigup_interval" = "0" ] || ! [ "$_post_sigup_interval" -gt 0 ] 2>/dev/null; then
-			command rm -f /etc/cron.d/maldet-sigup 2>/dev/null  # safe: user disabled sigup
-		fi
-		unset _post_sigup_interval
+	_post_sigup_interval=$(_read_conf_value "sigup_interval" "6")
+	if [ "$_post_sigup_interval" = "0" ] || ! [ "$_post_sigup_interval" -gt 0 ] 2>/dev/null; then
+		command rm -f /etc/cron.d/maldet-sigup 2>/dev/null  # safe: user disabled sigup
 	fi
+	unset _post_sigup_interval
 
 	pkg_section "Updating signatures"
 	"$inspath/maldet" --update 1

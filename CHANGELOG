@@ -2,6 +2,17 @@ v2.0.1 | Mar 10 2026:
 
   -- Changes --
 
+[Fix] _hash_batch_worker: explicit label param; fixes temp file naming mismatch
+[Change] Unify _md5_batch_worker/_sha256_batch_worker into _hash_batch_worker()
+[Change] install.sh: extract _read_conf_value() helper; deduplicate sigup_interval reads
+[Change] Remove dead _csig_extract_prefix(); superseded by batch classifier
+[Fix] quarantine_suspend_user(): quote $user to prevent word splitting
+[Change] Scan stage reorder: strlen (stage 4) runs after YARA (stage 3) in all paths;
+         most expensive/FP-prone stage runs last, reducing wasted work
+[Change] Consolidate _clean_rescan() on batch worker; delete legacy serial scan functions
+         (scan_stage1, scan_stage2, _csig_scan_file, _csig_eval_rule, _csig_eval_subsig)
+[Change] Remove old CSIG compiled format; batch format is sole output
+[Change] gensigs: bulk awk classifier for HEX patterns; ~5s → <0.3s compilation
 [Change] Scan output: gensigs timing, stage listing, hex+csig progress label
 [Change] Merged HEX+CSIG batch scanning into single worker pass; ~17x faster
          CSIG scanning via set-based rule evaluation instead of per-file grep

@@ -877,21 +877,84 @@ EOF
 }
 
 _clean_rescan() {
+	# Rescan a single file after clean attempt to verify signature is removed.
+	# Stages: 1 hash, 2 hex+csig, 3 yara, 4 strlen — early return on first hit.
 	local _fpath="$1"
 	clean_state="1"
 	unset clean_failed
-	scan_stage1 "$_fpath" 1 >> /dev/null 2>&1
-	# csig single-file evaluation after stage1+stage2, before YARA
-	if [ -f "$_fpath" ] && [ "$scan_csig" == "1" ] && [ -n "$runtime_csig_compiled" ] && [ -s "$runtime_csig_compiled" ]; then
-		_csig_scan_file "$_fpath" 1 >> /dev/null 2>&1
+
+	# Ensure runtime sigs are populated
+	if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ] || { [ "$scan_csig" == "1" ] && [ -z "$_gensigs_csig_done" ]; }; then
+		gensigs
 	fi
+
+	# --- Stage 1: Hash check (MD5, SHA-256) ---
+	if [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; then
+		local _md5out _hash
+		_md5out="$($md5sum "$_fpath")"
+		_hash="${_md5out%% *}"
+		if [ -n "$_hash" ]; then
+			local _val
+			_val=$(grep -m1 "$_hash" "$runtime_md5" 2>/dev/null)
+			if [ -n "$_val" ]; then
+				clean_failed=1
+			fi
+		fi
+	fi
+	if [ "$clean_failed" != "1" ] && { [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } \
+	   && [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
+		local _sha256out _sha256hash
+		_sha256out="$($sha256sum "$_fpath")"
+		_sha256hash="${_sha256out%% *}"
+		if [ -n "$_sha256hash" ]; then
+			local _val
+			_val=$(grep -m1 "$_sha256hash" "$runtime_sha256" 2>/dev/null)
+			if [ -n "$_val" ]; then
+				clean_failed=1
+			fi
+		fi
+	fi
+	if [ "$clean_failed" == "1" ]; then
+		unset clean_state
+		return
+	fi
+
+	# --- Stage 2: HEX + CSIG (batch worker on 1-file chunk) ---
+	if [ -f "$_fpath" ] && [ -r "$_fpath" ]; then
+		local _chunk _hits
+		_chunk=$(mktemp "$tmpdir/.clean_chunk.XXXXXX")
+		printf '%s\n' "$_fpath" > "$_chunk"
+		_hits=$(_hex_csig_batch_worker "$_chunk" "${scan_hexdepth:-524288}" \
+			"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
+			"${runtime_csig_batch_compiled:-}" "${runtime_csig_literals:-}" \
+			"${runtime_csig_wildcards:-}" "${runtime_csig_universals:-}" \
+			"")
+		rm -f "$_chunk"
+		if [ -n "$_hits" ]; then
+			clean_failed=1
+			unset clean_state
+			return
+		fi
+	fi
+
+	# --- Stage 3: YARA ---
 	if [ -f "$_fpath" ] && [ "$scan_yara" == "1" ]; then
 		local clean_yara_list
 		clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
 		echo "$_fpath" > "$clean_yara_list"
 		scan_stage_yara "$clean_yara_list" 1 >> /dev/null 2>&1
 		rm -f "$clean_yara_list"
+		if [ "$clean_failed" == "1" ]; then
+			unset clean_state
+			return
+		fi
 	fi
+
+	# --- Stage 4: strlen ---
+	if [ -f "$_fpath" ] && [ "$string_length_scan" == "1" ]; then
+		scan_strlen file "$_fpath" >> /dev/null 2>&1
+	fi
+
 	unset clean_state
 }
 
@@ -1686,11 +1749,11 @@ quarantine_suspend_user() {
 	file="$1"
 	get_filestat "$file"
 	user="$file_owner"
-	user_id=$(id -u $user)
+	user_id=$(id -u "$user")
 	if [ "$user" != "" ] && [ "$user_id" -ge "$quarantine_suspend_user_minuid" ]; then
 		if [ -f "/scripts/suspendacct" ]; then
 			if [ ! -f "/var/cpanel/suspended/$user" ]; then
-				/scripts/suspendacct $user "maldet --report $datestamp.$$" >> /dev/null 2>&1
+				/scripts/suspendacct "$user" "maldet --report $datestamp.$$" >> /dev/null 2>&1
 				eout "{quar} account $user cpanel suspended" 1
 				echo "$user" >> "$sessdir/suspend.users.$$"
 				echo "$user" >> "$suspend_history"
@@ -2367,7 +2430,6 @@ _scan_cleanup() {
 		"$runtime_hexstrings" "$runtime_md5" "$runtime_sha256" "$runtime_hsb" \
 		"$clamscan_results" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
-		"$runtime_csig_compiled" "$runtime_csig_prefixes" \
 		"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
 		"$runtime_csig_wildcards" "$runtime_csig_universals" \
 		"$tmpdir"/.find_killed."$scanid" \
@@ -2387,6 +2449,7 @@ _scan_cleanup() {
 		"$tmpdir"/.csig_worker* "$tmpdir"/.csig_chunk* "$tmpdir"/.csig_manifest* "$tmpdir"/.csig_batch_flist* \
 		"$tmpdir"/.hcb.* "$tmpdir"/.csig_lp.* "$tmpdir"/.csig_ll.* \
 		"$tmpdir"/.csig_or.* "$tmpdir"/.csig_all.* \
+		"$tmpdir"/.hex_wc_tmp.* "$tmpdir"/.clean_chunk.* \
 		2>/dev/null  # files may not exist depending on scan path
 	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* \
 		"$tmpdir"/.csig_progress.* "$tmpdir"/.csig_mtx.* 2>/dev/null
@@ -2629,14 +2692,9 @@ _stop_elapsed_timer() {
 
 # shellcheck disable=SC2154
 _scan_run_clamav() {
+	# Stages: 1+2 ClamAV (hash+hex), 3 YARA, 4 strlen
 	if [ -z "$hscan" ]; then
 		eout "{scan} found clamav binary at $clamscan, using clamav scanner engine..." 1
-	fi
-	if [ "$string_length_scan" == "1" ]; then
-		if [ -z "$hscan" ]; then
-			eout "{scan} preprocessing file list for string length hits..." 1
-			scan_strlen list "$find_results" >> /dev/null 2>&1
-		fi
 	fi
 	if [ -z "$hscan" ]; then
 		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
@@ -2666,6 +2724,12 @@ _scan_run_clamav() {
 	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) clamscan end return $clamscan_return"  >> "$clamscan_log"
 	_process_clamav_hits "$clamscan_results" 1
 	_run_yara_scan "$find_results"
+	# --- Stage 4: strlen ---
+	if [ "$string_length_scan" == "1" ]; then
+		if [ -z "$hscan" ]; then
+			scan_strlen list "$find_results" >> /dev/null 2>&1
+		fi
+	fi
 
 	# Final newline after progress ticker
 	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
@@ -2690,22 +2754,24 @@ _resolve_worker_count() {
 	echo "$_count"
 }
 
-_md5_batch_worker() {
-	# Self-contained batch MD5 scanner for a chunk of files.
+_hash_batch_worker() {
+	# Self-contained batch hash scanner for a chunk of files.
 	# Runs in a subshell (backgrounded by caller).
 	# Outputs tab-delimited filepath\thash\tsigname triples to stdout.
-	# Arg 1: chunk file (one filepath per line)
-	# Arg 2: runtime_md5 sig file (HASH:SIZE:{MD5}sig.name.N)
-	# Arg 3: progress file (written every 500 files; empty = no progress)
-	local _chunk="$1" _sigfile="$2" _progress_file="${3:-}"
-	local _md5_out
+	# Arg 1: hash command (full path from internals.conf, e.g., $md5sum)
+	# Arg 2: temp file label ("md5" or "sha256") — must match _scan_cleanup() globs
+	# Arg 3: chunk file (one filepath per line)
+	# Arg 4: runtime sig file (HASH:SIZE:{TYPE}sig.name.N)
+	# Arg 5: progress file (written every 500 files; empty = no progress)
+	local _hashcmd="$1" _hash_label="$2" _chunk="$3" _sigfile="$4" _progress_file="${5:-}"
+	local _hash_out
 	if [ "$os_freebsd" == "1" ]; then
-		# FreeBSD md5 -q outputs hash only (no filename); loop to pair them
+		# FreeBSD hash -q outputs hash only (no filename); loop to pair them
 		local _fbsd_out _fpath _fhash _fbsd_count=0
-		_fbsd_out=$(mktemp "$tmpdir/.md5_fbsd.XXXXXX")
+		_fbsd_out=$(mktemp "$tmpdir/.${_hash_label}_fbsd.XXXXXX")
 		while IFS= read -r _fpath; do
 			[ -f "$_fpath" ] && [ -r "$_fpath" ] || continue
-			_fhash=$($md5sum "$_fpath")
+			_fhash=$($_hashcmd "$_fpath")
 			printf '%s\t%s\n' "$_fhash" "$_fpath"
 			_fbsd_count=$((_fbsd_count + 1))
 			if [ -n "$_progress_file" ] && ((_fbsd_count % 500 == 0)); then
@@ -2731,11 +2797,11 @@ _md5_batch_worker() {
 		' "$_fbsd_out"
 		rm -f "$_fbsd_out"
 	else
-		# Linux: xargs md5sum hashes all files in one process
-		_md5_out=$(mktemp "$tmpdir/.md5_linux.XXXXXX")
-		xargs -d '\n' "$md5sum" < "$_chunk" > "$_md5_out" 2>/dev/null  # suppress errors on unreadable files
-		# awk join: load sigs (hash->signame), scan md5sum output for matches
-		# md5sum output format: "hash  filepath" (two spaces)
+		# Linux: xargs hashcmd hashes all files in one process
+		_hash_out=$(mktemp "$tmpdir/.${_hash_label}_linux.XXXXXX")
+		xargs -d '\n' "$_hashcmd" < "$_chunk" > "$_hash_out" 2>/dev/null  # suppress errors on unreadable files
+		# awk join: load sigs (hash->signame), scan hash output for matches
+		# Output format: "hash  filepath" (two spaces)
 		# Writes progress every 500 files when progress file is set.
 		awk -v sigfile="$_sigfile" -v pfile="$_progress_file" '
 		BEGIN {
@@ -2768,91 +2834,8 @@ _md5_batch_worker() {
 				close(pfile)
 			}
 		}
-		' "$_md5_out"
-		rm -f "$_md5_out"
-	fi
-}
-
-_sha256_batch_worker() {
-	# Self-contained batch SHA-256 scanner for a chunk of files.
-	# Structurally identical to _md5_batch_worker with sha256sum.
-	# Outputs tab-delimited filepath\thash\tsigname triples to stdout.
-	# Arg 1: chunk file (one filepath per line)
-	# Arg 2: runtime_sha256 sig file (HASH:SIZE:{SHA256}sig.name.N)
-	# Arg 3: progress file (written every 500 files; empty = no progress)
-	local _chunk="$1" _sigfile="$2" _progress_file="${3:-}"
-	local _sha_out
-	if [ "$os_freebsd" == "1" ]; then
-		# FreeBSD sha256 -q outputs hash only (no filename); loop to pair them
-		local _fbsd_out _fpath _fhash _fbsd_count=0
-		_fbsd_out=$(mktemp "$tmpdir/.sha256_fbsd.XXXXXX")
-		while IFS= read -r _fpath; do
-			[ -f "$_fpath" ] && [ -r "$_fpath" ] || continue
-			_fhash=$($sha256sum "$_fpath")
-			printf '%s\t%s\n' "$_fhash" "$_fpath"
-			_fbsd_count=$((_fbsd_count + 1))
-			if [ -n "$_progress_file" ] && ((_fbsd_count % 500 == 0)); then
-				echo "$_fbsd_count" > "$_progress_file"
-			fi
-		done < "$_chunk" > "$_fbsd_out"
-		[ -n "$_progress_file" ] && echo "$_fbsd_count" > "$_progress_file"
-		# awk join: load sigs, match on hash field
-		awk -F'\t' -v sigfile="$_sigfile" '
-		BEGIN {
-			while ((getline line < sigfile) > 0) {
-				colon1 = index(line, ":")
-				if (colon1 > 0) {
-					h = substr(line, 1, colon1 - 1)
-					rest = substr(line, colon1 + 1)
-					colon2 = index(rest, ":")
-					if (colon2 > 0) sigs[h] = substr(rest, colon2 + 1)
-				}
-			}
-			close(sigfile)
-		}
-		{ if ($1 in sigs) print $2 "\t" $1 "\t" sigs[$1] }
-		' "$_fbsd_out"
-		rm -f "$_fbsd_out"
-	else
-		# Linux: xargs sha256sum hashes all files in one process
-		_sha_out=$(mktemp "$tmpdir/.sha256_linux.XXXXXX")
-		xargs -d '\n' "$sha256sum" < "$_chunk" > "$_sha_out" 2>/dev/null  # suppress errors on unreadable files
-		# awk join: load sigs (hash->signame), scan sha256sum output for matches
-		# sha256sum output format: "hash  filepath" (two spaces)
-		# Writes progress every 500 files when progress file is set.
-		awk -v sigfile="$_sigfile" -v pfile="$_progress_file" '
-		BEGIN {
-			while ((getline line < sigfile) > 0) {
-				colon1 = index(line, ":")
-				if (colon1 > 0) {
-					h = substr(line, 1, colon1 - 1)
-					rest = substr(line, colon1 + 1)
-					colon2 = index(rest, ":")
-					if (colon2 > 0) sigs[h] = substr(rest, colon2 + 1)
-				}
-			}
-			close(sigfile)
-		}
-		{
-			count++
-			hash = $1
-			if (hash in sigs) {
-				fpath = substr($0, length(hash) + 3)
-				print fpath "\t" hash "\t" sigs[hash]
-			}
-			if (pfile != "" && count % 500 == 0) {
-				print count > pfile
-				close(pfile)
-			}
-		}
-		END {
-			if (pfile != "" && count > 0) {
-				print count > pfile
-				close(pfile)
-			}
-		}
-		' "$_sha_out"
-		rm -f "$_sha_out"
+		' "$_hash_out"
+		rm -f "$_hash_out"
 	fi
 }
 
@@ -3135,6 +3118,13 @@ _hex_csig_batch_worker() {
 
 # shellcheck disable=SC2154
 _scan_run_native() {
+	# Scan stages (canonical ordering — all paths):
+	#   Stage 1:  Hash matching (MD5, SHA-256)     — batch workers
+	#   Stage 2:  HEX pattern + CSIG compounds     — batch worker
+	#   Stage 3:  YARA rule evaluation              — external engine
+	#   Stage 4:  String length analysis            — statistical, per-file
+	# Stages are ordered by confidence (high→low) and cost (low→high).
+	# Earlier stages quarantine files, reducing the set for later stages.
 	local _nworkers
 	_nworkers=$(_resolve_worker_count "$tot_files")
 	if [ -z "$hscan" ]; then
@@ -3160,13 +3150,13 @@ _scan_run_native() {
 		else
 			_stage_list="${_stage_list:+${_stage_list}, }hex"
 		fi
-		if [ "$string_length_scan" == "1" ]; then
-			_stage_list="${_stage_list:+${_stage_list}, }strlen"
-		fi
 		if [ "$scan_yara" == "1" ]; then
 			_stage_list="${_stage_list:+${_stage_list}, }yara"
 		elif [ -n "$yara_sigs" ] && [ "$yara_sigs" -gt 0 ]; then
 			_stage_list="${_stage_list:+${_stage_list}, }yara(cav)"
+		fi
+		if [ "$string_length_scan" == "1" ]; then
+			_stage_list="${_stage_list:+${_stage_list}, }strlen"
 		fi
 		eout "{scan} stages: $_stage_list" 1
 		eout "{scan} scan of $hrspath ($tot_files files) in progress..." 1
@@ -3190,7 +3180,7 @@ _scan_run_native() {
 			_scan_progress "md5" "$_md5_file_count files"
 			if [ "$_nworkers" -le 1 ]; then
 				# Single worker: run inline (no subshell overhead)
-				_md5_batch_worker "$_md5_batch_flist" "$runtime_md5" > "$tmpdir/.md5_worker.$$.0"
+				_hash_batch_worker "$md5sum" "md5" "$_md5_batch_flist" "$runtime_md5" > "$tmpdir/.md5_worker.$$.0"
 			else
 				# Multi-worker: round-robin split and background
 				local _md5_chunk_prefix _w _md5_progress_dir _md5_pfile
@@ -3206,7 +3196,7 @@ _scan_run_native() {
 						# Skip progress writes in background mode for max throughput
 						_md5_pfile=""
 						[ "$set_background" != "1" ] && _md5_pfile="$_md5_progress_dir/$_w"
-						_md5_batch_worker "$_md5_chunk_prefix.$_w" "$runtime_md5" \
+						_hash_batch_worker "$md5sum" "md5" "$_md5_chunk_prefix.$_w" "$runtime_md5" \
 							"$_md5_pfile" \
 							> "$tmpdir/.md5_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
 						_md5_worker_pids[_w]=$!
@@ -3267,7 +3257,7 @@ _scan_run_native() {
 			_nworkers=$(_resolve_worker_count "$_sha256_file_count")
 			_scan_progress "sha256" "$_sha256_file_count files"
 			if [ "$_nworkers" -le 1 ]; then
-				_sha256_batch_worker "$_sha256_batch_flist" "$runtime_sha256" > "$tmpdir/.sha256_worker.$$.0"
+				_hash_batch_worker "$sha256sum" "sha256" "$_sha256_batch_flist" "$runtime_sha256" > "$tmpdir/.sha256_worker.$$.0"
 			else
 				local _sha256_chunk_prefix _w _sha256_progress_dir _sha256_pfile
 				_sha256_chunk_prefix="$tmpdir/.sha256_chunk.$$"
@@ -3281,7 +3271,7 @@ _scan_run_native() {
 					if [ -f "$_sha256_chunk_prefix.$_w" ]; then
 						_sha256_pfile=""
 						[ "$set_background" != "1" ] && _sha256_pfile="$_sha256_progress_dir/$_w"
-						_sha256_batch_worker "$_sha256_chunk_prefix.$_w" "$runtime_sha256" \
+						_hash_batch_worker "$sha256sum" "sha256" "$_sha256_chunk_prefix.$_w" "$runtime_sha256" \
 							"$_sha256_pfile" \
 							> "$tmpdir/.sha256_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
 						_sha256_worker_pids[_w]=$!
@@ -3384,8 +3374,11 @@ _scan_run_native() {
 		rm -f "$_hex_manifest" "$_chunk_prefix".* "$tmpdir"/.hex_worker."$$".* 2>/dev/null
 	fi
 
-	# --- Pass 3: strlen (per-file, on MD5-miss files) ---
-	# Matches old scan_stage1 behavior: strlen only runs on MD5 misses.
+	# --- Stage 3: YARA ---
+	_run_yara_scan "$find_results"
+
+	# --- Stage 4: strlen (per-file, on hash-miss files) ---
+	# Most expensive stage, most false-positive prone — runs last.
 	# Per-file mode handles paths with spaces correctly.
 	if [ "$string_length_scan" == "1" ] && [ -s "$_hex_filelist" ]; then
 		local _strlen_count
@@ -3398,9 +3391,6 @@ _scan_run_native() {
 		done < "$_hex_filelist"
 	fi
 	rm -f "$_hex_filelist"
-
-	# --- Pass 4: YARA (unchanged) ---
-	_run_yara_scan "$find_results"
 
 	# Final newline after progress ticker
 	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
@@ -3665,73 +3655,6 @@ scan_strlen() {
 	fi
 }
 
-scan_stage1() {
-	local file="$1"
-	local clean_check="$2"
-	if [ -z "$runtime_hexstrings" ] || [ -z "$runtime_md5" ] || { [ "$scan_csig" == "1" ] && [ -z "$_gensigs_csig_done" ]; }; then
-		gensigs
-	fi
-
-	local _stage1_hit=""
-
-	# MD5 check (when effective type is md5 or both)
-	if [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; then
-		local _md5out
-		_md5out="$($md5sum "$file")"
-		hash="${_md5out%% *}"
-		if [ -n "$hash" ]; then
-			val_hash=$(grep -m1 "$hash" "$runtime_md5")
-			if [ -n "$val_hash" ]; then
-				_stage1_hit="md5"
-				md5_hit="$hash"
-				local _tmp="${val_hash#*:}" ; _tmp="${_tmp#*:}" ; _tmp="${_tmp#*:}"
-				md5_hitname="$_tmp"
-				md5_hash="$hash"
-			fi
-		fi
-	fi
-
-	# SHA-256 check (when effective type is sha256 or both, and no MD5 hit)
-	if [ -z "$_stage1_hit" ] && { [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } \
-	   && [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
-		local _sha256out _sha256hash
-		_sha256out="$($sha256sum "$file")"
-		_sha256hash="${_sha256out%% *}"
-		if [ -n "$_sha256hash" ]; then
-			local _sha256_val
-			_sha256_val=$(grep -m1 "$_sha256hash" "$runtime_sha256")
-			if [ -n "$_sha256_val" ]; then
-				_stage1_hit="sha256"
-				local _tmp="${_sha256_val#*:}" ; _tmp="${_tmp#*:}" ; _tmp="${_tmp#*:}"
-				md5_hitname="$_tmp"
-				# .info field 5 accepts either MD5 or SHA-256 natively
-				md5_hash="$_sha256hash"
-			fi
-		fi
-	fi
-
-	if [ -n "$_stage1_hit" ]; then
-		if [ "$clean_check" == "1" ]; then
-			clean_failed=1
-		else
-			local _hit_manifest
-			_hit_manifest=$(mktemp "$tmpdir/.stage_hit.XXXXXX")
-			printf '%s\t%s\t%s\n' "$file" "$md5_hitname" "$md5_hash" > "$_hit_manifest"
-			_flush_hit_batch "$_hit_manifest" "$_stage1_hit"
-			rm -f "$_hit_manifest"
-		fi
-		unset val_hash md5_hit md5_hitname md5_hash
-	else
-		if [ -z "$hash" ] && [ "$_effective_hashtype" != "sha256" ]; then
-			eout "{scan} error could not read or hash $file, do we have permission?"
-		elif [ -f "$file" ]; then
-			scan_stage2 "$file" "$clean_check" >> /dev/null 2>&1
-			if [ -f "$file" ]; then
-				scan_strlen file "$file" >> /dev/null 2>&1
-			fi
-		fi
-	fi
-}
 
 _hex_extract_file() {
 	# Extract hex content from a file using od, output contiguous hex string.
@@ -3944,60 +3867,6 @@ _csig_compile_subsig() {
 	echo "$_ere"
 }
 
-_csig_extract_prefix() {
-	# Extract first 4 literal hex chars from a subsig for prefix pre-screening.
-	# For i: subsigs, extract pre-folding then add both upper and lower forms.
-	# Output: comma-separated prefixes on stdout (may be empty for all-wildcard sigs).
-	local _subsig="$1"
-	local _do_icase=0
-
-	local _do_wide=0
-
-	# Strip prefix flags to get raw hex
-	case "$_subsig" in
-		iw:*|wi:*) _do_icase=1; _do_wide=1; _subsig="${_subsig#*:}" ;;
-		i:*) _do_icase=1; _subsig="${_subsig#i:}" ;;
-		w:*) _do_wide=1; _subsig="${_subsig#w:}" ;;
-	esac
-
-	# Extract first 4 literal hex chars (skip wildcards)
-	local _prefix="" _ppos=0 _plen=${#_subsig}
-	while [ "${#_prefix}" -lt 4 ] && [ "$_ppos" -lt "$_plen" ]; do
-		local _pc="${_subsig:_ppos:1}"
-		local _pc2="${_subsig:_ppos:2}"
-		local _hex_ch_re='^[0-9a-fA-F]$'
-		if [ "$_pc2" == "??" ] || [ "$_pc" == "*" ]; then
-			break  # wildcard — cannot use remaining chars as prefix
-		elif [ "$_pc" == "{" ] || [ "$_pc" == "(" ]; then
-			break  # complex token — stop
-		elif [[ "$_pc" =~ $_hex_ch_re ]]; then
-			_prefix="${_prefix}${_pc}"
-			_ppos=$((_ppos + 1))
-		else
-			break
-		fi
-	done
-
-	if [ "${#_prefix}" -lt 4 ]; then
-		echo ""
-		return
-	fi
-
-	# Normalize to lowercase
-	_prefix=$(echo "$_prefix" | tr 'A-F' 'a-f')
-
-	if [ "$_do_icase" == "1" ] || [ "$_do_wide" == "1" ]; then
-		# i: subsigs: prefix bytes may differ from file bytes in case
-		# (e.g., sig has 53/S, file has 73/s).
-		# w: subsigs: raw prefix doesn't match wide-interleaved file content
-		# (e.g., prefix "4142" won't match "41004200").
-		# Return empty to skip prefix filter for these modes.
-		echo ""
-	else
-		echo "$_prefix"
-	fi
-}
-
 _csig_classify_subsig() {
 	# Classify a compiled subsig ERE and write to the appropriate batch file.
 	# $1=SID, $2=ERE, $3=literals_file, $4=wildcards_file, $5=universals_file
@@ -4044,19 +3913,15 @@ _csig_dedup_subsig() {
 }
 
 _csig_compile_rules() {
-	# Parse csig.dat lines and compile to pre-compiled rule format.
+	# Parse csig.dat lines and compile to batch-format rule files.
 	# Input: $1 = runtime csig file (merged base + custom, ignore-filtered)
-	# Output: writes runtime_csig_compiled and runtime_csig_prefixes files.
-	# Format: SIGNAME\tTYPE\tTHRESHOLD\tPREFIXES\tERE1\tERE2\t...
-	# Group type uses RS (\x1e) delimiter within tab fields for OR groups.
+	# Output: writes runtime_csig_batch_compiled plus tier files (literals/wildcards/universals).
+	# Format: SIGNAME\tTYPE\tTHRESHOLD\tSPEC (SID-referenced)
 	local _csig_src="$1"
 	local _line _signame _sigs_field _threshold _rule_type
 	local _compiled_count=0
 
-	: > "$runtime_csig_compiled"
-	: > "$runtime_csig_prefixes"
-
-	# Batch-format output files (empty string = caller did not provide)
+	# Batch-format output files
 	if [ -n "$runtime_csig_batch_compiled" ]; then
 		: > "$runtime_csig_batch_compiled"
 		: > "$runtime_csig_literals"
@@ -4155,8 +4020,8 @@ _csig_compile_rules() {
 			fi
 		fi
 
-		# Compile each subsig and extract prefixes
-		local _compiled_eres="" _all_prefixes="" _compile_ok=1
+		# Compile each subsig
+		local _compile_ok=1
 		local _batch_rule_spec=""
 		for (( _i=0; _i<_nsubs; _i++ )); do
 			local _sub="${_subsigs[$_i]}"
@@ -4183,7 +4048,7 @@ _csig_compile_rules() {
 				fi
 
 				# Split group subsigs on ||
-				local _grp_subs _grp_eres="" _grp_pfxs="" _grp_batch_sids=""
+				local _grp_subs _grp_batch_sids=""
 				_grp_subs=()
 				while IFS= read -r _gsub; do
 					[ -n "$_gsub" ] && _grp_subs+=("$_gsub")
@@ -4198,31 +4063,13 @@ _csig_compile_rules() {
 						_compile_ok=0
 						break 2
 					fi
-					# RS-delimited within group
-					if [ -z "$_grp_eres" ]; then
-						_grp_eres="$_gere"
-					else
-						_grp_eres="${_grp_eres}"$'\x1e'"${_gere}"
-					fi
-					# Assign SID for batch format
-					if [ -n "$runtime_csig_batch_compiled" ]; then
-						local _result_sid
-						_csig_dedup_subsig "$_gere"
-						_grp_batch_sids="${_grp_batch_sids:+${_grp_batch_sids}+}${_result_sid}"
-					fi
-					local _gpfx
-					_gpfx=$(_csig_extract_prefix "${_grp_subs[$_gi]}")
-					[ -n "$_gpfx" ] && _grp_pfxs="${_grp_pfxs:+${_grp_pfxs},}${_gpfx}"
+					local _result_sid
+					_csig_dedup_subsig "$_gere"
+					_grp_batch_sids="${_grp_batch_sids:+${_grp_batch_sids}+}${_result_sid}"
 				done
 
-				# Encode group spec: or:THRESHOLD:ERE1\x1eERE2\x1e...
-				local _grp_spec="or:${_grp_thresh}:${_grp_eres}"
-				_compiled_eres="${_compiled_eres:+${_compiled_eres}	}${_grp_spec}"
-				[ -n "$_grp_pfxs" ] && _all_prefixes="${_all_prefixes:+${_all_prefixes},}${_grp_pfxs}"
 				# Batch format: or:THRESHOLD:SID1+SID2+...
-				if [ -n "$runtime_csig_batch_compiled" ]; then
-					_batch_rule_spec="${_batch_rule_spec:+${_batch_rule_spec},}or:${_grp_thresh}:${_grp_batch_sids}"
-				fi
+				_batch_rule_spec="${_batch_rule_spec:+${_batch_rule_spec},}or:${_grp_thresh}:${_grp_batch_sids}"
 				;;
 			*)
 				# Plain subsig
@@ -4233,16 +4080,9 @@ _csig_compile_rules() {
 					_compile_ok=0
 					break
 				fi
-				_compiled_eres="${_compiled_eres:+${_compiled_eres}	}${_ere}"
-				# Assign SID for batch format
-				if [ -n "$runtime_csig_batch_compiled" ]; then
-					local _result_sid
-					_csig_dedup_subsig "$_ere"
-					_batch_rule_spec="${_batch_rule_spec:+${_batch_rule_spec},}${_result_sid}"
-				fi
-				local _pfx
-				_pfx=$(_csig_extract_prefix "$_sub")
-				[ -n "$_pfx" ] && _all_prefixes="${_all_prefixes:+${_all_prefixes},}${_pfx}"
+				local _result_sid
+				_csig_dedup_subsig "$_ere"
+				_batch_rule_spec="${_batch_rule_spec:+${_batch_rule_spec},}${_result_sid}"
 				;;
 			esac
 		done
@@ -4255,203 +4095,15 @@ _csig_compile_rules() {
 			*) _signame="{CSIG}${_signame}" ;;
 		esac
 
-		# Write compiled rule: SIGNAME\tTYPE\tTHRESHOLD\tPREFIXES\tERE1\tERE2...
-		# Use sentinel "-" for empty prefixes — IFS=$'\t' read collapses
-		# consecutive tabs (tab is IFS whitespace), losing empty fields.
-		printf '%s\t%s\t%s\t%s\t%s\n' \
-			"$_signame" "$_rule_type" "$_threshold" "${_all_prefixes:--}" "$_compiled_eres" \
-			>> "$runtime_csig_compiled"
-
 		# Write batch-format rule: SIGNAME\tTYPE\tTHRESHOLD\tSPEC
-		if [ -n "$runtime_csig_batch_compiled" ]; then
-			printf '%s\t%s\t%s\t%s\n' \
-				"$_signame" "$_rule_type" "$_threshold" "$_batch_rule_spec" \
-				>> "$runtime_csig_batch_compiled"
-		fi
+		printf '%s\t%s\t%s\t%s\n' \
+			"$_signame" "$_rule_type" "$_threshold" "$_batch_rule_spec" \
+			>> "$runtime_csig_batch_compiled"
 
-		# Add prefixes to global prefix file (for batch pre-screening)
-		if [ -n "$_all_prefixes" ]; then
-			echo "$_all_prefixes" | tr ',' '\n' >> "$runtime_csig_prefixes"
-		fi
 		_compiled_count=$((_compiled_count + 1))
 	done < "$_csig_src"
 
-	# Deduplicate prefix file
-	if [ -s "$runtime_csig_prefixes" ]; then
-		local _pfx_tmp
-		_pfx_tmp=$(mktemp "$tmpdir/.csig_pfx_tmp.XXXXXX")
-		sort -u "$runtime_csig_prefixes" > "$_pfx_tmp"
-		cat "$_pfx_tmp" > "$runtime_csig_prefixes"
-		rm -f "$_pfx_tmp"
-	fi
-
 	runtime_csig_count=$_compiled_count
-}
-
-_csig_eval_subsig() {
-	# Test one compiled ERE pattern against a hex buffer file.
-	# Returns 0 (match) or 1 (no match).
-	local _ere="$1" _hexfile="$2"
-	grep -Eq "$_ere" "$_hexfile" 2>/dev/null
-}
-
-_csig_eval_rule() {
-	# Evaluate one compiled csig rule against a hex buffer file.
-	# Returns 0 if the rule matches, 1 if not.
-	# $1 = rule type (single, and, or, group)
-	# $2 = threshold
-	# $3 = hex buffer file
-	# $4... = ERE patterns (tab-separated in caller, passed as remaining args)
-	local _type="$1" _threshold="$2" _hexfile="$3"
-	shift 3
-
-	case "$_type" in
-	single)
-		_csig_eval_subsig "$1" "$_hexfile"
-		return $?
-		;;
-	and)
-		# All subsigs must match; short-circuit on first miss
-		local _aere
-		for _aere in "$@"; do
-			if ! _csig_eval_subsig "$_aere" "$_hexfile"; then
-				return 1
-			fi
-		done
-		return 0
-		;;
-	or)
-		# At least $_threshold subsigs must match; short-circuit when met
-		local _oere _omatch=0
-		for _oere in "$@"; do
-			if _csig_eval_subsig "$_oere" "$_hexfile"; then
-				_omatch=$((_omatch + 1))
-				if [ "$_omatch" -ge "$_threshold" ]; then
-					return 0
-				fi
-			fi
-		done
-		return 1
-		;;
-	group)
-		# AND across top-level elements; some elements may be OR groups.
-		# OR groups encoded as: or:THRESHOLD:ERE1\x1eERE2\x1e...
-		local _garg
-		for _garg in "$@"; do
-			case "$_garg" in
-			or:*)
-				# Parse group spec: or:THRESHOLD:ERE1\x1eERE2\x1e...
-				local _gspec="${_garg#or:}"
-				local _gthresh="${_gspec%%:*}"
-				local _gbody="${_gspec#*:}"
-				# Defense-in-depth: reject threshold<=0 at runtime
-				if [ "$_gthresh" -le 0 ] 2>/dev/null; then  # safe: suppress error if non-numeric (corrupted compiled rule)
-					return 1
-				fi
-				# Split on RS (\x1e)
-				local _geres _gmatch=0
-				_geres=()
-				while IFS= read -r -d $'\x1e' _ge || [ -n "$_ge" ]; do
-					[ -n "$_ge" ] && _geres+=("$_ge")
-				done <<< "$_gbody"
-				for _ge in "${_geres[@]}"; do
-					if _csig_eval_subsig "$_ge" "$_hexfile"; then
-						_gmatch=$((_gmatch + 1))
-						if [ "$_gmatch" -ge "$_gthresh" ]; then
-							break
-						fi
-					fi
-				done
-				if [ "$_gmatch" -lt "$_gthresh" ]; then
-					return 1  # group AND failed
-				fi
-				;;
-			*)
-				# Plain subsig in group context — must match (AND)
-				if ! _csig_eval_subsig "$_garg" "$_hexfile"; then
-					return 1
-				fi
-				;;
-			esac
-		done
-		return 0
-		;;
-	esac
-	return 1
-}
-
-_csig_scan_file() {
-	# Single-file csig evaluation (for _clean_rescan path).
-	# Evaluates all compiled csig rules against one file.
-	# On match: records hit in scan_session and processes via _flush_hit_batch.
-	local _file="$1" _clean_check="$2"
-	[ -f "$_file" ] && [ -r "$_file" ] || return 0
-	[ -n "$runtime_csig_compiled" ] && [ -s "$runtime_csig_compiled" ] || return 0
-
-	local _depth="${scan_hexdepth:-524288}"
-	local _hex_buf
-	_hex_buf=$(mktemp "$tmpdir/.csig_single.XXXXXX")
-	_hex_extract_file "$_file" "$_depth" > "$_hex_buf"
-
-	# Pre-screen with prefix file
-	local _matched_pfxs=""
-	if [ -s "$runtime_csig_prefixes" ]; then
-		_matched_pfxs=$(grep -Fo -f "$runtime_csig_prefixes" "$_hex_buf" 2>/dev/null | sort -u) || true  # safe: no prefix match is valid
-	fi
-
-	local _rline _signame _rtype _rthresh _rprefixes _reres
-	while IFS=$'\t' read -r _signame _rtype _rthresh _rprefixes _reres; do
-		[ -z "$_signame" ] && continue
-
-		# Prefix pre-filter (sentinel "-" = no prefixes)
-		if [ -n "$_rprefixes" ] && [ "$_rprefixes" != "-" ]; then
-			local _skip=0
-			if [ "$_rtype" == "and" ] || [ "$_rtype" == "single" ] || [ "$_rtype" == "group" ]; then
-				# AND/single/group: all prefixes must be present
-				local _pf
-				while IFS=',' read -r -d ',' _pf || [ -n "$_pf" ]; do
-					[ -z "$_pf" ] && continue
-					if ! echo "$_matched_pfxs" | grep -qF "$_pf" 2>/dev/null; then
-						_skip=1
-						break
-					fi
-				done <<< "$_rprefixes,"
-			fi
-			# OR: at least threshold prefixes must be present — skipping complex
-			# check here for single-file mode (low-volume path)
-			[ "$_skip" -eq 1 ] && continue
-		fi
-
-		# Parse ERE fields (tab-separated after field 4)
-		local _eres
-		_eres=()
-		local _rest="$_reres"
-		while [ -n "$_rest" ]; do
-			local _epart="${_rest%%	*}"
-			if [ "$_epart" == "$_rest" ]; then
-				_eres+=("$_epart")
-				break
-			fi
-			_eres+=("$_epart")
-			_rest="${_rest#*	}"
-		done
-
-		if _csig_eval_rule "$_rtype" "$_rthresh" "$_hex_buf" "${_eres[@]}"; then
-			# Hit — clean_check gate (same as YARA/stage2 paths)
-			if [ "$_clean_check" == "1" ]; then
-				clean_failed=1
-			else
-				local _csig_manifest
-				_csig_manifest=$(mktemp "$tmpdir/.csig_manifest.XXXXXX")
-				printf '%s\t%s\n' "$_file" "$_signame" > "$_csig_manifest"
-				_flush_hit_batch "$_csig_manifest" "csig"
-				rm -f "$_csig_manifest"
-			fi
-			break  # first-match-wins
-		fi
-	done < "$runtime_csig_compiled"
-
-	rm -f "$_hex_buf"
 }
 
 _hex_lookup_name() {
@@ -4461,37 +4113,6 @@ _hex_lookup_name() {
 	awk -F'\t' -v pat="$_pattern" '$1 == pat { print $2; exit }' "$_sigmap"
 }
 
-scan_stage2() {
-	local file="$1"
-	local clean_check="$2"
-	local depth val_hex hex_hitname
-	depth="${scan_hexdepth:-524288}"
-	# Literal pass: grep -F for fixed hex patterns (first match)
-	val_hex=$(_hex_extract_file "$file" "$depth" | grep -Fo -m1 -f "$runtime_hex_literal" 2>/dev/null)
-	# Wildcard pass: if no literal hit and regex sigs exist, try ERE patterns
-	if [ -z "$val_hex" ] && [ -s "$runtime_hex_regex" ]; then
-		local _hex_content _ere_pat _orig_pat
-		_hex_content=$(_hex_extract_file "$file" "$depth")
-		while IFS=$'\t' read -r _orig_pat _ere_pat; do
-			if echo "$_hex_content" | grep -Eq "$_ere_pat" 2>/dev/null; then
-				val_hex="$_orig_pat"
-				break
-			fi
-		done < "$runtime_hex_regex"
-	fi
-	if [ -n "$val_hex" ]; then
-		hex_hitname=$(_hex_lookup_name "$val_hex" "$runtime_hex_sigmap")
-		if [ "$clean_check" == "1" ]; then
-			clean_failed=1
-		else
-			local _hit_manifest
-			_hit_manifest=$(mktemp "$tmpdir/.stage_hit.XXXXXX")
-			printf '%s\t%s\n' "$file" "$hex_hitname" > "$_hit_manifest"
-			_flush_hit_batch "$_hit_manifest" "hex"
-			rm -f "$_hit_manifest"
-		fi
-	fi
-}
 
 _yara_filter_filelist() {
 	# Rebuild file list keeping only files that still exist and are readable.
@@ -5609,7 +5230,6 @@ gensigs() {
 	rm -f "$runtime_ndb" "$runtime_hdb" "$runtime_hexstrings" "$runtime_md5" \
 		"$runtime_sha256" "$runtime_hsb" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
-		"$runtime_csig_compiled" "$runtime_csig_prefixes" \
 		"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
 		"$runtime_csig_wildcards" "$runtime_csig_universals" \
 		2>/dev/null  # vars empty on first call
@@ -5739,24 +5359,46 @@ gensigs() {
 	runtime_hex_literal=$(mktemp "$tmpdir/.runtime.hex_literal.XXXXXX")
 	runtime_hex_regex=$(mktemp "$tmpdir/.runtime.hex_regex.XXXXXX")
 	runtime_hex_sigmap=$(mktemp "$tmpdir/.runtime.hex_sigmap.XXXXXX")
-	local _hex_line _hex_pat _hex_name _ere
-	while IFS= read -r _hex_line; do
-		[ -z "$_hex_line" ] && continue
-		_hex_pat="${_hex_line%%:*}"
-		_hex_name="${_hex_line#*:}"
-		# Build sigmap: tab-delimited pattern→name for all sigs
-		printf '%s\t%s\n' "$_hex_pat" "$_hex_name" >> "$runtime_hex_sigmap"
-		# Route to literal or regex file based on wildcard detection
-		if _ere=$(_hex_compile_pattern "$_hex_pat"); then
-			printf '%s\t%s\n' "$_hex_pat" "$_ere" >> "$runtime_hex_regex"
+	# Phase 1: Single awk pass — split, build sigmap, classify literal vs wildcard.
+	# Wildcard detection: ??, (alt|alt), *, nibble ?x/x?, {N-M} bounded gap.
+	# Matches the same regex as _hex_compile_pattern() line 3755.
+	local _hex_wc_tmp
+	_hex_wc_tmp=$(mktemp "$tmpdir/.hex_wc_tmp.XXXXXX")
+	awk -F: -v sigmap="$runtime_hex_sigmap" \
+		-v litfile="$runtime_hex_literal" \
+		-v wcfile="$_hex_wc_tmp" '
+	{
+		if (NF < 2 || $0 == "") next
+		pat = $1
+		# Rejoin fields 2..NF for sig name (name contains {HEX} prefix)
+		name = $2
+		for (i = 3; i <= NF; i++) name = name ":" $i
+		# Sigmap: all patterns
+		print pat "\t" name >> sigmap
+		# Wildcard detection (ClamAV tokens)
+		if (pat ~ /\?\?|\([^)]*\|[^)]*\)|\*|[?][0-9a-f]|[0-9a-f][?]|\{[0-9]+-[0-9]+\}/)
+			print pat "\t" name >> wcfile
 		else
-			echo "$_hex_pat" >> "$runtime_hex_literal"
-		fi
-	done < "$runtime_hexstrings"
+			print pat >> litfile
+	}' "$runtime_hexstrings"
+	# Phase 2: Compile wildcards via existing _hex_compile_pattern() (bash).
+	# Only ~51 patterns (~2% of total) — costs ~0.1s instead of ~5s.
+	local _hex_pat _hex_name _ere
+	if [ -s "$_hex_wc_tmp" ]; then
+		while IFS=$'\t' read -r _hex_pat _hex_name; do
+			if _ere=$(_hex_compile_pattern "$_hex_pat"); then
+				printf '%s\t%s\n' "$_hex_pat" "$_ere" >> "$runtime_hex_regex"
+			else
+				# Classified as wildcard by awk but _hex_compile_pattern says literal
+				# (edge case: awk regex is slightly broader than bash regex).
+				# Route to literal file — correct behavior.
+				echo "$_hex_pat" >> "$runtime_hex_literal"
+			fi
+		done < "$_hex_wc_tmp"
+	fi
+	rm -f "$_hex_wc_tmp"
 
 	# Build compound signature (csig) runtime files
-	runtime_csig_compiled=""
-	runtime_csig_prefixes=""
 	runtime_csig_batch_compiled=""
 	runtime_csig_literals=""
 	runtime_csig_wildcards=""
@@ -5786,8 +5428,6 @@ gensigs() {
 			rm -f "$_csig_filt"
 		fi
 		if [ -s "$_runtime_csig" ]; then
-			runtime_csig_compiled=$(mktemp "$tmpdir/.runtime.csig_compiled.XXXXXX")
-			runtime_csig_prefixes=$(mktemp "$tmpdir/.runtime.csig_prefixes.XXXXXX")
 			runtime_csig_batch_compiled=$(mktemp "$tmpdir/.runtime.csig_batch_compiled.XXXXXX")
 			runtime_csig_literals=$(mktemp "$tmpdir/.runtime.csig_literals.XXXXXX")
 			runtime_csig_wildcards=$(mktemp "$tmpdir/.runtime.csig_wildcards.XXXXXX")
