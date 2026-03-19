@@ -30,8 +30,8 @@ setup() {
     assert_success
 }
 
-@test "functions library syntax check passes" {
-    run bash -n "$LMD_INSTALL/internals/functions"
+@test "lmd.lib.sh syntax check passes" {
+    run bash -n "$LMD_INSTALL/internals/lmd.lib.sh"
     assert_success
 }
 

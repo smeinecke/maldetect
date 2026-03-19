@@ -127,7 +127,7 @@ _source_lmd_stack_clamav() {
     set +eu
     source "$LMD_INSTALL/internals/internals.conf"
     source "$LMD_INSTALL/conf.maldet"
-    source "$LMD_INSTALL/internals/functions"
+    source "$LMD_INSTALL/internals/lmd.lib.sh"
 }
 
 @test "_process_clamav_hits prefixes YARA hits with {YARA} not {YARA backslash}" {

@@ -35,7 +35,7 @@ _source_lmd_stack() {
     # shellcheck disable=SC1090,SC1091
     source "$LMD_INSTALL/internals/lmd_alert.sh"
     # shellcheck disable=SC1090,SC1091
-    source "$LMD_INSTALL/internals/functions"
+    source "$LMD_INSTALL/internals/lmd.lib.sh"
     set -eu
 }
 

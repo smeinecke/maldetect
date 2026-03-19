@@ -52,30 +52,20 @@ _hookscan_validation_script() {
     echo "$tmpscript"
 }
 
-@test "hookscan rejects filenames with shell metacharacters" {
+@test "hookscan rejects dangerous and invalid filenames" {
     local script
     script=$(_hookscan_validation_script)
     [ -s "$script" ]
-    # A filename with $() should be rejected
+    # $() command substitution
     run bash -c 'file="/tmp/test\$(whoami).php"; source "'"$script"'"'
-    rm -f "$script"
     [ "$status" -eq 1 ]
-}
-
-@test "hookscan rejects filenames with backticks" {
-    local script
-    script=$(_hookscan_validation_script)
+    # Backtick injection
     run bash -c 'file="/tmp/test\`id\`.php"; source "'"$script"'"'
-    rm -f "$script"
     [ "$status" -eq 1 ]
-}
-
-@test "hookscan rejects non-existent files" {
-    local script
-    script=$(_hookscan_validation_script)
+    # Non-existent file
     run bash -c 'file="/tmp/nonexistent_file_xyz.php"; source "'"$script"'"'
-    rm -f "$script"
     [ "$status" -eq 1 ]
+    rm -f "$script"
 }
 
 # F-002: -co config option injection
@@ -115,7 +105,7 @@ _source_lmd_stack() {
     set +eu
     source "$LMD_INSTALL/internals/internals.conf"
     source "$LMD_INSTALL/conf.maldet"
-    source "$LMD_INSTALL/internals/functions"
+    source "$LMD_INSTALL/internals/lmd.lib.sh"
 }
 
 @test "import_conf rejects command substitution in remote config" {
@@ -224,7 +214,7 @@ _source_lmd_stack() {
 
 # F-052: chown uses POSIX ':' separator (not deprecated '.')
 @test "functions uses POSIX chown user:group separator not deprecated dot" {
-    local func_file="$LMD_INSTALL/internals/functions"
+    local func_file="$LMD_INSTALL/internals/lmd.lib.sh"
     # grep for chown with '.' separator — should find zero matches
     # Pattern: chown followed by word.word (not :)
     # Exclude lines with $quardir/$file_name.$rnd (that dot is filename, not separator)
@@ -235,7 +225,7 @@ _source_lmd_stack() {
 
 # F-046: sed uses -E not -r
 @test "functions uses sed -E not deprecated sed -r" {
-    local func_file="$LMD_INSTALL/internals/functions"
+    local func_file="$LMD_INSTALL/internals/lmd.lib.sh"
     run grep -n 'sed -r' "$func_file"
     assert_failure
 }

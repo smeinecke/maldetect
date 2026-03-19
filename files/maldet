@@ -33,69 +33,13 @@ else
 	exit 1
 fi
 
-if [ -f "$tlog_lib" ]; then
-	source "$tlog_lib"
+# Source decomposed library hub (sources all vendored libs, sub-libraries, and config)
+if [ -f "$inspath/internals/lmd.lib.sh" ]; then
+	source "$inspath/internals/lmd.lib.sh"
 else
 	header
-	echo "maldet($$): {glob} \$tlog_lib not found, aborting." >&2
+	echo "maldet($$): {glob} lmd.lib.sh not found, aborting." >&2
 	exit 1
-fi
-
-if [ -f "$alert_lib" ]; then
-	source "$alert_lib"
-else
-	header
-	echo "maldet($$): {glob} \$alert_lib not found, aborting." >&2
-	exit 1
-fi
-
-if [ -f "$lmd_alert_lib" ]; then
-	source "$lmd_alert_lib"
-else
-	header
-	echo "maldet($$): {glob} \$lmd_alert_lib not found, aborting." >&2
-	exit 1
-fi
-
-# shellcheck disable=SC1090,SC1091
-if [ -f "$elog_lib" ]; then
-	. "$elog_lib"
-fi
-
-# elog_lib constants — event taxonomy
-ELOG_EVT_CONFIG_LOADED="config_loaded"
-ELOG_EVT_SCAN_STARTED="scan_started"
-ELOG_EVT_SCAN_COMPLETED="scan_completed"
-ELOG_EVT_THREAT_DETECTED="threat_detected"
-ELOG_EVT_QUARANTINE_ADDED="quarantine_added"
-ELOG_EVT_QUARANTINE_REMOVED="quarantine_removed"
-ELOG_EVT_FILE_CLEANED="file_cleaned"
-ELOG_EVT_MONITOR_STARTED="monitor_started"
-ELOG_EVT_MONITOR_STOPPED="monitor_stopped"
-ELOG_EVT_ALERT_SENT="alert_sent"
-
-if [ -f "$cnf" ]; then
-	source "$cnf"
-else
-	header
-	echo "maldet($$): {glob} \$cnf not found, aborting." >&2
-	exit 1
-fi
-
-if [ -f "$intfunc" ]; then
-	source "$intfunc"
-else
-	header
-	echo "maldet($$): {glob} \$intfunc not found, aborting." >&2
-	exit 1
-fi
-
-if [ -f "$compatcnf" ]; then
-	source "$compatcnf"
-fi
-
-if [ -f "$syscnf" ]; then
-	source "$syscnf"
 fi
 
 # prerun operations
@@ -179,6 +123,226 @@ for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
 done
 set -- "${_remaining_args[@]}"
 unset _all_args _remaining_args _i
+
+usage_short() {
+cat <<EOF
+signature set: $sig_version
+usage: maldet [OPTION] [ARGUMENT]
+
+  scanning:
+    -a|--scan-all PATH          scan all files in path
+    -r|--scan-recent PATH DAYS  scan recently created/modified files
+    -f|--file-list FILE         scan files from a file list
+    -b|--background             run scan in the background
+
+  scan filters:
+    -i|--include-regex REGEX    include only matching paths
+    -x|--exclude-regex REGEX    exclude matching paths
+    -co|--config-option VAR=VAL override config options at runtime
+                                (enable YARA: -co scan_yara=1)
+    -U|--user USER              run as specified user
+
+  monitoring:
+    -m|--monitor USERS|PATHS|FILE|RELOAD  start inotify monitoring
+    -k|--kill-monitor           stop inotify monitoring
+
+  quarantine & restore:
+    -q|--quarantine SCANID      quarantine hits from scan
+    -n|--clean SCANID           clean malware from scan hits
+    -s|--restore FILE|SCANID    restore quarantined file(s)
+
+  reporting:
+    -e|--report [SCANID|list]     view scan report
+    --format text|json|html       set report output format (default: text)
+    --mailto ADDRESS              email report to address
+    --json-report [SCANID|list]   shorthand: --report --format json
+    --alert-daily                 generate inotify monitor digest alert
+    -l|--log                      view event log
+
+  updates:
+    -u|--update-sigs [--force]  update malware signatures
+    -d|--update-ver [--force|--beta]  update maldet version
+
+  other:
+    -p|--purge                  clear logs, quarantine, temp data
+    -c|--checkout FILE          submit suspected malware to rfxn.com
+    --mkpubpaths                create per-user pub/ data directories
+    --web-proxy IP:PORT         set HTTP/HTTPS proxy
+    -v|--version                show version information
+    -h|--help                   show detailed help
+EOF
+}
+
+usage_long() {
+cat<<EOF
+signature set: $sig_version
+usage: maldet [OPTION] [ARGUMENT]
+
+SCANNING:
+    -a, --scan-all PATH
+       Scan all files in path (default: /home, wildcard: ?)
+       e.g: maldet -a /home/?/public_html
+
+    -r, --scan-recent PATH DAYS
+       Scan files changed in the last X days (default: 7d, wildcard: ?)
+       e.g: maldet -r /home/?/public_html 2
+
+    -f, --file-list FILE
+       Scan files or paths defined in line-spaced file
+       e.g: maldet -f /root/scan_file_list
+
+    -b, --background
+       Execute scan operations in the background, ideal for large scans.
+       May appear anywhere in the command line.
+       e.g: maldet -b -r /home/?/public_html 7
+       e.g: maldet -a /home -b
+
+SCAN FILTERS:
+    -i, --include-regex REGEX
+       Include paths/files based on POSIX extended regular expression (grep -E).
+       May appear anywhere in the command line.
+       e.g: maldet --include-regex ".*/wp-content/.*|.*.php\$"
+       e.g: maldet -a /home -i ".*.php\$"
+
+    -x, --exclude-regex REGEX
+       Exclude paths/files based on POSIX extended regular expression (grep -E).
+       May appear anywhere in the command line.
+       e.g: maldet --exclude-regex ".*wp-content/w3tc/.*|.*core.[0-9]+\$"
+       e.g: maldet -a /home -x ".*\.log"
+
+    -co, --config-option VAR=VALUE[,VAR=VALUE,...]
+       Override conf.maldet config options at runtime
+       e.g: maldet --config-option email_addr=you@domain.com,quarantine_hits=1
+
+    -U, --user USER
+       Run as specified user, for user quarantine or viewing user reports
+       e.g: maldet --user nobody --report
+       e.g: maldet --user nobody --restore 050910-1534.21135
+
+MONITORING:
+    -m, --monitor USERS|PATHS|FILE|RELOAD
+       Start inotify kernel-level file create/modify monitoring
+       USERS:  monitor homedirs for UIDs >= inotify_minuid (default: 500)
+       FILE:   extract paths from line-spaced file
+       PATHS:  comma-separated path list (no wildcards)
+       RELOAD: trigger configuration reload on running monitor
+       e.g: maldet --monitor users
+       e.g: maldet --monitor /root/monitor_paths
+       e.g: maldet --monitor /home/mike,/home/ashton
+       e.g: maldet --monitor RELOAD
+
+    -k, --kill-monitor (also: -kill)
+       Terminate inotify monitoring service
+
+QUARANTINE & RESTORE:
+    -q, --quarantine SCANID
+       Quarantine all malware from scan report
+       e.g: maldet --quarantine 050910-1534.21135
+
+    -n, --clean SCANID
+       Try to clean & restore malware hits from scan report
+       e.g: maldet --clean 050910-1534.21135
+
+    -s, --restore FILE|SCANID
+       Restore file from quarantine to original path, or restore all
+       items from a specific scan
+       e.g: maldet --restore /usr/local/maldetect/quarantine/config.php.23754
+       e.g: maldet --restore 050910-1534.21135
+
+    -qd PATH
+       Override the quarantine directory for this run.
+       PATH must exist or the command exits with an error.
+       May appear anywhere in the command line.
+       e.g: maldet -qd /data/quarantine -q 050910-1534.21135
+       e.g: maldet -q 050910-1534.21135 -qd /data/quarantine
+
+REPORTING:
+    -e, --report [SCANID|list]
+       View scan report of most recent scan or of a specific SCANID.
+       Use "list" to show all reports. Combine with --format and --mailto.
+       e.g: maldet --report
+       e.g: maldet --report list
+       e.g: maldet --report 050910-1534.21135
+       e.g: maldet --format json -e 050910-1534.21135
+       e.g: maldet --mailto admin@example.com -e 050910-1534.21135
+
+    --format text|json|html
+       Set report output format for -e/--report (default: text).
+       May appear anywhere in the command line.
+       e.g: maldet --format json -e list
+       e.g: maldet -e 050910-1534.21135 --format html
+
+    --mailto ADDRESS
+       Email the report to the specified address instead of stdout.
+       May appear anywhere in the command line.
+       e.g: maldet --mailto admin@example.com -e 050910-1534.21135
+       e.g: maldet --format json --mailto admin@example.com -e newest
+
+    --json-report [SCANID|list]
+       Shorthand for --report --format json. Output scan report as
+       structured JSON (v1.0 schema). Supports both TSV and legacy
+       plaintext sessions (legacy sessions include "source": "legacy").
+       Use "list" to output all session reports as a JSON array.
+       e.g: maldet --json-report
+       e.g: maldet --json-report 050910-1534.21135
+       e.g: maldet --json-report list
+
+    --alert-daily (also: --monitor-report)
+       Generate a digest alert summarizing inotify monitor activity.
+       Requires monitor mode to be running.
+
+    -l, --log
+       View maldet event log
+
+YARA SCANNING:
+    Native YARA scanning invokes the yara (or yr from YARA-X) binary
+    independently of ClamAV. Enable via conf.maldet or runtime -co flag.
+
+    Config options (set in conf.maldet or via -co):
+      scan_yara              enable YARA scan stage [0|1] (default: 0)
+      scan_yara_timeout      YARA timeout in seconds (default: 300, 0=none)
+      scan_yara_scope        rule scope when ClamAV also active [all|custom]
+                             (default: custom)
+
+    Custom rules:
+      sigs/custom.yara       single-file YARA rules
+      sigs/custom.yara.d/    drop-in directory for .yar/.yara rule files
+
+    e.g: maldet -co scan_yara=1 -a /home/?/public_html
+
+UPDATES:
+    -u, --update-sigs (also: --update) [--force]
+       Update malware detection signatures from rfxn.com
+
+    -d, --update-ver (also: --update-version) [--force|--beta]
+       Update the installed version from rfxn.com
+
+OTHER:
+    -p, --purge
+       Clear logs, quarantine queue, session and temporary data
+
+    -c, --checkout FILE
+       Submit suspected malware to rfxn.com for review & signature hashing
+
+    --mkpubpaths
+       Create per-user pub/ data directories for non-root scan operations.
+       Requires scan_user_access=1 in conf.maldet.
+
+    --web-proxy (also: --wget-proxy, --curl-proxy) IP:PORT
+       Set HTTP/HTTPS proxy for all remote URL calls
+
+    -hscan, --hook-scan (also: --modsec)
+       Scan a single file supplied by a ModSecurity inspectFile hook.
+       Used internally by hookscan.sh; not intended for direct invocation.
+       May appear anywhere in the command line.
+
+    -v, --version
+       Show version information
+
+    -h, --help
+       Show this help message
+EOF
+}
 
 if [ -z "$1" ]; then
 	header
@@ -295,7 +459,14 @@ else
 					touch $inspath/reload_monitor
 				else
 					svc=m
-					trap trap_exit 2
+					if [ "$set_background" = "1" ]; then
+						eout "{mon} daemonizing monitor supervisor to background" 1
+						( exec "$0" --monitor "$1" ) >> /dev/null 2>&1 &
+						_bg_pid=$!
+						echo "$_bg_pid" > "$tmpdir/monitor.pid"
+						eout "{mon} background monitor started (pid: $_bg_pid)" 1
+						exit 0
+					fi
 					monitor_init "$1"
 				fi
 			;;
@@ -304,12 +475,23 @@ else
 				if [ "$os_freebsd" == "1" ]; then
 					eout "{mon} not currently supported under FreeBSD" 1
 				else
-					monitorpid=$(pgrep -f inotify.paths.[0-9]+)
-					if [ -z "$monitorpid" ]; then
-						eout "{mon} could not find running inotifywait process, are we already dead?" 1
+					if [ -f "$tmpdir/monitor.pid" ]; then
+						_mpid=$(cat "$tmpdir/monitor.pid")
+						if [ -n "$_mpid" ] && kill -0 "$_mpid" 2>/dev/null; then
+							eout "{mon} sending stop to monitor supervisor (pid: $_mpid)" 1
+							monitor_kill
+						else
+							eout "{mon} stale monitor.pid found, cleaning up" 1
+							command rm -f "$tmpdir/monitor.pid"
+						fi
 					else
-						eout "{mon} sent kill to monitor service (pid: $monitorpid)" 1
-						monitor_kill
+						monitorpid=$(pgrep -f 'inotify.paths.[0-9]+' 2>/dev/null)
+						if [ -z "$monitorpid" ]; then
+							eout "{mon} could not find running monitor process, are we already dead?" 1
+						else
+							eout "{mon} sent kill to legacy monitor process (pid: $monitorpid)" 1
+							monitor_kill
+						fi
 					fi
 				fi
 			;;

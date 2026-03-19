@@ -64,7 +64,7 @@ teardown() {
     assert_success
     [ -f "$LMD_INSTALL/conf.maldet" ]
     [ -f "$LMD_INSTALL/internals/internals.conf" ]
-    [ -f "$LMD_INSTALL/internals/functions" ]
+    [ -f "$LMD_INSTALL/internals/lmd.lib.sh" ]
 }
 
 @test "maldet -p does not remove signature files" {

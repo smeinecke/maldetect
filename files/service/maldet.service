@@ -13,8 +13,9 @@ EnvironmentFile=-/etc/sysconfig/maldet
 EnvironmentFile=-/etc/default/maldet
 ExecStart=/usr/local/maldetect/maldet --monitor ${MONITOR_MODE:-users}
 ExecStop=/usr/local/maldetect/maldet --kill-monitor
-Type=forking
-PIDFile=/usr/local/maldetect/tmp/monitor.pid
+Type=simple
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

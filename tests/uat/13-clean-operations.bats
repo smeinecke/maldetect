@@ -69,7 +69,7 @@ teardown_file() {
     # Config and signatures must survive purge
     [ -f "$LMD_INSTALL/conf.maldet" ]
     [ -f "$LMD_INSTALL/internals/internals.conf" ]
-    [ -f "$LMD_INSTALL/internals/functions" ]
+    [ -f "$LMD_INSTALL/internals/lmd.lib.sh" ]
     [ -d "$LMD_INSTALL/sigs" ]
     [ -s "$LMD_INSTALL/sigs/md5v2.dat" ]
 }

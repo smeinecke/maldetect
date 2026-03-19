@@ -48,8 +48,11 @@ _install_core() {
 		"$inspath/sess" "$inspath/sigs" "$inspath/tmp"
 	chmod 750 "$inspath/logs" "$inspath/internals/tlog" "$inspath/internals/alert" 2>/dev/null
 	chmod 750 "$inspath/internals/tlog_lib.sh" "$inspath/internals/alert_lib.sh" \
-		"$inspath/internals/lmd_alert.sh" "$inspath/internals/elog_lib.sh" \
-		"$inspath/internals/pkg_lib.sh" 2>/dev/null
+		"$inspath/internals/elog_lib.sh" "$inspath/internals/pkg_lib.sh" 2>/dev/null
+	# Sub-library permissions (decomposed from functions monolith)
+	chmod 750 "$inspath/internals/lmd.lib.sh"
+	# shellcheck disable=SC2086
+	chmod 750 "$inspath/internals"/lmd_*.sh 2>/dev/null
 	# shellcheck disable=SC2086
 	chmod 640 "$inspath/internals/alert/"* 2>/dev/null
 	# tlog: replace default BASERUN for cursor storage security
@@ -294,12 +297,13 @@ _import_config() {
 
 _restart_monitor() {
 	if [ "${monmode:-}" == "1" ]; then
+		pkg_info "NOTE: monitor process uses legacy forking model; restart to use new supervisor mode"
 		if pkg_is_systemd && systemctl is-enabled maldet.service >/dev/null 2>&1; then
-			pkg_info "detected active monitoring mode, restarting via systemctl"
+			pkg_info "restarting monitor via systemctl"
 			systemctl restart maldet.service >>/dev/null 2>&1 &
 		else
-			pkg_info "detected active monitoring mode, restarted inotify watch with '-m users'"
-			"$inspath/maldet" -m users >>/dev/null 2>&1 &
+			pkg_info "restarting monitor with '-b -m users'"
+			"$inspath/maldet" -b -m users >>/dev/null 2>&1 &
 		fi
 	fi
 }
@@ -359,6 +363,7 @@ if [ -d "$inspath" ] && [ -d "files" ]; then
 		cp -rf "$bkpath/sigs/custom.yara.d" "$inspath/sigs/" >>/dev/null 2>&1  # safe: copy yara rules
 	fi
 	cp -f "$bkpath/monitor_paths" "$inspath/" >>/dev/null 2>&1  # safe: file may not exist
+	cp -f "$bkpath/monitor_paths.extra" "$inspath/" >>/dev/null 2>&1  # safe: file may not exist
 	# shellcheck disable=SC2086
 	cp -pf "$bkpath"/clean/custom.* "$inspath/clean/" >>/dev/null 2>&1  # safe: glob may match nothing
 	cp -pf "$bkpath/conf.maldet.hookscan" "$inspath/" >>/dev/null 2>&1  # safe: file may not exist
@@ -367,6 +372,11 @@ if [ -d "$inspath" ] && [ -d "files" ]; then
 	fi
 	if [ -d "$bkpath/internals/alert/custom.d" ]; then
 		cp -rf "$bkpath/internals/alert/custom.d" "$inspath/internals/alert/" >>/dev/null 2>&1  # safe: custom alert templates
+	fi
+	# Create empty monitor_paths.extra if not restored from backup
+	if [ ! -f "$inspath/monitor_paths.extra" ]; then
+		touch "$inspath/monitor_paths.extra"
+		chmod 640 "$inspath/monitor_paths.extra"
 	fi
 	# tlog cursor migration: inotify switching from line-count to byte-offset
 	rm -f "$inspath/tmp/inotify" 2>/dev/null  # safe: legacy cursor file
@@ -401,6 +411,11 @@ elif [ -d "files" ]; then
 
 	pkg_section "Installing files"
 	_install_core
+	# Create empty monitor_paths.extra if not restored from backup
+	if [ ! -f "$inspath/monitor_paths.extra" ]; then
+		touch "$inspath/monitor_paths.extra"
+		chmod 640 "$inspath/monitor_paths.extra"
+	fi
 	_install_cron_service
 
 	pkg_section "Updating signatures"

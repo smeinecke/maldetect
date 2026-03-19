@@ -305,6 +305,9 @@ maldet -co scan_yara=1 -a /home/?/public_html
 | `inotify_ionice` | IO priority for monitor process | `6` |
 | `inotify_cpulimit` | Hard CPU limit for monitor (0=disabled) | `0` |
 | `inotify_verbose` | Log every file scanned (debug only) | `0` |
+| `digest_interval` | Interval between periodic digest summary alerts: `24h`, `30m`, `7d`, `0` (disabled) | `24h` |
+| `digest_escalate_hits` | Hit count threshold for immediate escalation alert; `0` = disabled | `0` |
+| `monitor_paths_extra` | Path to a line-separated file of additional inotify watch paths | `/usr/local/maldetect/monitor_paths.extra` |
 
 ### 3.7 ClamAV Integration
 
@@ -453,7 +456,7 @@ Four ignore files control what is excluded from scanning:
 | `ignore_paths` | Line-separated paths | Exclude directories or files from scans |
 | `ignore_file_ext` | Line-separated extensions | Exclude file extensions (`.js`, `.css`) |
 | `ignore_sigs` | Line-separated patterns | Skip matching signatures (regex, substring match) |
-| `ignore_inotify` | Line-separated regex patterns | Exclude inotify monitoring events |
+| `ignore_inotify` | Line-separated literal paths | Exclude inotify monitoring events |
 
 All ignore files are located under `/usr/local/maldetect/`.
 
@@ -470,9 +473,9 @@ All ignore files are located under `/usr/local/maldetect/`.
 # ignore_sigs
 base64.inject.unclassed
 
-# ignore_inotify
-^/home/user$
-^/var/tmp/#sql_.*\.MYD$
+# ignore_inotify (literal paths; ERE metacharacters are auto-escaped)
+/home/user
+/var/tmp
 ```
 
 **Note:** `ignore_sigs` entries are treated as extended regex patterns and match as substrings. An entry `php.shell` will suppress `php.shell`, `php.shell.v2`, `{YARA}php.shell.backdoor`, etc. Use `^php\.shell$` for an exact match. The `.` character matches any character in regex; escape it as `\.` for a literal dot.
@@ -516,8 +519,11 @@ A weekly watchdog script (`/etc/cron.weekly/maldet-watchdog`) provides independe
 Real-time file monitoring uses the kernel inotify subsystem to detect file creation, modification, and move events. Requires a kernel with `CONFIG_INOTIFY_USER` (standard on all modern kernels).
 
 ```bash
-# Monitor all user home directories (UIDs >= inotify_minuid)
+# Monitor all user home directories (UIDs >= inotify_minuid) — foreground
 maldet -m users
+
+# Monitor in the background (daemon mode)
+maldet -b -m users
 
 # Monitor specific paths
 maldet -m /home/mike,/home/ashton
@@ -525,20 +531,27 @@ maldet -m /home/mike,/home/ashton
 # Monitor paths from a file
 maldet -m /root/monitor_paths
 
-# Stop monitoring
+# Stop monitoring (sends SIGTERM; escalates to SIGKILL after 10s)
 maldet -k
 ```
 
 **How it works:**
 
+`maldet -m` runs a supervisor process in the foreground by default. The supervisor manages an `inotifywait` child and handles crash recovery, configuration reloads, and digest alerting. Use `-b` to daemonize the supervisor and return immediately.
+
 1. `monitor_init()` sets up inotify watches on all files under monitored paths
 2. File events are queued and batch-scanned every `inotify_sleep` seconds (default: 15)
 3. Configuration is reloaded every `inotify_reloadtime` seconds (default: 3600)
 4. Kernel `max_user_watches` and `max_user_instances` are auto-tuned for optimal performance
+5. If `inotifywait` crashes, the supervisor restarts it with exponential backoff (2, 4, 8, 16, 32 seconds); after 3 consecutive failures the supervisor exits
+
+**Digest alerts** are sent periodically at the interval set by `digest_interval` (default: `24h`). If the hit count since the last digest exceeds `digest_escalate_hits`, an immediate escalation alert is sent (default: `0`, disabled).
+
+**Additive paths:** To watch additional paths without editing `conf.maldet`, add them one per line to the file referenced by `monitor_paths_extra` (default: `/usr/local/maldetect/monitor_paths.extra`). These are merged with the primary watch list on every config reload.
 
 When using the `users` mode, only subdirectories matching `inotify_docroot` (default: `public_html,public_ftp`) are monitored, plus the system temp directories `/tmp`, `/var/tmp`, and `/dev/shm`.
 
-Alerting in monitor mode uses daily digest reports via the cron job rather than per-file alerts.
+**Note:** `ignore_inotify` entries are now treated as literal paths. ERE metacharacters (`.`, `*`, `+`, etc.) are automatically escaped before matching. If your `ignore_inotify` file contained regex patterns, update them to use literal path strings.
 
 ---
 

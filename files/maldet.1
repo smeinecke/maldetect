@@ -40,6 +40,8 @@ May appear anywhere in the command line.
 .TP
 \fB\-m\fR, \fB\-\-monitor\fR \fIUSERS\fR|\fIPATHS\fR|\fIFILE\fR|\fIRELOAD\fR
 Start inotify real\-time monitoring.
+By default, the supervisor runs in the foreground and holds the terminal.
+Use \fB\-b\fR before \fB\-\-monitor\fR to daemonize: \fBmaldet \-b \-m users\fR.
 \fBusers\fR monitors homedirs of UIDs above \fBinotify_minuid\fR.
 \fBPATHS\fR accepts a comma\-separated list.
 \fBFILE\fR reads paths from a file.
@@ -47,6 +49,8 @@ Start inotify real\-time monitoring.
 .TP
 \fB\-k\fR, \fB\-\-kill\-monitor\fR
 Stop the inotify monitoring service.
+Sends SIGTERM to the supervisor for a clean shutdown; escalates to SIGKILL
+after a 10-second timeout if the process does not exit.
 .SS Quarantine and Restore
 .TP
 \fB\-q\fR, \fB\-\-quarantine\fR \fISCANID\fR
@@ -156,8 +160,13 @@ Internal paths, binary discovery, and URL definitions.
 .I /usr/local/maldetect/internals/compat.conf
 Backward compatibility variable mappings.
 .TP
-.I /usr/local/maldetect/internals/functions
-Core function library.
+.B /usr/local/maldetect/internals/lmd.lib.sh
+Core library sourcing hub \(em sources all sub-libraries in dependency order.
+.TP
+.B /usr/local/maldetect/internals/lmd_*.sh
+Decomposed function libraries: lmd_init, lmd_config, lmd_scan, lmd_engine,
+lmd_clamav, lmd_yara, lmd_sigs, lmd_quarantine, lmd_session, lmd_monitor,
+lmd_update.
 .TP
 .I /usr/local/maldetect/internals/alert_lib.sh
 Shared alerting library (email, Slack, Telegram, Discord delivery).
@@ -217,6 +226,14 @@ Independent signature update cron job (interval set by \fBsigup_interval\fR).
 .TP
 .I /etc/sysconfig/maldet " or " /etc/default/maldet
 System\-level configuration overrides.
+.TP
+.I /usr/local/maldetect/monitor_paths.extra
+Line-separated file of additional paths to add to the inotify watch list.
+Managed independently of
+.BR conf.maldet .
+See
+.B monitor_paths_extra
+in the CONFIGURATION section.
 .SH CONFIGURATION
 Configuration is loaded from
 .I conf.maldet
@@ -268,7 +285,10 @@ Key variables by category:
 .BR inotify_docroot ,
 .BR inotify_sleep ,
 .BR inotify_reloadtime ,
-.BR inotify_cpunice .
+.BR inotify_cpunice ,
+.BR digest_interval ,
+.BR digest_escalate_hits ,
+.BR monitor_paths_extra .
 .PP
 .B Maintenance:
 .BR autoupdate_signatures ,
@@ -376,9 +396,87 @@ reload signal to
 is only sent when at least one ClamAV data directory passes validation.
 This prevents malformed signature updates from breaking ClamAV (issue #467).
 .PP
+.B digest_interval
+sets the period between automatic digest summary alerts in monitor mode.
+Accepts a numeric value with a unit suffix:
+.B Nh
+(hours),
+.B Nm
+(minutes),
+.B Nd
+(days).
+Set to
+.B 0
+to disable periodic digests.
+Default: 24h.
+.PP
+.B digest_escalate_hits
+sets a hit-count threshold for immediate escalation alerts in monitor mode.
+When the number of new hits detected since the last digest exceeds this value,
+an alert is sent immediately rather than waiting for the next digest interval.
+Set to
+.B 0
+to disable escalation.
+Default: 0.
+.PP
+.B monitor_paths_extra
+is the path to a line-separated file of additional paths to add to the
+inotify watch list.
+Entries in this file are merged with the primary watch list on every
+configuration reload, allowing paths to be added without modifying
+.B conf.maldet
+or restarting the monitor.
+Default: /usr/local/maldetect/monitor_paths.extra.
+.PP
 See
 .I conf.maldet
 for the full list with descriptions.
+.SH MONITOR MODE
+The monitor command runs a supervisor process that manages an
+.BR inotifywait (1)
+child watching for file create, modify, and move events.
+.PP
+By default,
+.B maldet \-m users
+runs in the foreground, keeping the terminal occupied.
+Use
+.B maldet \-b \-m users
+to daemonize the supervisor and return immediately.
+The
+.B \-b
+flag may appear anywhere on the command line.
+.PP
+The supervisor automatically recovers from
+.B inotifywait
+crashes using exponential backoff (2, 4, 8, 16, 32 seconds).
+After three consecutive failures the supervisor exits with a logged error.
+.PP
+.B maldet \-k
+sends SIGTERM to the running supervisor for a clean shutdown.
+If the process does not exit within 10 seconds, SIGKILL is sent.
+.PP
+A periodic digest summary alert is sent every
+.B digest_interval
+(default: 24h).
+If the number of new hits since the last digest exceeds
+.B digest_escalate_hits
+(default: 0, disabled), an immediate escalation alert is sent regardless of the interval.
+.PP
+Additional watch paths can be supplied without modifying
+.B conf.maldet
+by listing them (one per line) in the file pointed to by
+.BR monitor_paths_extra .
+These are merged with the primary path list on every cycle reload.
+.PP
+.B Behavioral change \(em ignore_inotify entries are now treated as literal paths.
+ERE metacharacters
+.RI ( . ,
+.IR * ,
+.IR + ,
+etc.) are automatically escaped before the path is used as a pattern.
+Users who previously relied on ERE regex patterns in
+.B ignore_inotify
+should update their entries to use literal path strings.
 .SH EXAMPLES
 .TP
 Scan all files under user web roots:
@@ -402,8 +500,11 @@ List all reports as JSON:
 Quarantine all hits from a scan:
 .B maldet \-q SCANID
 .TP
-Start real\-time inotify monitoring:
+Start real\-time inotify monitoring (foreground):
 .B maldet \-m users
+.TP
+Start real\-time inotify monitoring (background daemon):
+.B maldet \-b \-m users
 .SH SEE ALSO
 .BR clamdscan (1),
 .BR clamscan (1),

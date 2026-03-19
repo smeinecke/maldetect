@@ -56,7 +56,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/internals/elog_lib.sh"
         source "'"$LMD_INSTALL"'/conf.maldet"
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         _lmd_elog_init
         echo "APP=$ELOG_APP"
         echo "STDOUT=$ELOG_STDOUT"
@@ -78,7 +78,7 @@ teardown() {
 source /usr/local/maldetect/internals/internals.conf
 source /usr/local/maldetect/internals/elog_lib.sh
 source /usr/local/maldetect/conf.maldet
-source /usr/local/maldetect/internals/functions
+source /usr/local/maldetect/internals/lmd.lib.sh
 _lmd_elog_init
 echo "AUDIT=$ELOG_AUDIT_FILE"
 TESTEOF
@@ -160,7 +160,7 @@ TESTEOF
         source "'"$LMD_INSTALL"'/internals/elog_lib.sh"
         source "'"$LMD_INSTALL"'/conf.maldet"
         maldet_log_truncate=1
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         _lmd_elog_init
         echo "MAX=$ELOG_LOG_MAX_LINES"
     '

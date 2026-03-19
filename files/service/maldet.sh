@@ -82,7 +82,7 @@ fi
 
 start() {
         echo -n "Starting $prog: "
-        $inspath/maldet --monitor "$MONITOR_MODE"
+        $inspath/maldet -b --monitor "$MONITOR_MODE"
         RETVAL=$?; [ $RETVAL -eq 0 ] && touch $LOCKFILE
         echo
         return $RETVAL

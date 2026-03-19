@@ -46,8 +46,8 @@ setup_file() {
     [ -f "$LMD_INSTALL/conf.maldet" ]
 }
 
-@test "functions library exists" {
-    [ -f "$LMD_INSTALL/internals/functions" ]
+@test "lmd.lib.sh sourcing hub exists" {
+    [ -f "$LMD_INSTALL/internals/lmd.lib.sh" ]
 }
 
 @test "signature directory exists" {
@@ -75,9 +75,11 @@ setup_file() {
     assert_output --partial "unrecognized option"
 }
 
-# F-031: PIDFile references monitor.pid
-@test "maldet.service PIDFile references monitor.pid" {
-    grep -q 'PIDFile=.*monitor\.pid' "$LMD_INSTALL/service/maldet.service"
+# F-031: Type=simple (foreground supervisor, no PIDFile needed)
+@test "maldet.service uses Type=simple" {
+    grep -q 'Type=simple' "$LMD_INSTALL/service/maldet.service"
+    ! grep -q 'PIDFile=' "$LMD_INSTALL/service/maldet.service"
+    grep -q 'Restart=on-failure' "$LMD_INSTALL/service/maldet.service"
 }
 
 # F-032: EnvironmentFile does not reference conf.maldet

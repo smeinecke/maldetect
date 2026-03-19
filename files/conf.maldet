@@ -402,6 +402,26 @@ inotify_cpulimit="0"
 # and will drown out your 'event_log' file, intended only for debugging purposes.
 inotify_verbose="0"
 
+# Periodic digest summary interval for monitor mode.
+# Supports: Nh (hours), Nm (minutes), Nd (days). 0 = disabled.
+# When enabled, the monitor fires a digest alert at this interval
+# summarizing all detections since the last digest. The cron.daily
+# --monitor-report fallback still works independently.
+# Default: 24h (matches current daily cron behavior)
+digest_interval="24h"
+
+# Immediate escalation threshold for monitor mode.
+# When a single monitor scan cycle finds this many (or more) malware
+# hits, fire an immediate per-scan alert in addition to the periodic
+# digest. 0 = disabled (legacy behavior — no per-cycle alerts).
+digest_escalate_hits="0"
+
+# Additional paths to monitor alongside the primary monitor mode.
+# Line-separated file. Paths listed here are ADDED to whatever the
+# primary mode (users/path) produces — they do not replace it.
+# Empty or missing file = no extra paths (no-op).
+monitor_paths_extra="/usr/local/maldetect/monitor_paths.extra"
+
 # Remote clamd support
 # If you're running a dedicated clamd server, you can instruct clamdscan to use
 # it instead of the local daemon (which doesn't even need to run). To use

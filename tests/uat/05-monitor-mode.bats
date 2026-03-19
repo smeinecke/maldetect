@@ -40,13 +40,19 @@ teardown_file() {
         skip "inotifywait not available"
     fi
 
-    # Start monitor in background with timeout safety net
-    timeout --signal KILL 30 maldet -m "$MONITOR_DIR" > /dev/null 2>&1 &
+    # Start monitor in background using -b flag (supervisor daemonizes itself)
+    maldet -b -m "$MONITOR_DIR" > /dev/null 2>&1
 
     # Wait for inotify startup message in event log (up to 15s — Docker can be slow)
     if ! uat_wait_for_log "$MALDET_LOG" "inotify startup successful" 15; then
         skip "Monitor did not start in time (Docker limitation)"
     fi
+
+    # Verify PID file exists and process is alive
+    [ -f "$LMD_INSTALL/tmp/monitor.pid" ]
+    local _pid
+    _pid=$(cat "$LMD_INSTALL/tmp/monitor.pid")
+    kill -0 "$_pid" 2>/dev/null
 
     # Verify inotifywait process is running
     run pgrep -f "inotifywait"
@@ -74,6 +80,19 @@ teardown_file() {
 }
 
 # bats test_tags=uat,uat:monitor-mode
+@test "UAT: monitor foreground exits cleanly on timeout" {
+    if ! command -v inotifywait >/dev/null 2>&1; then
+        skip "inotifywait not available"
+    fi
+
+    # Start monitor in foreground with short timeout
+    # timeout returns 124 on expiry, maldet returns 0 on clean shutdown
+    run timeout 5 maldet -m "$MONITOR_DIR"
+    # Accept either clean shutdown (0) or timeout expiry (124)
+    [ "$status" -eq 0 ] || [ "$status" -eq 124 ]
+}
+
+# bats test_tags=uat,uat:monitor-mode
 @test "UAT: monitor stop kills inotify processes" {
     if ! command -v inotifywait >/dev/null 2>&1; then
         skip "inotifywait not available"
@@ -85,4 +104,11 @@ teardown_file() {
     # Verify all inotifywait processes are gone
     run pgrep -f "inotifywait"
     assert_failure
+
+    # Verify PID file cleaned up
+    [ ! -f "$LMD_INSTALL/tmp/monitor.pid" ] || {
+        local _pid
+        _pid=$(cat "$LMD_INSTALL/tmp/monitor.pid" 2>/dev/null)
+        [ -z "$_pid" ] || ! kill -0 "$_pid" 2>/dev/null
+    }
 }

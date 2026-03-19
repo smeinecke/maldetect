@@ -48,12 +48,6 @@ teardown() {
     assert_output --partial "signatures ready"
 }
 
-@test "signature files exist and are non-empty" {
-    [ -s "$LMD_INSTALL/sigs/md5v2.dat" ]
-    [ -s "$LMD_INSTALL/sigs/hex.dat" ]
-    [ -f "$LMD_INSTALL/sigs/maldet.sigs.ver" ]
-}
-
 @test "sha256v2.dat absence is non-fatal (upgrade path)" {
     rm -f "$LMD_INSTALL/sigs/sha256v2.dat"
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"

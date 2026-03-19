@@ -312,7 +312,7 @@ _source_lmd_stack() {
     set +eu
     source "$LMD_INSTALL/internals/internals.conf"
     source "$LMD_INSTALL/conf.maldet"
-    source "$LMD_INSTALL/internals/functions"
+    source "$LMD_INSTALL/internals/lmd.lib.sh"
 }
 
 # --- Test 25: Batch compilation produces SID-referenced files ---

@@ -51,7 +51,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         web_proxy=""
         get_proxy_arg=""
         get_remote_file "https://cdn.rfxn.com/downloads/testfile.dat" "test" "1" ""
@@ -70,7 +70,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         web_proxy=""
         get_proxy_arg=""
         get_remote_file "https://cdn.rfxn.com/downloads/nonexistent.dat" "test" "1" ""
@@ -93,7 +93,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         # Force curl to empty so get_remote_file uses wget
         curl=""
         # Temporarily hide real curl
@@ -132,7 +132,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         sig_import_md5_url=""
         sig_import_hex_url=""
@@ -161,7 +161,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         sig_import_md5_url=""
         sig_import_hex_url=""
@@ -188,7 +188,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         sig_import_md5_url=""
         sig_import_hex_url=""
@@ -213,7 +213,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         sig_import_md5_url=""
         sig_import_hex_url=""
@@ -243,7 +243,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         sig_import_md5_url=""
         sig_import_hex_url=""
@@ -274,7 +274,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         sig_import_md5_url=""
         sig_import_hex_url=""
@@ -305,7 +305,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
@@ -327,7 +327,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
@@ -350,7 +350,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
@@ -374,7 +374,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
@@ -398,7 +398,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
@@ -413,7 +413,7 @@ teardown() {
 @test "lmdup hash check passes when files match" {
     set_fixture "maldet.current.ver" "2.0.1"
     # Compute real hash of installed files
-    local_hash=$(sha256sum "$LMD_INSTALL/maldet" "$LMD_INSTALL/internals/functions" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ')
+    local_hash=$(sha256sum "$LMD_INSTALL/maldet" "$LMD_INSTALL/internals/lmd.lib.sh" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ')
     set_fixture "maldet.current.hash.sha256" "$local_hash"
 
     run bash -c '
@@ -422,7 +422,7 @@ teardown() {
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
@@ -607,7 +607,7 @@ MOCK
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         sig_import_md5_url=""
         sig_import_hex_url=""
         import_config_url=""
@@ -634,7 +634,7 @@ MOCK
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         sig_import_md5_url=""
         sig_import_hex_url=""
         import_config_url=""
@@ -668,7 +668,7 @@ RULE
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         sig_import_md5_url=""
         sig_import_hex_url=""
         import_config_url=""
@@ -700,7 +700,7 @@ RULE
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         sig_import_md5_url=""
         sig_import_hex_url=""
         sig_import_yara_url=""
@@ -733,7 +733,7 @@ RULE
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         sig_import_md5_url=""
         sig_import_hex_url=""
@@ -761,7 +761,7 @@ RULE
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""
@@ -778,7 +778,7 @@ RULE
 @test "lmdup hash check falls back to md5 URL when sha256sum unavailable" {
     set_fixture "maldet.current.ver" "2.0.1"
     # Compute real MD5 hash of installed files (sha256sum unavailable)
-    local_hash=$(md5sum "$LMD_INSTALL/maldet" "$LMD_INSTALL/internals/functions" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ')
+    local_hash=$(md5sum "$LMD_INSTALL/maldet" "$LMD_INSTALL/internals/lmd.lib.sh" | awk '{print$1}' | tr '\n' ' ' | tr -d ' ')
     set_fixture "maldet.current.hash" "$local_hash"
 
     run bash -c '
@@ -787,7 +787,7 @@ RULE
         source "'"$LMD_INSTALL"'/internals/internals.conf"
         source "'"$LMD_INSTALL"'/conf.maldet"
         if [ -f "$compatcnf" ]; then source "$compatcnf"; fi
-        source "'"$LMD_INSTALL"'/internals/functions"
+        source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"
         import_config_url=""
         web_proxy=""
         get_proxy_arg=""

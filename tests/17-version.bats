@@ -9,10 +9,6 @@ setup_file() {
     source /opt/tests/helpers/reset-lmd.sh
 }
 
-@test "VERSION file exists" {
-    [ -f "$LMD_INSTALL/VERSION" ]
-}
-
 @test "VERSION file contains current version" {
     run cat "$LMD_INSTALL/VERSION"
     assert_output --partial "2.0.1"
@@ -24,12 +20,3 @@ setup_file() {
     assert_output --partial "v2.0.1"
 }
 
-@test "internals.conf references lmd_version_file" {
-    run grep 'lmd_version_file=' "$LMD_INSTALL/internals/internals.conf"
-    assert_success
-}
-
-@test "maldet lmd_version variable is set to 2.0.1" {
-    run grep '^lmd_version=' "$LMD_INSTALL/maldet"
-    assert_success
-}

@@ -2,6 +2,25 @@ v2.0.1 | Mar 10 2026:
 
   -- Changes --
 
+[Change] Decompose functions monolith (6,086 lines, 107 functions) into 11 sub-libraries
+         under files/internals/ with lmd.lib.sh sourcing hub; maldet source chain simplified
+         from 9 statements to 2; functions retained as backward-compat shim
+[Change] inotify_verbose: per-file ClamAV logging deprecated; batch engine log messages supersede
+[Change] Tests: update monitor UAT for foreground supervisor and -b daemonization
+[Change] Documentation: monitor mode redesign, 3 new config vars, behavioral changes
+[New] install.sh: monitor_paths.extra lifecycle, upgrade advisory, -b restart
+[Change] Service files: Type=simple supervisor, init script uses -b daemonization
+[Change] Monitor mode: foreground supervisor replaces double-fork orphan model
+[Fix] Defects #1-#8: graceful shutdown, inline loop, ERE escape, kernel check,
+      ClamAV cache, batch filter, crash recovery, session rotation
+[New] -b/--background + --monitor daemonizes supervisor
+[New] Digest interval timer, escalation threshold, additive path composition
+[New] _monitor_append_extra_paths(): additive path composition for monitor mode
+[New] _monitor_filter_events(): single-awk event filter replaces 4-process pipeline
+[New] _monitor_escape_ere(): ERE metacharacter escaper for ignore_inotify; fixes defect #3
+[New] _monitor_parse_interval(): digest interval parser with unit tests
+[New] Config: digest_interval, digest_escalate_hits, monitor_paths_extra
+[Change] _safe_source_conf allowlist: add digest_interval, digest_escalate_hits, monitor_paths_extra
 [Fix] _hash_batch_worker: explicit label param; fixes temp file naming mismatch
 [Change] Unify _md5_batch_worker/_sha256_batch_worker into _hash_batch_worker()
 [Change] install.sh: extract _read_conf_value() helper; deduplicate sigup_interval reads

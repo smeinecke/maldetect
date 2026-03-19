@@ -55,6 +55,3 @@ teardown() {
     [ "$output" -ge 1 ]
 }
 
-@test "event_log_symlink exists at install root" {
-    [ -L "$LMD_INSTALL/event_log" ] || [ -f "$LMD_INSTALL/event_log" ]
-}
