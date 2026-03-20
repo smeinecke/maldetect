@@ -155,9 +155,10 @@ teardown() {
     assert_output --partial "malware hits 2"
 }
 
-@test "? pattern with no matches gives empty file list" {
+@test "? pattern with no matches exits 1 (non-existent path)" {
     run maldet -a "$TEST_SCAN_DIR/nonexistent?/"
-    assert_success
+    # exit 1: all scan paths do not exist (post-G2 fix); no malware (exit 2 absent)
+    [ "$status" -eq 1 ]
     assert_output --partial "empty file list"
 }
 

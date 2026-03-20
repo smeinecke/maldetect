@@ -132,3 +132,16 @@ teardown() {
     assert_success
     assert_output --partial "malware hits 0"
 }
+
+@test "scan exits 1 when all scan paths do not exist" {
+    run maldet -a /nonexistent_lmd_test_path_xyz_plan
+    [ "$status" -eq 1 ]
+}
+
+@test "scan exits 0 when path exists but has no scannable files" {
+    local empty_dir
+    empty_dir=$(mktemp -d)
+    run maldet -a "$empty_dir"
+    [ "$status" -eq 0 ]
+    rm -rf "$empty_dir"
+}

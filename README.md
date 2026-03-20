@@ -405,7 +405,7 @@ OTHER:
   -h, --help                    show detailed help
 ```
 
-**Exit codes:** `0` = success / no hits, `1` = error, `2` = malware hits found.
+**Exit codes:** `0` = success / no hits, `1` = error or all scan paths non-existent, `2` = malware hits found.
 
 **Examples:**
 

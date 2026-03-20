@@ -30,7 +30,7 @@ _hash_batch_worker() {
 	if [ "$os_freebsd" == "1" ]; then
 		# FreeBSD hash -q outputs hash only (no filename); loop to pair them
 		local _fbsd_out _fpath _fhash _fbsd_count=0
-		_fbsd_out=$(mktemp "$tmpdir/.${_hash_label}_fbsd.XXXXXX")
+		_fbsd_out=$(mktemp "$tmpdir/.${_hash_label}_fbsd.$$.XXXXXX")
 		while IFS= read -r _fpath; do
 			[ -f "$_fpath" ] && [ -r "$_fpath" ] || continue
 			_fhash=$($_hashcmd "$_fpath")
@@ -60,7 +60,7 @@ _hash_batch_worker() {
 		rm -f "$_fbsd_out"
 	else
 		# Linux: xargs hashcmd hashes all files in one process
-		_hash_out=$(mktemp "$tmpdir/.${_hash_label}_linux.XXXXXX")
+		_hash_out=$(mktemp "$tmpdir/.${_hash_label}_linux.$$.XXXXXX")
 		xargs -d '\n' "$_hashcmd" < "$_chunk" > "$_hash_out" 2>/dev/null  # suppress errors on unreadable files
 		# awk join: load sigs (hash->signame), scan hash output for matches
 		# Output format: "hash  filepath" (two spaces)
@@ -80,9 +80,19 @@ _hash_batch_worker() {
 		}
 		{
 			count++
+			escaped = 0
 			hash = $1
+			if (substr(hash, 1, 1) == "\\") {
+				hash = substr($1, 2)
+				escaped = 1
+			}
 			if (hash in sigs) {
-				fpath = substr($0, length(hash) + 3)
+				fpath = substr($0, length($1) + 3)
+				if (escaped) {
+					gsub(/\\\\/, "\001", fpath)
+					gsub(/\\n/,   "\n",  fpath)
+					gsub(/\001/,  "\\",  fpath)
+				}
 				print fpath "\t" hash "\t" sigs[hash]
 			}
 			if (pfile != "" && count % 500 == 0) {
@@ -113,8 +123,19 @@ _hex_csig_batch_worker() {
 	local _csig_batch_compiled="${6:-}" _csig_lit="${7:-}" _csig_wc="${8:-}" _csig_uni="${9:-}"
 	local _progress_file="${10:-}"
 
+	# Preload hex sigmap into associative array (eliminates awk fork per HEX hit)
+	# local -A safe here: runs in backgrounded subshell, not sourced-from-function
+	# context (see CLAUDE.md Bash 4.1+ Floor)
+	local -A _sigmap_cache=()
+	if [ -s "$_hex_sigmap" ]; then
+		local _spat _sname
+		while IFS=$'\t' read -r _spat _sname; do
+			_sigmap_cache["$_spat"]="$_sname"
+		done < "$_hex_sigmap"
+	fi
+
 	local _batch_hex _idx=0 _line
-	_batch_hex=$(mktemp "$tmpdir/.hcb.XXXXXX")
+	_batch_hex=$(mktemp "$tmpdir/.hcb.$$.XXXXXX")
 
 	# --- Phase 1: Batch hex extraction ---
 	local _names
@@ -143,7 +164,7 @@ _hex_csig_batch_worker() {
 		while IFS=: read -r _hit_linenum _hit_pat; do
 			local _fnum=$((_hit_linenum - 1))
 			if [ -n "${_names[$_fnum]+set}" ]; then
-				_hit_name=$(_hex_lookup_name "$_hit_pat" "$_hex_sigmap")
+				_hit_name=${_sigmap_cache["$_hit_pat"]:-}
 				if [ -n "$_hit_name" ]; then
 					printf '%s\t%s\n' "${_names[$_fnum]}" "$_hit_name"
 				fi
@@ -158,7 +179,7 @@ _hex_csig_batch_worker() {
 			while IFS=: read -r _hit_linenum2 _; do
 				local _fnum2=$((_hit_linenum2 - 1))
 				if [ -n "${_names[$_fnum2]+set}" ] && [ -n "${_names[$_fnum2]}" ]; then
-					_hit_name=$(_hex_lookup_name "$_orig_pat" "$_hex_sigmap")
+					_hit_name=${_sigmap_cache["$_orig_pat"]:-}
 					if [ -n "$_hit_name" ]; then
 						printf '%s\t%s\n' "${_names[$_fnum2]}" "$_hit_name"
 					fi
@@ -172,7 +193,7 @@ _hex_csig_batch_worker() {
 	# Skip entirely if no compiled rules or scan_csig disabled
 	if [ -n "$_csig_batch_compiled" ] && [ -s "$_csig_batch_compiled" ]; then
 		local _match_dir
-		_match_dir=$(mktemp -d "$tmpdir/.csig_mtx.XXXXXX")
+		_match_dir=$(mktemp -d "$tmpdir/.csig_mtx.$$.XXXXXX")
 
 		# Load universal subsig IDs
 		local _uni_sids=()
@@ -186,8 +207,8 @@ _hex_csig_batch_worker() {
 		# Tier 1: Literal pass — single grep -Fno, awk fan-out to per-SID files
 		if [ -n "$_csig_lit" ] && [ -s "$_csig_lit" ]; then
 			local _lit_pats _lit_lkup
-			_lit_pats=$(mktemp "$tmpdir/.csig_lp.XXXXXX")
-			_lit_lkup=$(mktemp "$tmpdir/.csig_ll.XXXXXX")
+			_lit_pats=$(mktemp "$tmpdir/.csig_lp.$$.XXXXXX")
+			_lit_lkup=$(mktemp "$tmpdir/.csig_ll.$$.XXXXXX")
 			cut -f2 "$_csig_lit" > "$_lit_pats"
 			awk -F'\t' '{print $2 "\t" $1}' "$_csig_lit" > "$_lit_lkup"
 
@@ -234,11 +255,25 @@ _hex_csig_batch_worker() {
 			done < "$_csig_wc"
 		fi
 
+		# Preload SID match files into associative array for O(1) lookup
+		# (eliminates grep -qFx fork per candidate-element pair in rule evaluation)
+		# local -A safe here: runs in backgrounded subshell, not sourced-from-function
+		# context; avoids the declare-A-global-state trap (see CLAUDE.md Bash 4.1+)
+		local -A _loaded_sids=()
+		local _sid_file _sid_name _sid_ln
+		for _sid_file in "$_match_dir"/*; do
+			[ -f "$_sid_file" ] || continue
+			_sid_name="${_sid_file##*/}"
+			while IFS= read -r _sid_ln; do
+				_loaded_sids["${_sid_name}:${_sid_ln}"]=1
+			done < "$_sid_file"
+		done
+
 		# Helper: check if SID matched on a given file line number
 		_check_sid_match() {
 			local __sid="$1" __linenum="$2"
 			[ -n "${_uni_sids[$__sid]:-}" ] && return 0
-			[ -s "${_match_dir}/${__sid}" ] && grep -qFx "$__linenum" "${_match_dir}/${__sid}" 2>/dev/null  # safe: grep exits 2 on missing/unreadable file
+			[ -n "${_loaded_sids[${__sid}:${__linenum}]+set}" ]
 		}
 
 		# Rule evaluation: iterate rules in source order (first-match-wins)
@@ -296,7 +331,7 @@ _hex_csig_batch_worker() {
 
 				# All-universal/all-OR: every file is a candidate
 				if [ -z "$_cand_file" ]; then
-					_cand_file=$(mktemp "$tmpdir/.csig_all.XXXXXX")
+					_cand_file=$(mktemp "$tmpdir/.csig_all.$$.XXXXXX")
 					seq 1 "$_total_files" > "$_cand_file"
 				fi
 
@@ -342,12 +377,12 @@ _hex_csig_batch_worker() {
 					fi
 				done < "$_cand_file"
 
-				rm -f "$tmpdir"/.csig_all.* 2>/dev/null  # safe: temp only exists for all-universal case
+				rm -f "$tmpdir"/.csig_all."$$".* 2>/dev/null  # safe: temp only exists for all-universal case
 				;;
 
 			or)
 				local _or_merge _elem
-				_or_merge=$(mktemp "$tmpdir/.csig_or.XXXXXX")
+				_or_merge=$(mktemp "$tmpdir/.csig_or.$$.XXXXXX")
 
 				for _elem in "${_elements[@]}"; do
 					if [ -n "${_uni_sids[$_elem]:-}" ]; then
@@ -381,12 +416,16 @@ _hex_csig_batch_worker() {
 scan_strlen() {
 	local type="$1"
 	local file="$2"
+	if [ "$os_freebsd" == "1" ]; then
+		eout "{strlen} skipped on FreeBSD (wc -L not available — GNU extension)" 1
+		return 0
+	fi
 	if [ "$string_length_scan" == "1" ] && [ "$type" == "file" ]; then
 		flen=$($wc -L "$file" 2> /dev/null | awk '{print$1}')
 		if [ "$flen" -ge "$string_length" ]; then
 			eout "{strlen} malware string length hit ${flen}b on $file" 1
 			local _strlen_manifest
-			_strlen_manifest=$(mktemp "$tmpdir/.strlen_manifest.XXXXXX")
+			_strlen_manifest=$(mktemp "$tmpdir/.strlen_manifest.$$.XXXXXX")
 			printf '%s\t{SA}stat.strlength\n' "$file" > "$_strlen_manifest"
 			_flush_hit_batch "$_strlen_manifest" "strlen"
 			rm -f "$_strlen_manifest"
@@ -401,7 +440,7 @@ scan_strlen() {
 				[ -f "$i" ] && eout "{strlen} malware string length hit on $i" 1
 			done < "$list.hits"
 			local _strlen_manifest
-			_strlen_manifest=$(mktemp "$tmpdir/.strlen_manifest.XXXXXX")
+			_strlen_manifest=$(mktemp "$tmpdir/.strlen_manifest.$$.XXXXXX")
 			while IFS= read -r i; do
 				[ -f "$i" ] && printf '%s\t{SA}stat.strlength\n' "$i"
 			done < "$list.hits" > "$_strlen_manifest"

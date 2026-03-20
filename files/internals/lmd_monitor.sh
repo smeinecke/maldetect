@@ -85,15 +85,18 @@ _monitor_filter_events() {
 			}
 		}
 		/ CREATE| MODIFY| MOVED_TO/ {
-			# Extract path: everything before the first event keyword
-			path = $0
-			sub(/ (CREATE|MODIFY|MOVED_TO).*/, "", path)
-			if (path == "" || seen[path]++) next
+			# Match the exact inotifywait trailing metadata block:
+			# [Space][Event(s)][Space][Day][Space][Month][Space][Time]$
+			if (match($0, / (CREATE|MODIFY|MOVED_TO)[^ ]* [0-9][0-9]* [A-Za-z][A-Za-z]* [0-9:][0-9:]*$/)) {
+				# Extract everything before the metadata block as the file path
+				path = substr($0, 1, RSTART - 1)
+				if (path == "" || seen[path]++) next
 			skip = 0
 			for (p in ign) {
 				if (index(path, p) > 0) { skip = 1; break }
 			}
 			if (!skip) print path
+			}
 		}
 	'
 }
@@ -186,7 +189,7 @@ _monitor_restart_inotify() {
 	fi
 
 	# Restart with same arguments
-	$nice_command $inotify -r --fromfile "$_inotify_fpaths" $_inotify_exclude \
+	$nice_command $inotify -r --fromfile "$_inotify_fpaths" "${_inotify_exclude[@]}" \
 		--timefmt "%d %b %H:%M:%S" --format "%w%f %e %T" -m \
 		-e create,move,modify >> "$inotify_log" 2>&1 &
 	_inotify_pid=$!
@@ -587,7 +590,7 @@ monitor_init() {
 	_monitor_append_extra_paths "${monitor_paths_extra:-}" "$_inotify_fpaths"
 
 	# --- Build inotifywait --exclude regex (with ERE escaping — defect #3) ---
-	_inotify_exclude=""
+	_inotify_exclude=()
 	if [ -f "$ignore_inotify" ] && [ -s "$ignore_inotify" ]; then
 		local _igregexp=""
 		while IFS= read -r igfile; do
@@ -601,7 +604,7 @@ monitor_init() {
 		done < <(grep -vE '^$' "$ignore_inotify")
 		if [ -n "$_igregexp" ]; then
 			_igregexp="$_igregexp)"
-			_inotify_exclude="--exclude $_igregexp"
+			_inotify_exclude=(--exclude "$_igregexp")
 		fi
 	fi
 
@@ -620,7 +623,7 @@ monitor_init() {
 	inotify_ionice="${inotify_ionice:-6}"
 	_build_nice_command "$inotify_cpunice" "$inotify_ionice" "$inotify_cpulimit"
 
-	$nice_command $inotify -r --fromfile "$_inotify_fpaths" $_inotify_exclude \
+	$nice_command $inotify -r --fromfile "$_inotify_fpaths" "${_inotify_exclude[@]}" \
 		--timefmt "%d %b %H:%M:%S" --format "%w%f %e %T" -m \
 		-e create,move,modify >> "$inotify_log" 2>&1 &
 	_inotify_pid=$!

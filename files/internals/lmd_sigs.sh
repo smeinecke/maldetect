@@ -502,6 +502,7 @@ _csig_compile_rules() {
 }
 
 _hex_lookup_name() {
+	# DEPRECATED: all callers removed in lmd_engine.sh (G5, v2.0.1). Remove in v2.0.2.
 	# Look up signature name from tab-delimited sigmap file.
 	# Uses exact field match (not substring) via awk.
 	local _pattern="$1" _sigmap="$2"

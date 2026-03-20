@@ -66,26 +66,26 @@ _scan_cleanup() {
 		"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
 		"$runtime_csig_wildcards" "$runtime_csig_universals" \
 		"$tmpdir"/.find_killed."$scanid" \
-		"$tmpdir"/.tmp* "$tmpdir"/.tmpf* "$tmpdir"/.yara_* \
-		"$tmpdir"/.hex_batch* "$tmpdir"/.hex_worker* "$tmpdir"/.hex_chunk* \
-		"$tmpdir"/.hex_md5hits* \
-		"$tmpdir"/.md5_batch_flist* "$tmpdir"/.md5_chunk* "$tmpdir"/.md5_worker* \
-		"$tmpdir"/.md5_linux* "$tmpdir"/.md5_fbsd* \
-		"$tmpdir"/.sha256_batch_flist* "$tmpdir"/.sha256_chunk* "$tmpdir"/.sha256_worker* \
-		"$tmpdir"/.sha256_linux* "$tmpdir"/.sha256_fbsd* \
-		"$tmpdir"/.sha256_manifest* "$tmpdir"/.sha256_md5hits* \
+		"$tmpdir"/.tmp* "$tmpdir"/.tmpf* "$tmpdir"/.yara_*."$$".* \
+		"$tmpdir"/.hex_batch_flist."$$".* "$tmpdir"/.hex_worker."$$".* "$tmpdir"/.hex_chunk."$$".* \
+		"$tmpdir"/.hex_md5hits."$$".* \
+		"$tmpdir"/.md5_batch_flist."$$".* "$tmpdir"/.md5_chunk."$$".* "$tmpdir"/.md5_worker."$$".* \
+		"$tmpdir"/.md5_linux."$$".* "$tmpdir"/.md5_fbsd."$$".* \
+		"$tmpdir"/.sha256_batch_flist."$$".* "$tmpdir"/.sha256_chunk."$$".* "$tmpdir"/.sha256_worker."$$".* \
+		"$tmpdir"/.sha256_linux."$$".* "$tmpdir"/.sha256_fbsd."$$".* \
+		"$tmpdir"/.sha256_manifest."$$".* "$tmpdir"/.sha256_md5hits."$$".* \
 		"$tmpdir"/.batch_* \
-		"$tmpdir"/.md5_manifest* "$tmpdir"/.hex_manifest* \
-		"$tmpdir"/.clam_manifest* "$tmpdir"/.clam_filtered* \
-		"$tmpdir"/.yara_manifest* "$tmpdir"/.yara_filtered* "$tmpdir"/.yara_existing* "$tmpdir"/.yara_deduped* \
-		"$tmpdir"/.strlen_manifest* "$tmpdir"/.stage_hit* \
+		"$tmpdir"/.md5_manifest."$$".* "$tmpdir"/.hex_manifest."$$".* \
+		"$tmpdir"/.clam_manifest."$$".* "$tmpdir"/.clam_filtered* \
+		"$tmpdir"/.yara_manifest."$$".* "$tmpdir"/.yara_filtered* "$tmpdir"/.yara_existing."$$".* "$tmpdir"/.yara_deduped."$$".* \
+		"$tmpdir"/.strlen_manifest."$$".* "$tmpdir"/.stage_hit* \
 		"$tmpdir"/.csig_worker* "$tmpdir"/.csig_chunk* "$tmpdir"/.csig_manifest* "$tmpdir"/.csig_batch_flist* \
-		"$tmpdir"/.hcb.* "$tmpdir"/.csig_lp.* "$tmpdir"/.csig_ll.* \
-		"$tmpdir"/.csig_or.* "$tmpdir"/.csig_all.* \
-		"$tmpdir"/.hex_wc_tmp.* "$tmpdir"/.clean_chunk.* \
+		"$tmpdir"/.hcb."$$".* "$tmpdir"/.csig_lp."$$".* "$tmpdir"/.csig_ll."$$".* \
+		"$tmpdir"/.csig_or."$$".* "$tmpdir"/.csig_all."$$".* \
+		"$tmpdir"/.hex_wc_tmp."$$".* "$tmpdir"/.clean_chunk."$$".* \
 		2>/dev/null  # files may not exist depending on scan path
 	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* \
-		"$tmpdir"/.csig_progress.* "$tmpdir"/.csig_mtx.* 2>/dev/null
+		"$tmpdir"/.csig_progress.* "$tmpdir"/.csig_mtx."$$".* 2>/dev/null
 }
 
 # shellcheck disable=SC2154
@@ -391,7 +391,7 @@ _scan_run_native() {
 	# Runs when effective hashtype is md5 or both; skipped for sha256-only.
 	local rpath _md5_batch_flist _md5_file_count
 	if [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; then
-		_md5_batch_flist=$(mktemp "$tmpdir/.md5_batch_flist.XXXXXX")
+		_md5_batch_flist=$(mktemp "$tmpdir/.md5_batch_flist.$$.XXXXXX")
 		# Build readable file list from find_results
 		while IFS= read -r rpath; do
 			[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
@@ -431,7 +431,7 @@ _scan_run_native() {
 			# Merge worker outputs into single manifest and batch-process hits
 			_scan_progress "md5" "processing hits"
 			local _md5_manifest
-			_md5_manifest=$(mktemp "$tmpdir/.md5_manifest.XXXXXX")
+			_md5_manifest=$(mktemp "$tmpdir/.md5_manifest.$$.XXXXXX")
 			for _w in "$tmpdir"/.md5_worker."$$".*; do
 				if [ -f "$_w" ] && [ -s "$_w" ]; then
 					# Worker output: filepath\thash\tsigname → manifest: filepath\tsigname\thash
@@ -450,11 +450,11 @@ _scan_run_native() {
 	if { [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } \
 	   && [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
 		local _sha256_batch_flist _sha256_file_count
-		_sha256_batch_flist=$(mktemp "$tmpdir/.sha256_batch_flist.XXXXXX")
+		_sha256_batch_flist=$(mktemp "$tmpdir/.sha256_batch_flist.$$.XXXXXX")
 		if [ "$_effective_hashtype" == "both" ]; then
 			# 'both' mode: scan only files NOT already hit by MD5 pass
 			local _hash_hit_paths
-			_hash_hit_paths=$(mktemp "$tmpdir/.sha256_md5hits.XXXXXX")
+			_hash_hit_paths=$(mktemp "$tmpdir/.sha256_md5hits.$$.XXXXXX")
 			if [ -s "$scan_session" ]; then
 				awk -F'\t' '!/^#/{if ($2 != "") print $2}' "$scan_session" > "$_hash_hit_paths"
 			fi
@@ -506,7 +506,7 @@ _scan_run_native() {
 			# Merge worker outputs into single manifest and batch-process hits
 			_scan_progress "sha256" "processing hits"
 			local _sha256_manifest
-			_sha256_manifest=$(mktemp "$tmpdir/.sha256_manifest.XXXXXX")
+			_sha256_manifest=$(mktemp "$tmpdir/.sha256_manifest.$$.XXXXXX")
 			for _w in "$tmpdir"/.sha256_worker."$$".*; do
 				if [ -f "$_w" ] && [ -s "$_w" ]; then
 					# Worker output: filepath\thash\tsigname → manifest: filepath\tsigname\thash
@@ -521,12 +521,12 @@ _scan_run_native() {
 
 	# --- Pass 2: HEX batch (parallel workers) ---
 	local _hex_filelist _hex_depth
-	_hex_filelist=$(mktemp "$tmpdir/.hex_batch_flist.XXXXXX")
+	_hex_filelist=$(mktemp "$tmpdir/.hex_batch_flist.$$.XXXXXX")
 	# Build file list: skip files already hit by hash passes (MD5/SHA-256).
 	# Quarantined files are chmod 000 (not readable); non-quarantined hits
 	# are listed in scan_session — extract paths and use grep -vFf to exclude.
 	local _hash_hit_paths
-	_hash_hit_paths=$(mktemp "$tmpdir/.hex_md5hits.XXXXXX")
+	_hash_hit_paths=$(mktemp "$tmpdir/.hex_md5hits.$$.XXXXXX")
 	if [ -s "$scan_session" ]; then
 		awk -F'\t' '!/^#/{if ($2 != "") print $2}' "$scan_session" > "$_hash_hit_paths"
 	fi
@@ -585,7 +585,7 @@ _scan_run_native() {
 		# Merge worker outputs into single manifest and batch-process hits
 		_scan_progress "$_hex_stage_label" "processing hits"
 		local _hex_manifest
-		_hex_manifest=$(mktemp "$tmpdir/.hex_manifest.XXXXXX")
+		_hex_manifest=$(mktemp "$tmpdir/.hex_manifest.$$.XXXXXX")
 		for _wout in "${_worker_outputs[@]}"; do
 			if [ -f "$_wout" ] && [ -s "$_wout" ]; then
 				cat "$_wout" >> "$_hex_manifest"
@@ -671,11 +671,13 @@ scan() {
 		fi
 	fi
 	
+	local _spaths_exist=0
 	for p in "${spaths[@]}"; do
 	  if [ "${p:0:1}" != "/" ]; then
 	    eout "{scan} must use absolute path, provided relative path '$p'" 1
 	    exit 1
 	  fi
+	  [ -e "$p" ] && _spaths_exist=$((_spaths_exist + 1))
 	done
 
 	scan_session=$(mktemp "$tmpdir/.sess.XXXXXX")
@@ -719,10 +721,12 @@ scan() {
 			if [ "$days" == "all" ]; then
 				eout "{scan} scan returned empty file list; check that path exists and contains files in scope of configuration." 1
 				_scan_cleanup
+				[ "$_spaths_exist" -eq 0 ] && exit 1
 				exit 0
 			else
 				eout "{scan} scan returned empty file list; check that path exists, contains files in days range or files in scope of configuration." 1
 				_scan_cleanup
+				[ "$_spaths_exist" -eq 0 ] && exit 1
 				exit 0
 			fi
 		fi

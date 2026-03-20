@@ -62,7 +62,7 @@ _clean_rescan() {
 	# --- Stage 2: HEX + CSIG (batch worker on 1-file chunk) ---
 	if [ -f "$_fpath" ] && [ -r "$_fpath" ]; then
 		local _chunk _hits
-		_chunk=$(mktemp "$tmpdir/.clean_chunk.XXXXXX")
+		_chunk=$(mktemp "$tmpdir/.clean_chunk.$$.XXXXXX")
 		printf '%s\n' "$_fpath" > "$_chunk"
 		_hits=$(_hex_csig_batch_worker "$_chunk" "${scan_hexdepth:-524288}" \
 			"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \

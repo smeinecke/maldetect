@@ -292,3 +292,26 @@ _source_lmd_stack() {
     assert_success
     rm -rf /tmp/lmd-co-test
 }
+
+@test "hash scanner detects malware in file with backslash in name" {
+    local tdir malfile hash
+    tdir=$(mktemp -d)
+    # Create file with backslash in name (32+ bytes to pass scan_min_filesize)
+    malfile="${tdir}/evil\\hack.php"
+    printf '%032d' 0 > "$malfile"
+    # md5sum on escaped filenames outputs \HASH  path — strip leading \ with sed
+    hash=$(md5sum "$malfile" | awk '{print $1}' | sed 's/^\\//')
+    echo "${hash}:32:{MD5}test.backslash.plan.1" >> "$LMD_INSTALL/sigs/custom.md5.dat"
+    run maldet -co "scan_hashtype=md5" -co "scan_min_filesize=30" -a "$tdir"
+    # exit 2 = malware found
+    [ "$status" -eq 2 ]
+    # Verify signame in session hits file (not stdout — scan reports summary only)
+    local scanid hitsfile
+    scanid=$(get_last_scanid)
+    hitsfile=$(get_session_hits_file "$scanid")
+    [ -n "$hitsfile" ]
+    run grep "test.backslash.plan.1" "$hitsfile"
+    assert_success
+    sed -i "/test.backslash.plan.1/d" "$LMD_INSTALL/sigs/custom.md5.dat"
+    rm -rf "$tdir"
+}

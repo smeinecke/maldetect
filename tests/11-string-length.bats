@@ -73,3 +73,17 @@ teardown() {
     run grep "{strlen}" "$LMD_INSTALL/logs/event_log"
     assert_failure
 }
+
+@test "scan_strlen skips and returns 0 on FreeBSD (wc -L unavailable)" {
+    # Source the engine function in isolation to test the guard.
+    # Mock eout() to capture output; verify guard exits 0 and does not invoke wc.
+    run bash -c "
+      os_freebsd=1
+      string_length_scan=1
+      eout() { echo \"eout: \$1\"; }
+      source /usr/local/maldetect/internals/lmd_engine.sh 2>/dev/null || true
+      scan_strlen file /dev/null
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipped on FreeBSD"* ]]
+}

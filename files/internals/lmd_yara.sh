@@ -20,7 +20,7 @@ _yara_filter_filelist() {
 	# Rebuild file list keeping only files that still exist and are readable.
 	# Filters out files quarantined (perms 000) by prior scan stages.
 	local src="$1" dst _yf
-	dst=$(mktemp "$tmpdir/.yara_flist.XXXXXX")
+	dst=$(mktemp "$tmpdir/.yara_flist.$$.XXXXXX")
 	while IFS= read -r _yf; do
 		[ -f "$_yf" ] && [ -r "$_yf" ] && printf '%s\n' "$_yf"
 	done < "$src" > "$dst"
@@ -129,7 +129,7 @@ _yara_scan_rules() {
 	# Parse results into manifest and batch-process
 	if [ -s "$yara_results" ]; then
 		local _yara_manifest
-		_yara_manifest=$(mktemp "$tmpdir/.yara_manifest.XXXXXX")
+		_yara_manifest=$(mktemp "$tmpdir/.yara_manifest.$$.XXXXXX")
 
 		# Parse: "RULE_NAME FILEPATH" → filepath\t{YARA}RULE_NAME
 		awk '{rule=$1; $1=""; sub(/^ /,"",$0); print $0 "\t{YARA}" rule}' \
@@ -141,10 +141,10 @@ _yara_scan_rules() {
 		# Bulk dedup against scan_session (skip files already recorded by prior stages)
 		if [ "$clean_state" != "1" ] && [ -n "$scan_session" ] && [ -s "$scan_session" ]; then
 			local _existing_paths _yd
-			_existing_paths=$(mktemp "$tmpdir/.yara_existing.XXXXXX")
+			_existing_paths=$(mktemp "$tmpdir/.yara_existing.$$.XXXXXX")
 			awk -F'\t' '!/^#/{if ($2 != "") print $2}' "$scan_session" > "$_existing_paths"
 			if [ -s "$_existing_paths" ]; then
-				_yd=$(mktemp "$tmpdir/.yara_deduped.XXXXXX")
+				_yd=$(mktemp "$tmpdir/.yara_deduped.$$.XXXXXX")
 				# Remove manifest lines whose filepath (col 1) matches an existing path
 				awk -F'\t' 'NR==FNR{seen[$0];next} !($1 in seen)' \
 					"$_existing_paths" "$_yara_manifest" > "$_yd"
@@ -183,7 +183,7 @@ scan_stage_yara() {
 
 	# Build list of rule files to scan
 	local yara_rules_list
-	yara_rules_list=$(mktemp "$tmpdir/.yara_rules.XXXXXX")
+	yara_rules_list=$(mktemp "$tmpdir/.yara_rules.$$.XXXXXX")
 	chmod 600 "$yara_rules_list"
 
 	# Include rfxn.yara if scope allows (when ClamAV disabled or scope=all)
@@ -251,9 +251,9 @@ scan_stage_yara() {
 	eout "{yara} starting native YARA scan stage..."
 
 	local yara_results yara_stderr yara_rc_file rules_file
-	yara_results=$(mktemp "$tmpdir/.yara_results.XXXXXX")
-	yara_stderr=$(mktemp "$tmpdir/.yara_stderr.XXXXXX")
-	yara_rc_file=$(mktemp "$tmpdir/.yara_rc.XXXXXX")
+	yara_results=$(mktemp "$tmpdir/.yara_results.$$.XXXXXX")
+	yara_stderr=$(mktemp "$tmpdir/.yara_stderr.$$.XXXXXX")
+	yara_rc_file=$(mktemp "$tmpdir/.yara_rc.$$.XXXXXX")
 
 	# Scan with text rules
 	while IFS= read -r rules_file; do

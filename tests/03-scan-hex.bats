@@ -97,3 +97,18 @@ teardown() {
     assert_success
     assert_output --partial "malware hits 0"
 }
+
+@test "HEX scan reports correct signame via sigmap cache" {
+    cp "$SAMPLES_DIR/test-hex-match.php" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+    # Verify the expected signame appears in the session hits file
+    # (confirms sigmap cache lookup worked — empty cache → no signame → this would fail)
+    local scanid hitsfile
+    scanid=$(get_last_scanid)
+    hitsfile=$(get_session_hits_file "$scanid")
+    [ -n "$hitsfile" ]
+    run grep "test.hex.php.1" "$hitsfile"
+    assert_success
+}

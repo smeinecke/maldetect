@@ -256,7 +256,7 @@ _process_clamav_hits() {
 	local _results="$1" _progress="$2"
 	local _clam_manifest _signame _file
 	local _yara_prefix="{YARA}"
-	_clam_manifest=$(mktemp "$tmpdir/.clam_manifest.XXXXXX")
+	_clam_manifest=$(mktemp "$tmpdir/.clam_manifest.$$.XXXXXX")
 
 	# Parse clamscan output → filepath\tsigname manifest
 	while IFS=: read -r _signame _file; do

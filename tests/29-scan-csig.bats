@@ -503,3 +503,18 @@ _source_lmd_stack() {
     assert_scan_completed
     assert_output --partial "malware hits 1"
 }
+
+@test "csig: AND-rule hit output unchanged after SID preload refactor" {
+    echo "${HEX_ALPHA}||${HEX_BRAVO}:{CSIG}test.csig.and.regression.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+    cp "$SAMPLES_DIR/test-csig-and.php" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+    # Verify signame in session hits file (confirms _check_sid_match evaluation correct)
+    local scanid hitsfile
+    scanid=$(get_last_scanid)
+    hitsfile=$(get_session_hits_file "$scanid")
+    [ -n "$hitsfile" ]
+    run grep "test.csig.and.regression.1" "$hitsfile"
+    assert_success
+}
