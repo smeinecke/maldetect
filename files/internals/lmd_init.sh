@@ -76,6 +76,53 @@ _resolve_hashtype() {
 	esac
 }
 
+_resolve_clamscan() {
+	# Normalize scan_clamscan from auto/0/1 to 0 or 1.
+	# When auto: enable if a clamscan binary is found on the system.
+	# Note: $clamscan is NOT set by internals.conf — it is populated later
+	# by clamselector()/clamscan_fallback(). We must discover it here.
+	# Writes resolved value back to scan_clamscan for all downstream code.
+	case "$scan_clamscan" in
+		auto)
+			if [ -f "/usr/local/cpanel/3rdparty/bin/clamscan" ] || [ -n "$(command -v clamscan 2>/dev/null)" ]; then
+				scan_clamscan="1"
+			else
+				scan_clamscan="0"
+			fi
+			;;
+		1) ;;
+		0) ;;
+		*)
+			eout "{scan} WARNING: invalid scan_clamscan value '$scan_clamscan', disabling" 1
+			scan_clamscan="0"
+			;;
+	esac
+	_effective_clamscan="$scan_clamscan"
+}
+
+_resolve_yara() {
+	# Normalize scan_yara from auto/0/1 to 0 or 1.
+	# When auto: enable only if ClamAV is unavailable AND a yara/yr binary exists.
+	# This prevents duplicate YARA evaluation — ClamAV already processes YARA rules.
+	# Writes resolved value back to scan_yara for all downstream code.
+	case "$scan_yara" in
+		auto)
+			if [ "$scan_clamscan" == "0" ] && { [ -n "$yara" ] || [ -n "$yr" ]; }; then
+				scan_yara="1"
+			else
+				scan_yara="0"
+			fi
+			;;
+		1) ;;
+		0) ;;
+		*)
+			eout "{scan} WARNING: invalid scan_yara value '$scan_yara', disabling" 1
+			scan_yara="0"
+			;;
+	esac
+	_effective_yara="$scan_yara"
+}
+
 prerun() {
 
 	startdir=$(pwd);
@@ -134,6 +181,8 @@ prerun() {
 	# -co overrides have been applied.
 	_sha_capability=$(_detect_sha_capability)
 	_effective_hashtype="md5"
+	_effective_clamscan="1"
+	_effective_yara="0"
 
 	if [ "$email_alert" == "1" ] && [ ! -f "$mail" ] && [ ! -f "$sendmail" ]; then
 		email_alert=0
@@ -141,11 +190,6 @@ prerun() {
 
 	_lmd_alert_init
 	_lmd_elog_init
-
-	if [ "$scan_yara" == "1" ] && [ -z "$yr" ] && [ -z "$yara" ]; then
-		eout "{yara} no yara or yr binary found, native YARA scanning disabled" 1
-		scan_yara=0
-	fi
 
 	# Set signature permissions based on pubscan mode
 	if [ "$scan_user_access" == "1" ]; then

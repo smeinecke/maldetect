@@ -152,6 +152,7 @@ lmdup() {
 		local _ver_re='^[0-9]+\.[0-9]+\.[0-9]+$'
 		if ! [[ "$upstreamver_readable" =~ $_ver_re ]]; then
 			eout "{update} upstream version string failed format validation: '$upstreamver_readable'" 1
+			_grf_cleanup
 			cd "$inspath" || true  # safe: cleanup and exit follow
 			rm -rf "$tmpwd"
 			clean_exit
@@ -192,6 +193,7 @@ lmdup() {
 				fi
 			else
 				eout "{update} could not download upstream hash file ($_hash_remote_url), please try again later." 1
+				_grf_cleanup
 				cd "$inspath" || true  # safe: cleanup and exit follow
 				rm -rf "$tmpwd"
 				clean_exit
@@ -202,6 +204,7 @@ lmdup() {
 		fi
 	else
 		eout "{update} could not download version file from server, please try again later." 1
+		_grf_cleanup
 		cd "$inspath" || true  # safe: cleanup and exit follow
 		rm -rf "$tmpwd"
 		clean_exit
@@ -258,6 +261,7 @@ lmdup() {
 			exit 1
 		fi
 	fi
+	_grf_cleanup
 	cd "$inspath" ; rm -rf "$tmpwd"
 }
 
@@ -291,6 +295,7 @@ sigup() {
 
 	if [ ! -f "$upstream_sigver" ] || [ ! -s "$upstream_sigver" ]; then
 		eout "{sigup} could not download signature data from server, please try again later." 1
+		_grf_cleanup
 		clean_exit
 		exit 1
 	else
@@ -334,6 +339,11 @@ sigup() {
 					rm -f "$sigdir.old"/* 2> /dev/null
 					cp -f "$sigdir"/* "$sigdir.old"/ 2> /dev/null
 					cp -f "$tmpwd"/sigs/* "$sigdir" 2> /dev/null
+					# Guard: write downloaded version to ver file in case tarball
+					# contents are out of sync with the CDN version endpoint
+					if [ -n "$nver" ]; then
+						echo "$nver" > "$sig_version_file"
+					fi
 					eout "{sigup} unpacked and installed maldet-sigpack.tgz" 1
 					local _clamav_ok=0 _clamav_fail=0
 					for _cpath in $clamav_paths; do
@@ -387,12 +397,10 @@ sigup() {
 		else
 			eout "{sigup} signature set update completed" 1
 
+			_resolve_clamscan
+			_resolve_yara
 			_count_signatures "$sig_md5_file" "$sig_hex_file"
-			local yara_label="YARA"
-			if [ "$scan_yara" != "1" ]; then
-				yara_label="YARA(cav)"
-			fi
-			eout "{sigup} $tot_sigs signatures ($md5_sigs MD5 | $sha256_sigs SHA256 | $hex_sigs HEX | $csig_sigs CSIG | $yara_sigs $yara_label | $user_sigs USER)" 1
+			eout "{sigup} $(_format_number $tot_sigs) signatures ($(_format_number $hash_sigs) $_hash_label | $(_format_number $hex_sigs) HEX | $(_format_number $csig_sigs) CSIG | $(_format_number $yara_sigs) $_yara_label | $(_format_number $user_sigs) USER)" 1
 		fi
 		cd "$inspath"
 		rm -rf "$tmpwd"
@@ -401,4 +409,5 @@ sigup() {
 		cd "$inspath"
 		rm -rf "$tmpwd"
 	fi
+	_grf_cleanup
 }

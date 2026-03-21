@@ -179,15 +179,13 @@ _run_yara_scan() {
 _scan_progress() {
 	# Unified scan progress line for all engines and stages.
 	# Gated by _in_scan_context to prevent output in monitor/clean paths.
-	# Args: stage fileinfo [workers elapsed]
-	local _stage="$1" _fileinfo="$2" _workers="$3" _elapsed="$4"
+	# Args: stage fileinfo [elapsed]
+	local _stage="$1" _fileinfo="$2" _elapsed="$3"
 	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
 	   [ "$set_background" != "1" ] && [ -z "$single_filescan" ]; then
 		local _status=""
-		if [ -n "$_workers" ] && [ -n "$_elapsed" ]; then
-			_status=" | ${_workers}w ${_elapsed}s"
-		elif [ -n "$_elapsed" ]; then
-			_status=" | ${_elapsed}s"
+		if [ -n "$_elapsed" ]; then
+			_status=" | elapsed ${_elapsed}s"
 		fi
 		local _line="maldet($$): {scan} [$_stage] $_fileinfo${_status} | $progress_hits hits $progress_cleaned cleaned"
 		if [ -t 1 ]; then
@@ -232,9 +230,9 @@ _wait_workers_with_progress() {
 			done
 		fi
 		if [ "$_processed" -gt 0 ]; then
-			_scan_progress "$_stage" "${_processed}/${_file_count} files" "$_total" "$_elapsed"
+			_scan_progress "$_stage" "${_processed}/${_file_count} files" "$_elapsed"
 		else
-			_scan_progress "$_stage" "$_file_count files" "$_total" "$_elapsed"
+			_scan_progress "$_stage" "$_file_count files" "$_elapsed"
 		fi
 		if [ "$_running" -eq 0 ]; then
 			break
@@ -260,7 +258,7 @@ _start_elapsed_timer() {
 	_start_ts=$SECONDS
 	while true; do
 		sleep 2
-		_scan_progress "$_stage" "$_file_count files" "" "$(( SECONDS - _start_ts ))"
+		_scan_progress "$_stage" "$_file_count files" "$(( SECONDS - _start_ts ))"
 	done &
 	_timer_pid=$!
 }
@@ -374,7 +372,7 @@ _scan_run_native() {
 		fi
 		if [ "$scan_yara" == "1" ]; then
 			_stage_list="${_stage_list:+${_stage_list}, }yara"
-		elif [ -n "$yara_sigs" ] && [ "$yara_sigs" -gt 0 ]; then
+		elif [ "$scan_clamscan" == "1" ]; then
 			_stage_list="${_stage_list:+${_stage_list}, }yara(cav)"
 		fi
 		if [ "$string_length_scan" == "1" ]; then
@@ -685,17 +683,17 @@ scan() {
 
 	# Resolve hash engine after -co overrides have been applied
 	_resolve_hashtype
+	_resolve_clamscan
+	_resolve_yara
 
 	# Pre-gensigs signature preview: count from on-disk files (fast, no compilation)
 	_count_signatures "$sig_md5_file" "$sig_hex_file"
-	local _gensigs_preview_types=""
-	{ [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; } && _gensigs_preview_types="md5"
-	{ [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } && _gensigs_preview_types="${_gensigs_preview_types:+${_gensigs_preview_types} }sha256"
-	[ "$hex_sigs" -gt 0 ] && _gensigs_preview_types="${_gensigs_preview_types:+${_gensigs_preview_types} }hex"
-	{ [ "$csig_sigs" -gt 0 ] || [ "$user_csig_sigs" -gt 0 ]; } && _gensigs_preview_types="${_gensigs_preview_types:+${_gensigs_preview_types} }csig"
-	{ [ "$yara_sigs" -gt 0 ] || [ "$user_yara_sigs" -gt 0 ]; } && _gensigs_preview_types="${_gensigs_preview_types:+${_gensigs_preview_types} }yara"
+	local _gensigs_preview_types="hash"
+	[ "$hex_sigs" -gt 0 ] && _gensigs_preview_types="${_gensigs_preview_types} hex"
+	{ [ "$csig_sigs" -gt 0 ] || [ "$user_csig_sigs" -gt 0 ]; } && _gensigs_preview_types="${_gensigs_preview_types} csig"
+	{ [ "$yara_sigs" -gt 0 ] || [ "$user_yara_sigs" -gt 0 ]; } && _gensigs_preview_types="${_gensigs_preview_types} yara"
 	if [ -z "$hscan" ]; then
-		eout "{scan} compiling $tot_sigs signatures (${_gensigs_preview_types})..." 1
+		eout "{scan} compiling $(_format_number $tot_sigs) signatures (${_gensigs_preview_types})..." 1
 	fi
 
 	local _gensigs_start=$SECONDS
@@ -708,11 +706,7 @@ scan() {
 	# Re-count from runtime files (may differ from preview due to custom sig merging)
 	_count_signatures "$runtime_md5" "$runtime_hexstrings"
 	if [ -z "$hscan" ]; then
-		local yara_label="YARA"
-		if [ "$scan_yara" != "1" ]; then
-			yara_label="YARA(cav)"
-		fi
-		eout "{scan} signatures ready in ${_gensigs_elapsed}s: $tot_sigs ($md5_sigs MD5 | $sha256_sigs SHA256 | $hex_sigs HEX | $csig_sigs CSIG | $yara_sigs $yara_label | $user_sigs USER)" 1
+		eout "{scan} signatures ready in ${_gensigs_elapsed}s: $(_format_number $tot_sigs) ($(_format_number $hash_sigs) $_hash_label | $(_format_number $hex_sigs) HEX | $(_format_number $csig_sigs) CSIG | $(_format_number $yara_sigs) $_yara_label | $(_format_number $user_sigs) USER)" 1
 	fi
 	_build_scan_filters
 	_scan_build_filelist

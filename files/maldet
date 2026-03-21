@@ -152,7 +152,7 @@ usage: maldet [OPTION] [ARGUMENT]
     -s|--restore FILE|SCANID    restore quarantined file(s)
 
   reporting:
-    -e|--report [SCANID|list]     view scan report
+    -e|--report [SCANID|list|latest]  view scan report
     --format text|json|html       set report output format (default: text)
     --mailto ADDRESS              email report to address
     --json-report [SCANID|list]   shorthand: --report --format json
@@ -257,9 +257,9 @@ QUARANTINE & RESTORE:
        e.g: maldet -q 050910-1534.21135 -qd /data/quarantine
 
 REPORTING:
-    -e, --report [SCANID|list]
+    -e, --report [SCANID|list|latest]
        View scan report of most recent scan or of a specific SCANID.
-       Use "list" to show all reports. Combine with --format and --mailto.
+       Use "latest" for most recent, "list" for all. Combine with --format and --mailto.
        e.g: maldet --report
        e.g: maldet --report list
        e.g: maldet --report 050910-1534.21135
@@ -276,7 +276,7 @@ REPORTING:
        Email the report to the specified address instead of stdout.
        May appear anywhere in the command line.
        e.g: maldet --mailto admin@example.com -e 050910-1534.21135
-       e.g: maldet --format json --mailto admin@example.com -e newest
+       e.g: maldet --format json --mailto admin@example.com -e latest
 
     --json-report [SCANID|list]
        Shorthand for --report --format json. Output scan report as

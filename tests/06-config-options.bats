@@ -85,3 +85,39 @@ teardown() {
     assert_output --partial "sha256sum not found"
     assert_output --partial "md5 hashing"
 }
+
+@test "scan_clamscan=auto resolves based on binary presence" {
+    lmd_set_config scan_clamscan auto
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_success
+    # Docker containers don't have clamscan — auto should resolve to 0
+    assert_output --partial "native engine"
+}
+
+@test "scan_yara=auto enables only when _effective_clamscan=0" {
+    lmd_set_config scan_clamscan 1
+    lmd_set_config scan_yara auto
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_success
+    # With ClamAV enabled (even if not found), auto YARA should NOT enable
+    refute_output --partial "{yara} starting native YARA scan stage"
+}
+
+@test "-co scan_clamscan=0 overrides auto to disable ClamAV" {
+    lmd_set_config scan_clamscan auto
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co scan_clamscan=0 -a "$TEST_SCAN_DIR"
+    assert_success
+    assert_output --partial "native engine"
+}
+
+@test "-co scan_yara=1 overrides auto to force native YARA" {
+    lmd_set_config scan_yara auto
+    lmd_set_config scan_clamscan 0
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co scan_yara=1 -a "$TEST_SCAN_DIR"
+    assert_success
+    assert_output --regexp "[0-9,]+ YARA "
+}

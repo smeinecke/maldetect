@@ -26,14 +26,14 @@ teardown() {
 
 @test "gensigs creates NDB symlink in sigdir after scan" {
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR"
+    maldet -co scan_clamscan=1 -a "$TEST_SCAN_DIR"
     [ -L "$LMD_INSTALL/sigs/lmd.user.ndb" ]
 }
 
 @test "gensigs creates HDB symlink in sigdir after scan" {
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    # Force MD5 mode — on SHA-NI hardware, auto mode skips HDB generation
-    maldet -co scan_hashtype=md5 -a "$TEST_SCAN_DIR"
+    # Force MD5 mode and ClamAV — on SHA-NI hardware, auto mode skips HDB generation
+    maldet -co scan_clamscan=1 -co scan_hashtype=md5 -a "$TEST_SCAN_DIR"
     [ -L "$LMD_INSTALL/sigs/lmd.user.hdb" ]
 }
 
@@ -56,7 +56,7 @@ teardown() {
     cp "$LMD_INSTALL/internals/internals.conf" "$LMD_INSTALL/internals/internals.conf.bak"
     sed -i "s|^clamav_paths=.*|clamav_paths=\"$MOCK_CLAMAV_DIR\"|" "$LMD_INSTALL/internals/internals.conf"
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR"
+    maldet -co scan_clamscan=1 -a "$TEST_SCAN_DIR"
     # rfxn.hdb and rfxn.ndb should be copied to the mock dir
     [ -f "$MOCK_CLAMAV_DIR/rfxn.hdb" ] || [ -f "$MOCK_CLAMAV_DIR/rfxn.ndb" ]
 }
@@ -471,4 +471,34 @@ MOCK
     run _clamav_validate_sigs "$staging"
     rm -rf "$staging"
     assert_failure
+}
+
+@test "clamav_unlinksigs removes LMD sigs from ClamAV dirs" {
+    _source_lmd_stack_clamav
+    local mock_clamdir
+    mock_clamdir=$(mktemp -d)
+    touch "$mock_clamdir/rfxn.hdb" "$mock_clamdir/rfxn.ndb" "$mock_clamdir/rfxn.yara"
+    touch "$mock_clamdir/lmd.user.ndb" "$mock_clamdir/lmd.user.hdb"
+    touch "$mock_clamdir/main.cvd"
+
+    clamav_paths="$mock_clamdir"
+    clamav_unlinksigs
+
+    [ ! -f "$mock_clamdir/rfxn.hdb" ]
+    [ ! -f "$mock_clamdir/rfxn.ndb" ]
+    [ ! -f "$mock_clamdir/rfxn.yara" ]
+    [ ! -f "$mock_clamdir/lmd.user.ndb" ]
+    [ ! -f "$mock_clamdir/lmd.user.hdb" ]
+    [ -f "$mock_clamdir/main.cvd" ]
+
+    rm -rf "$mock_clamdir"
+}
+
+@test "gensigs skips ClamAV formatting when scan_clamscan=0" {
+    lmd_set_config scan_clamscan 0
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_success
+    # No .ndb symlink should exist when ClamAV is disabled
+    [ ! -L "$LMD_INSTALL/sigs/lmd.user.ndb" ]
 }

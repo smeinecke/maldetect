@@ -68,9 +68,9 @@ Override the quarantine directory for this run.
 May appear anywhere in the command line.
 .SS Reporting
 .TP
-\fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR|\fBlist\fR]
+\fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR|\fBlist\fR|\fBlatest\fR]
 View a scan report.
-Use \fBlist\fR to show all reports.
+Use \fBlatest\fR for the most recent scan, \fBlist\fR for all reports.
 Combine with \fB\-\-format\fR and \fB\-\-mailto\fR for output control.
 .TP
 \fB\-\-format\fR \fBtext\fR|\fBjson\fR|\fBhtml\fR
@@ -323,6 +323,29 @@ selects the hash algorithm for file\-hash signature matching (stage 1).
 Values: \fBauto\fR (use SHA\-256 if CPU has hardware acceleration, else MD5),
 \fBsha256\fR (always SHA\-256),
 \fBmd5\fR (always MD5; preserves performance on older CPUs without SHA\-NI).
+Default: auto.
+.PP
+.B scan_clamscan
+enables ClamAV as the scan engine for improved performance on large file sets.
+When set to
+.B auto
+(default), LMD detects the clamscan binary at runtime and enables ClamAV
+scanning only if available.
+Values: \fBauto\fR (detect binary), \fB0\fR (disabled), \fB1\fR (enabled).
+Default: auto.
+.PP
+.B scan_yara
+enables native YARA scanning via the yara binary (or yr from YARA\-X).
+When set to
+.B auto
+(default), LMD enables native YARA scanning only when ClamAV is unavailable
+and a yara/yr binary is found.
+This prevents duplicate YARA rule evaluation since ClamAV already processes
+YARA rules internally.
+To force native YARA alongside ClamAV, set to \fB1\fR and use
+\fBscan_yara_scope\fR to control which rules each engine handles.
+Values: \fBauto\fR (detect binary, ClamAV fallback), \fB0\fR (disabled),
+\fB1\fR (enabled).
 Default: auto.
 .PP
 .B scan_csig

@@ -252,10 +252,12 @@ view_report() {
 			local _sid="${file##*session.tsv.}"
 			_session_read_meta "$file"
 			if [ -n "$scanid" ] && [ "$scan_start_hr" != "-" ]; then
-				local _time_u _etime
+				local _time_u _etime _time_display
 				_time_u=$(date -d "$scan_start_hr" "+%s" 2>/dev/null)
+				# Strip timezone offset for consistent column alignment with legacy pass
+				_time_display=$(echo "$scan_start_hr" | awk '{print $1,$2,$3,$4}')
 				_etime="RUNTIME: ${scan_et:--}s"
-				echo "$_time_u | $scan_start_hr | SCANID: $scanid | $_etime | FILES: ${tot_files:--} | HITS: ${tot_hits:--} | CLEANED: ${tot_cl:-0}" >> "$tmpf"
+				echo "$_time_u | $_time_display | SCANID: $scanid | $_etime | FILES: ${tot_files:--} | HITS: ${tot_hits:--} | CLEANED: ${tot_cl:-0}" >> "$tmpf"
 				_seen_ids="$_seen_ids $_sid"
 			fi
 		done
@@ -299,7 +301,7 @@ view_report() {
 	fi
 
 	# --- RESOLVE RID (newest/empty) ---
-	if [ "$rid" == "newest" ] || [ "$rid" == "" ]; then
+	if [ "$rid" == "newest" ] || [ "$rid" == "latest" ] || [ "$rid" == "" ]; then
 		if [ -f "$sessdir/session.last" ]; then
 			rid=$(cat "$sessdir/session.last")
 		else

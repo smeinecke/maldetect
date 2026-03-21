@@ -54,9 +54,19 @@ v2.0.1 | Mar 10 2026:
 [New] cron.daily: explicit cPanel addon/subdomain document root detection via
       /etc/userdatadomains; Bitrix panel detection; issue #268, #381
 [New] -v/--version flag displays version information and exits 0
+[New] scan_clamscan and scan_yara support 'auto' mode for runtime binary detection
 
   -- Bug Fixes --
 
+[Fix] clamav_linksigs: set 644 perms and match ClamAV dir ownership on deployed
+      sig files so clamd can read rfxn.*/lmd.user.* databases
+[Fix] --report: recognize "latest" as alias for "newest" to resolve most recent scan
+[Fix] -e list: strip timezone offset from TSV session timestamps for consistent column
+      alignment with legacy plaintext sessions
+[Fix] get_remote_file: track temp files (.tmpf_get.*) and clean up via _grf_cleanup()
+      at end of import_user_sigs(), import_conf(), lmdup(), sigup()
+[Fix] sigup: write downloaded version to maldet.sigs.ver after sigpack install as guard
+      against CDN version endpoint desync causing repeated full downloads
 [Fix] Scan engine: isolate worker temp files using parent PID namespace ($$) to prevent
       concurrent scans from deleting each other's buffers during _scan_cleanup (F-SCAN-001)
 [Fix] scan(): exit 1 when all provided scan paths do not exist; add _spaths_exist counter;
@@ -146,6 +156,8 @@ v2.0.1 | Mar 10 2026:
 [Fix] restore() and restore_hitlist(): return exit 1 on all error paths; automated
       recovery scripts checking $? previously saw false success on invalid scan ID
       or nonexistent file
+[Fix] YARA rules no longer counted as active when no engine available (YARA(no engine))
+[Fix] ClamAV signature artifacts cleaned from data dirs when ClamAV disabled
 
   -- Changes --
 
@@ -188,5 +200,6 @@ v2.0.1 | Mar 10 2026:
          messages supersede
 [Change] Vendored libraries updated: tlog_lib v2.0.4, elog_lib v1.0.4, alert_lib
          v1.0.5, pkg_lib v1.0.5; batsman submodule v1.2.2
+[Change] Signature count output: deduplicated MD5/SHA hash count, comma formatting
 [Change] _scan_progress(): plain newline-terminated output in non-TTY contexts
          (cron, pipe, docker exec); ANSI escape sequences gated behind TTY check

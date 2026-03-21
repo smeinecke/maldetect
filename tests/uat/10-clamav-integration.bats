@@ -62,7 +62,7 @@ teardown_file() {
 
     rm -f "$TEST_DIR"/*
     echo "harmless" > "$TEST_DIR/clean.txt"
-    run maldet -a "$TEST_DIR"
+    run maldet -co scan_clamscan=1 -a "$TEST_DIR"
 
     # Restore immediately
     cp "$LMD_INSTALL/internals/internals.conf.bak" "$LMD_INSTALL/internals/internals.conf"
@@ -73,12 +73,12 @@ teardown_file() {
 
 # bats test_tags=uat,uat:clamav
 @test "UAT: gensigs creates NDB and HDB symlinks in sigdir" {
-    uat_lmd_set_config scan_clamscan 0
+    uat_lmd_set_config scan_clamscan 1
 
     rm -f "$TEST_DIR"/*
     echo "harmless" > "$TEST_DIR/clean.txt"
-    # Force MD5 mode — .hdb is only created when hashtype != sha256
-    run maldet -co scan_hashtype=md5 -a "$TEST_DIR"
+    # Force MD5 mode and ClamAV — .hdb/.ndb only created when scan_clamscan=1
+    run maldet -co scan_clamscan=1 -co scan_hashtype=md5 -a "$TEST_DIR"
     assert_success
 
     # gensigs should have created symlinks

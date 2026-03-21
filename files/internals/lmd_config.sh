@@ -87,6 +87,16 @@ get_panel_contacts() {
 	esac
 }
 
+_grf_tmpfiles=()
+_grf_cleanup() {
+	# Remove temp files created by get_remote_file() calls without save_path
+	local _f
+	for _f in "${_grf_tmpfiles[@]}"; do
+		[ -f "$_f" ] && command rm -f "$_f"
+	done
+	_grf_tmpfiles=()
+}
+
 get_remote_file() {
 	# $1 = URI, $2 = local service identifier, $3 boolean verbose
 	local get_uri="$1"
@@ -145,6 +155,7 @@ get_remote_file() {
 	else
 		tmpf=$(mktemp "$tmpdir/.tmpf_get.XXXXXX")
 		chmod 600 "$tmpf"
+		_grf_tmpfiles+=("$tmpf")
 		get_file=$(echo "$get_uri" | tr '/' '\n' | tail -n1)
 	fi
 
@@ -206,6 +217,7 @@ import_user_sigs() {
 			eout "{importsigs} imported custom compound signature data from $sig_import_csig_url"
 		fi
 	fi
+	_grf_cleanup
 }
 
 _safe_source_conf() {
@@ -324,4 +336,5 @@ import_conf() {
 			fi
 		fi
 	fi
+	_grf_cleanup
 }

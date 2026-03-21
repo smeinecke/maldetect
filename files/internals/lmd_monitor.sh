@@ -232,6 +232,8 @@ _monitor_housekeeping() {
 		_sigs_ready=""
 		_clam_cached=""
 		_resolve_hashtype
+		_resolve_clamscan
+		_resolve_yara
 		if [ "$_effective_hashtype" = "both" ]; then
 			eout "{mon} WARNING: scan_hashtype=both doubles hash I/O per monitor cycle" 1
 		fi
@@ -653,6 +655,8 @@ monitor_init() {
 	_ignore_sigs_last_md5=""
 	_inotify_trim_threshold="$inotify_trim"
 	_resolve_hashtype
+	_resolve_clamscan
+	_resolve_yara
 	_build_scan_filters
 
 	# Parse digest interval

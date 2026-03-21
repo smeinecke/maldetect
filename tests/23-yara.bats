@@ -50,9 +50,9 @@ teardown() {
     run maldet -a "$TEST_SCAN_DIR"
     cp "$LMD_INSTALL/internals/internals.conf.bak" "$LMD_INSTALL/internals/internals.conf"
     assert_success
-    # Check event log for the warning message
-    run grep -c "YARA scanning disabled" "$LMD_INSTALL/logs/event_log"
-    assert_output "1"
+    # _yara_init_cache finds no binary — scan_stage_yara logs skip to event_log (not stdout)
+    run grep -c "skipping YARA scan stage" "$LMD_INSTALL/logs/event_log"
+    [ "$status" -ne 1 ]
 }
 
 # ── Group 2: Basic Detection ──
@@ -180,8 +180,8 @@ EOF
     run maldet -a "$TEST_SCAN_DIR"
     assert_success
     # The output should show a YARA count > 0 and USER count > 0
-    assert_output --regexp "[0-9]+ YARA"
-    assert_output --regexp "[0-9]+ USER"
+    assert_output --regexp "[0-9,]+ YARA"
+    assert_output --regexp "[0-9,]+ USER"
 }
 
 # ── Group 4: Ignore & Quarantine Integration ──
@@ -430,12 +430,13 @@ EOF
     assert_success
 }
 
-@test "YARA: signature count shows YARA(cav) when scan_yara=0" {
+@test "YARA: signature count shows YARA(no engine) when both ClamAV and YARA disabled" {
+    lmd_set_config scan_clamscan 0
     lmd_set_config scan_yara 0
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"
     assert_success
-    assert_output --partial "YARA(cav)"
+    assert_output --partial "YARA(no engine)"
 }
 
 @test "YARA: signature count shows YARA (not cav) when scan_yara=1" {
@@ -446,5 +447,5 @@ EOF
     assert_success
     # Should show plain YARA label, not YARA(cav)
     refute_output --partial "YARA(cav)"
-    assert_output --partial "YARA |"
+    assert_output --regexp "[0-9,]+ YARA [|]"
 }

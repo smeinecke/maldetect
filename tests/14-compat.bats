@@ -2,11 +2,22 @@
 
 load '/usr/local/lib/bats/bats-support/load'
 load '/usr/local/lib/bats/bats-assert/load'
+source /opt/tests/helpers/lmd-config.sh
 
 LMD_INSTALL="/usr/local/maldetect"
+SAMPLES_DIR="/opt/tests/samples"
+TEST_SCAN_DIR="/tmp/lmd-test-compat"
 
 setup_file() {
     source /opt/tests/helpers/reset-lmd.sh
+}
+
+setup() {
+    mkdir -p "$TEST_SCAN_DIR"
+}
+
+teardown() {
+    rm -rf "$TEST_SCAN_DIR"
 }
 
 # Helper: source compat.conf safely (it expects conf.maldet vars to exist)
@@ -93,4 +104,12 @@ _source_compat() {
     local cnf_line
     cnf_line=$(echo "$output" | head -1 | cut -d: -f1)
     [ "$compat_line" -gt "$cnf_line" ]
+}
+
+@test "scan_clamscan=1 from old config resolves correctly after upgrade" {
+    lmd_set_config scan_clamscan 1
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_success
+    refute_output --partial "invalid scan_clamscan"
 }

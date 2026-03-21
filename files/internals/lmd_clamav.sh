@@ -53,6 +53,20 @@ _clamav_validate_sigs() {
 	return 0
 }
 
+clamav_unlinksigs() {
+	# Remove LMD signature files from all ClamAV data directories.
+	# Called when ClamAV scanning is disabled to clean stale artifacts.
+	# Also removes local sigdir symlinks to runtime files.
+	local _cpath
+	for _cpath in $clamav_paths; do
+		if [ -d "$_cpath" ]; then
+			command rm -f "$_cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null
+			command rm -f "$_cpath"/lmd.user.* 2>/dev/null
+		fi
+	done
+	command rm -f "$sigdir/lmd.user.ndb" "$sigdir/lmd.user.hdb" "$sigdir/lmd.user.hsb" 2>/dev/null
+}
+
 clamav_linksigs() {
 	local cpath="$1"
 	local _log_ctx="${2:-sigup}"  # caller passes "scan" or "sigup"
@@ -88,6 +102,28 @@ clamav_linksigs() {
 			command rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null
 			command rm -f "$cpath"/lmd.user.* 2>/dev/null
 			command cp -f "$_staging"/* "$cpath"/ 2>/dev/null
+			# Match ownership/perms to ClamAV data dir so clamd can read sigs
+			local _cpath_owner _cpath_group
+			if [ "$os_freebsd" == "1" ]; then
+				_cpath_owner=$(stat -f '%Su' "$cpath" 2>/dev/null)
+				_cpath_group=$(stat -f '%Sg' "$cpath" 2>/dev/null)
+			else
+				_cpath_owner=$(stat -c '%U' "$cpath" 2>/dev/null)
+				_cpath_group=$(stat -c '%G' "$cpath" 2>/dev/null)
+			fi
+			if [ -n "$_cpath_owner" ] && [ "$_cpath_owner" != "root" ]; then
+				for _sf in "$cpath"/rfxn.* "$cpath"/lmd.user.*; do
+					[ -f "$_sf" ] || continue
+					command chown "${_cpath_owner}:${_cpath_group}" "$_sf" 2>/dev/null
+					command chmod 644 "$_sf" 2>/dev/null
+				done
+			else
+				# Root-owned dir: just ensure world-readable for any clamd user
+				for _sf in "$cpath"/rfxn.* "$cpath"/lmd.user.*; do
+					[ -f "$_sf" ] || continue
+					command chmod 644 "$_sf" 2>/dev/null
+				done
+			fi
 			command rm -rf "$_staging"
 			return 0
 		else

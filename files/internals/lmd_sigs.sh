@@ -16,6 +16,24 @@ _LMD_SIGS_LOADED=1
 # shellcheck disable=SC2034
 LMD_SIGS_VERSION="1.0.0"
 
+_format_number() {
+	# Format integer with comma thousands separators.
+	# Uses printf locale grouping if available, falls back to sed.
+	local _n="$1"
+	if [ -z "$_fmt_num_method" ]; then
+		if printf "%'d" 1000 2>/dev/null | grep -q ','; then
+			_fmt_num_method="printf"
+		else
+			_fmt_num_method="sed"
+		fi
+	fi
+	if [ "$_fmt_num_method" == "printf" ]; then
+		printf "%'d" "$_n"
+	else
+		printf "%d" "$_n" | sed ':a;s/\([0-9]\)\([0-9]\{3\}\)$/\1,\2/;ta'
+	fi
+}
+
 _count_signatures() {
 	local _md5_src="$1" _hex_src="$2"
 	md5_sigs=$($wc -l < "$_md5_src")
@@ -59,7 +77,56 @@ _count_signatures() {
 		user_csig_sigs=$(grep -c -vE '^\s*$|^\s*#' "$sig_user_csig_file" 2>/dev/null || true)  # safe: grep exits 1 when no match; zero count is valid
 	fi
 	user_sigs=$((user_hex_sigs + user_md5_sigs + user_sha256_sigs + user_yara_sigs + user_csig_sigs))
-	tot_sigs=$((md5_sigs + sha256_sigs + hex_sigs + csig_sigs + yara_sigs + user_sigs))
+
+	# Deduplicate hash sigs — MD5 and SHA-256 are the same samples in different formats.
+	# Report only the active hash type's count to avoid inflating tot_sigs.
+	case "${_effective_hashtype:-}" in
+		md5)    hash_sigs=$md5_sigs;    _hash_label="MD5" ;;
+		sha256) hash_sigs=$sha256_sigs; _hash_label="SHA" ;;
+		both)
+			if [ "$md5_sigs" -le "$sha256_sigs" ]; then
+				hash_sigs=$md5_sigs
+			else
+				hash_sigs=$sha256_sigs
+			fi
+			_hash_label="MD5/SHA"
+			;;
+		*)
+			# Fallback (sigup path — no hashtype resolved)
+			if [ "$md5_sigs" -gt 0 ] && [ "$sha256_sigs" -gt 0 ]; then
+				if [ "$md5_sigs" -le "$sha256_sigs" ]; then
+					hash_sigs=$md5_sigs
+				else
+					hash_sigs=$sha256_sigs
+				fi
+				_hash_label="MD5/SHA"
+			elif [ "$md5_sigs" -gt 0 ]; then
+				hash_sigs=$md5_sigs
+				_hash_label="MD5"
+			elif [ "$sha256_sigs" -gt 0 ]; then
+				hash_sigs=$sha256_sigs
+				_hash_label="SHA"
+			else
+				hash_sigs=0
+				_hash_label="MD5/SHA"
+			fi
+			;;
+	esac
+
+	# YARA label — reflects which engine processes rules
+	local _yara_active_sigs
+	if [ "$scan_yara" == "1" ]; then
+		_yara_label="YARA"
+		_yara_active_sigs=$yara_sigs
+	elif [ "$scan_clamscan" == "1" ]; then
+		_yara_label="YARA(cav)"
+		_yara_active_sigs=$yara_sigs
+	else
+		_yara_label="YARA(no engine)"
+		_yara_active_sigs=0
+	fi
+
+	tot_sigs=$((hash_sigs + hex_sigs + csig_sigs + _yara_active_sigs + user_sigs))
 }
 
 _hex_compile_pattern() {
@@ -518,11 +585,14 @@ gensigs() {
 		"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
 		"$runtime_csig_wildcards" "$runtime_csig_universals" \
 		2>/dev/null  # vars empty on first call
-	runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.XXXXXX")
+	runtime_ndb=""
 	runtime_hdb=""
 	runtime_hexstrings=$(mktemp "$tmpdir/.runtime.hexsigs.XXXXXX")
 	runtime_md5=$(mktemp "$tmpdir/.runtime.md5sigs.XXXXXX")
-	ln -fs "$runtime_ndb" "$sigdir/lmd.user.ndb" 2> /dev/null
+	if [ "$scan_clamscan" == "1" ]; then
+		runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.XXXXXX")
+		ln -fs "$runtime_ndb" "$sigdir/lmd.user.ndb" 2>/dev/null
+	fi
 	# Only create .hdb (ClamAV MD5 DB) when hashtype includes md5
 	if [ "$_effective_hashtype" != "sha256" ]; then
 		runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.XXXXXX")
@@ -609,11 +679,16 @@ gensigs() {
 			fi
 		fi
 	fi
-	# Copy sigs to ClamAV dirs AFTER runtime user sigs are populated;
-	# empty lmd.user.* files cause ClamAV "Malformed database" errors
-	for _cpath in $clamav_paths; do
-		clamav_linksigs "$_cpath" "scan"
-	done
+	# ClamAV sig deployment: link when enabled, clean when disabled
+	if [ "$scan_clamscan" == "1" ]; then
+		# Copy sigs to ClamAV dirs AFTER runtime user sigs are populated;
+		# empty lmd.user.* files cause ClamAV "Malformed database" errors
+		for _cpath in $clamav_paths; do
+			clamav_linksigs "$_cpath" "scan"
+		done
+	else
+		clamav_unlinksigs
+	fi
 
 	# Apply ignore_sigs filtering to runtime copies (non-destructive)
 	if [ -f "$ignore_sigs" ]; then

@@ -258,11 +258,11 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 
 ### 3.4 YARA Scanning
 
-Native YARA scanning invokes the `yara` binary (or `yr` from YARA-X) independently of ClamAV, supporting full YARA modules, compiled rules, and custom rule files that ClamAV's limited YARA subset cannot handle. When both are available, `yr` (YARA-X) is preferred.
+Native YARA scanning invokes the `yara` binary (or `yr` from YARA-X) independently of ClamAV, supporting full YARA modules, compiled rules, and custom rule files that ClamAV's limited YARA subset cannot handle. When both are available, `yr` (YARA-X) is preferred. When set to `auto`, native YARA is enabled only when ClamAV is unavailable and a yara/yr binary is found, preventing duplicate rule evaluation.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `scan_yara` | Enable native YARA scan stage | `0` |
+| `scan_yara` | Enable native YARA scan stage: `auto` (detect binary, ClamAV fallback), `0` (disabled), `1` (enabled) | `auto` |
 | `scan_yara_timeout` | Timeout in seconds (0=no timeout) | `300` |
 | `scan_yara_scope` | Rule scope when ClamAV is also active: `all` (full native scan) or `custom` (only custom rules natively, ClamAV handles rfxn.yara) | `custom` |
 | `sig_import_yara_url` | URL to download custom YARA rules on signature update | — |
@@ -311,7 +311,7 @@ maldet -co scan_yara=1 -a /home/?/public_html
 
 ### 3.7 ClamAV Integration
 
-When `scan_clamscan=1`, LMD selects the best available ClamAV engine in priority order:
+When ClamAV scanning is enabled (`scan_clamscan=1` or `auto` with a detected binary), LMD selects the best available ClamAV engine in priority order:
 
 1. Remote `clamdscan` (if `scan_clamd_remote=1` and config exists)
 2. Local `clamd` daemon running as root
@@ -324,7 +324,7 @@ LMD signatures are automatically symlinked to ClamAV data directories by `instal
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `scan_clamscan` | Enable ClamAV as scan engine | `1` |
+| `scan_clamscan` | Enable ClamAV as scan engine: `auto` (detect binary at runtime), `0` (disabled), `1` (enabled) | `auto` |
 
 ### 3.8 Remote ClamAV
 
@@ -384,7 +384,7 @@ QUARANTINE & RESTORE:
   -qd PATH                      override quarantine directory for this run
 
 REPORTING:
-  -e, --report [SCANID|list]    view scan report
+  -e, --report [SCANID|list|latest]  view scan report
   --format text|json|html       set report output format (default: text)
   --mailto ADDRESS              email report to address
   --json-report [SCANID|list]   shorthand: --report --format json

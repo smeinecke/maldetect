@@ -198,29 +198,38 @@ scan_hashtype="auto"
 # [ auto = default, 1 = single-threaded, max = 8 ]
 scan_workers="auto"
 
-# If installed, use ClamAV clamscan binary as default scan engine which
-# provides improved scan performance on large file sets. The clamscan
-# engine is used in conjunction with native ClamAV signatures updated
-# through freshclam along with LMD signatures providing additional
-# detection capabilities.
-# [ 0 = disabled, 1 = enabled ]
-scan_clamscan="1"
+# Use ClamAV clamscan as the scan engine for improved performance on large
+# file sets. ClamAV also handles YARA rule evaluation when native YARA
+# scanning is not enabled.
+# When set to 'auto', LMD detects the clamscan binary at runtime and
+# enables ClamAV scanning only if available.
+# [ auto = detect binary, 0 = disabled, 1 = enabled ]
+scan_clamscan="auto"
 
-# Enable native YARA scanning. Invokes the yara binary (or yr from YARA-X)
-# independently of ClamAV, supporting YARA modules, compiled rules, and
-# custom rule files that ClamAV cannot handle.
-# [ 0 = disabled, 1 = enabled ]
-scan_yara="0"
+# Enable native YARA scanning via the yara binary (or yr from YARA-X).
+# Supports YARA modules, compiled rules, and custom rule files that
+# ClamAV cannot handle.
+# When set to 'auto', LMD enables native YARA scanning only when ClamAV
+# is unavailable and a yara/yr binary is found — this prevents duplicate
+# rule evaluation since ClamAV already processes YARA rules internally.
+# To force native YARA alongside ClamAV, set to '1' and use
+# scan_yara_scope to control which rules each engine handles.
+# [ auto = detect binary (ClamAV fallback), 0 = disabled, 1 = enabled ]
+scan_yara="auto"
 
 # Timeout in seconds for YARA scan invocations.
 # [ 0 = no timeout, default = 300 ]
 scan_yara_timeout="300"
 
-# When both ClamAV and native YARA are enabled, controls which rules the
-# native YARA engine processes:
-#   all    - scan all YARA rules natively (full module support)
-#   custom - only scan custom.yara + custom.yara.d/ natively
-# When ClamAV is disabled, this is ignored and all rules are scanned.
+# Controls which YARA rules the native YARA engine processes when both
+# ClamAV and native YARA are enabled (scan_clamscan=1, scan_yara=1).
+# This prevents double-scanning: ClamAV already evaluates YARA rules from
+# rfxn.yara, so by default native YARA only processes custom rules that
+# ClamAV cannot handle (modules, compiled rules, custom.yara.d/).
+#   all    - scan all YARA rules natively (duplicates ClamAV YARA coverage)
+#   custom - only scan custom.yara + custom.yara.d/ natively (recommended)
+# When ClamAV is disabled, this setting is ignored and all rules are
+# scanned natively regardless of scope.
 # [ all | custom ]
 scan_yara_scope="custom"
 

@@ -84,7 +84,7 @@ teardown() {
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
     run maldet -co scan_hashtype=sha256 -a "$TEST_SCAN_DIR"
     assert_scan_completed
-    assert_output --partial "SHA256"
+    assert_output --regexp "[0-9,]+ SHA "
     assert_output --partial "1 USER"
 }
 
