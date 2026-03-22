@@ -58,6 +58,11 @@ v2.0.1 | Mar 10 2026:
 
   -- Bug Fixes --
 
+[Fix] CI: align batsman workflow ref to v1.2.2; increase job timeout from 15m to
+      25m (512-test suite exceeds 15m on GHA runners)
+[Fix] Tests: force scan_hashtype=md5 in EICAR-dependent tests to prevent vacuous
+      pass on SHA-NI hardware where sha256 mode has no sigs; use case-insensitive
+      ignore_sigs patterns to match YARA sig name variants
 [Fix] clamav_linksigs: set 644 perms and match ClamAV dir ownership on deployed
       sig files so clamd can read rfxn.*/lmd.user.* databases
 [Fix] --report: recognize "latest" as alias for "newest" to resolve most recent scan

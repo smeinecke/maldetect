@@ -8,14 +8,15 @@ on:
 
 jobs:
   smoke-test:
-    uses: rfxn/batsman/.github/workflows/test.yml@v1.0.3
+    uses: rfxn/batsman/.github/workflows/test.yml@v1.2.2
     with:
       project-name: lmd
       os-matrix: '["debian12","centos6","centos7","rocky8","rocky9","rocky10","ubuntu2004","ubuntu2404"]'
+      timeout: 25
 
   yara-x:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:

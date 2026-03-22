@@ -45,7 +45,7 @@ teardown() {
 # --- Test 3: JSON hits array has correct count ---
 @test "--json-report hits array matches scan hit count" {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_DIR/"
-    maldet -a "$TEST_DIR" || true
+    maldet -co scan_hashtype=md5 -a "$TEST_DIR" || true
     local scanid
     scanid=$(get_last_scanid)
     run maldet --json-report "$scanid"

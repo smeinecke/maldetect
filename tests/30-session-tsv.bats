@@ -170,7 +170,7 @@ _source_lmd_stack() {
 # --- Test 12: TSV hit records have 11 tab-delimited fields ---
 @test "TSV hit records have 11 tab-delimited fields" {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_DIR/"
-    maldet -a "$TEST_DIR" || true
+    maldet -co scan_hashtype=md5 -a "$TEST_DIR" || true
     local scanid report
     scanid=$(get_last_scanid)
     report=$(get_session_report_file "$scanid")
@@ -211,7 +211,7 @@ _source_lmd_stack() {
 @test "view_report list shows sessions when legacy compat enabled" {
     lmd_set_config session_legacy_compat 1
     cp "$SAMPLES_DIR/eicar.com" "$TEST_DIR/"
-    maldet -a "$TEST_DIR" || true
+    maldet -co scan_hashtype=md5 -a "$TEST_DIR" || true
     local scanid
     scanid=$(get_last_scanid)
     run maldet -e list
@@ -262,7 +262,7 @@ _source_lmd_stack() {
 # --- Test 19: TSV hit record contains file path ---
 @test "TSV hit record contains scanned file path" {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_DIR/"
-    maldet -a "$TEST_DIR" || true
+    maldet -co scan_hashtype=md5 -a "$TEST_DIR" || true
     local scanid report
     scanid=$(get_last_scanid)
     report=$(get_session_report_file "$scanid")

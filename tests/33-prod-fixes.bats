@@ -133,8 +133,8 @@ MOCK
 @test "-e list output has consistent column alignment" {
     # Run two scans to generate list data
     cp "$SAMPLES_DIR/clean-file.txt" "$TEST_DIR/"
-    maldet -a "$TEST_DIR" > /dev/null 2>&1
-    maldet -a "$TEST_DIR" > /dev/null 2>&1
+    maldet -co scan_hashtype=md5 -a "$TEST_DIR" > /dev/null 2>&1
+    maldet -co scan_hashtype=md5 -a "$TEST_DIR" > /dev/null 2>&1
     # Capture list output
     run maldet -e list
     assert_success

@@ -31,9 +31,9 @@ teardown() {
 
 @test "ignore_sigs suppresses specific signature" {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
-    # Cover both MD5 sig names (uppercase) and HEX sig names (lowercase)
-    printf '%s\n' "EICAR" "eicar" > "$LMD_INSTALL/ignore_sigs"
-    run maldet -a "$TEST_SCAN_DIR"
+    # Pattern must match all engines: MD5 (eicar), HEX (EICAR), YARA (Eicar)
+    printf '%s\n' "[Ee][Ii][Cc][Aa][Rr]" > "$LMD_INSTALL/ignore_sigs"
+    run maldet -co scan_hashtype=md5 -a "$TEST_SCAN_DIR"
     assert_success
     assert_output --partial "malware hits 0"
 }
@@ -43,8 +43,8 @@ teardown() {
     local hex_before md5_before hex_after md5_after
     hex_before=$(md5sum "$LMD_INSTALL/sigs/hex.dat" | awk '{print $1}')
     md5_before=$(md5sum "$LMD_INSTALL/sigs/md5v2.dat" | awk '{print $1}')
-    printf '%s\n' "EICAR" "eicar" > "$LMD_INSTALL/ignore_sigs"
-    run maldet -a "$TEST_SCAN_DIR"
+    printf '%s\n' "[Ee][Ii][Cc][Aa][Rr]" > "$LMD_INSTALL/ignore_sigs"
+    run maldet -co scan_hashtype=md5 -a "$TEST_SCAN_DIR"
     assert_success
     hex_after=$(md5sum "$LMD_INSTALL/sigs/hex.dat" | awk '{print $1}')
     md5_after=$(md5sum "$LMD_INSTALL/sigs/md5v2.dat" | awk '{print $1}')

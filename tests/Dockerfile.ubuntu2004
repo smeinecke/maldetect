@@ -3,6 +3,7 @@ FROM ${BASE_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     perl file inotify-tools ed yara \
+    bsdmainutils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . /opt/lmd-src
