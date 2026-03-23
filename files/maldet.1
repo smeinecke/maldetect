@@ -68,9 +68,10 @@ Override the quarantine directory for this run.
 May appear anywhere in the command line.
 .SS Reporting
 .TP
-\fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR|\fBlist\fR|\fBlatest\fR]
+\fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR|\fBlist\fR|\fBlatest\fR|\fBhooks\fR]
 View a scan report.
-Use \fBlatest\fR for the most recent scan, \fBlist\fR for all reports.
+Use \fBlatest\fR for the most recent scan, \fBlist\fR for all reports,
+\fBhooks\fR for hook scan activity (see HOOK SCANNING).
 Combine with \fB\-\-format\fR and \fB\-\-mailto\fR for output control.
 .TP
 \fB\-\-format\fR \fBtext\fR|\fBjson\fR|\fBhtml\fR
@@ -130,9 +131,26 @@ Override configuration options at runtime.
 Set HTTP/HTTPS proxy for all remote connections.
 .TP
 \fB\-hscan\fR, \fB\-\-hook\-scan\fR
-Scan a single file supplied by a ModSecurity \fIinspectFile\fR hook.
+Scan a single file supplied by a service hook (ModSecurity, pure\-ftpd,
+ProFTPD, Exim, or custom).
 Used internally by \fBhookscan.sh\fR; not intended for direct invocation.
 May appear anywhere in the command line.
+.TP
+\fB\-\-digest\fR
+Fire a unified digest alert reading all available sources: monitor session
+hits, hook scan hits, cleaned/suspended history.
+Does not require monitor mode \(em fires if any source has new data since
+the last digest.
+Cursors advance on read, preventing duplicate alerts.
+.TP
+\fB\-\-test\-alert\fR \fITYPE\fR \fICHANNEL\fR
+Send a test alert with synthetic data to verify alerting configuration.
+\fITYPE\fR: \fBscan\fR (per\-scan alert with 3 synthetic hits) or
+\fBdigest\fR (periodic summary).
+\fICHANNEL\fR: \fBemail\fR, \fBslack\fR, \fBtelegram\fR, or \fBdiscord\fR.
+Uses the real rendering pipeline with a \fB[TEST]\fR subject prefix.
+Channel isolation ensures only the specified channel receives the alert.
+Requires root privileges.
 .TP
 \fB\-v\fR, \fB\-\-version\fR
 Display version information.
@@ -203,6 +221,18 @@ User\-defined SHA\-256 hash signatures.
 .TP
 .I /usr/local/maldetect/sigs/rfxn.hsb
 ClamAV SHA\-256 hash signature database (ClamAV >= 0.97).
+.TP
+.I /usr/local/maldetect/conf.maldet.hookscan
+Hook scan configuration (user\-customizable, preserved across upgrades).
+.TP
+.I /usr/local/maldetect/conf.maldet.hookscan.default
+Reference hook scan configuration with default values and documentation.
+.TP
+.I /usr/local/maldetect/sess/hook.hits.log
+Rolling hook scan detection log (TSV format, append\-only).
+Each line is an 11\-field hit record plus hook mode and timestamp.
+Read by digest alerts and
+.BR "\-\-report hooks" .
 .TP
 .I /usr/local/maldetect/quarantine/
 Quarantine storage for detected malware.
@@ -289,6 +319,17 @@ Key variables by category:
 .BR digest_interval ,
 .BR digest_escalate_hits ,
 .BR monitor_paths_extra .
+.PP
+.B Hook Scanning:
+.BR hookscan_timeout ,
+.BR hookscan_fail_open ,
+.BR hookscan_escalate_hits ,
+.BR hookscan_service_users ,
+.BR hookscan_user_rate_limit ,
+.BR hookscan_user_show_signames ,
+.BR hookscan_list_max_bytes ,
+.BR hookscan_list_max_entries ,
+.BR cron_digest_hook .
 .PP
 .B Maintenance:
 .BR autoupdate_signatures ,
@@ -451,6 +492,62 @@ configuration reload, allowing paths to be added without modifying
 or restarting the monitor.
 Default: /usr/local/maldetect/monitor_paths.extra.
 .PP
+.B cron_digest_hook
+enables the daily cron job hook digest sweep.
+When enabled, cron.daily checks for new hook scan detections and fires a
+digest alert if any exist since the last sweep.
+Set to 0 to disable (e.g., if monitor mode handles hook digests).
+Default: 1.
+.PP
+.B hookscan_timeout
+sets the scan timeout in seconds for hook\-triggered scans.
+ModSecurity has no built\-in timeout \(em this prevents Apache worker thread
+exhaustion.
+pure\-ftpd runs hook scripts sequentially \(em this prevents queue blocking.
+Default: 30.
+.PP
+.B hookscan_fail_open
+controls behavior when the scan subprocess exits with an unexpected error.
+When set to 1 (default), scanner errors allow the file through (fail\-open).
+When set to 0, scanner errors block the file (fail\-closed).
+Fail\-open is the safe default: a broken scanner should not cause a
+site\-wide upload outage.
+Default: 1.
+.PP
+.B hookscan_escalate_hits
+sets a hit\-count threshold for immediate hook scan escalation alerts.
+When the number of hook detections within a 1\-hour rolling window reaches
+this value, an immediate per\-scan alert is fired.
+Set to 0 to disable escalation.
+Default: 0.
+.PP
+.B hookscan_service_users
+is a comma\-separated list of service account usernames exempt from the
+non\-root homedir restriction.
+Default: apache,nginx,www\-data,nobody,proftpd,exim.
+.PP
+.B hookscan_user_rate_limit
+sets the maximum scans per hour for non\-root callers.
+Hook\-triggered scans (ModSecurity, FTP) from service UIDs are exempt.
+Set to 0 for unlimited.
+Default: 60.
+.PP
+.B hookscan_user_show_signames
+controls signature name visibility for non\-root callers.
+When set to 0, non\-root users see opaque \(lqMALWARE\-DETECTED\(rq in output
+while full signature names are logged.
+When set to 1 (default), full signature names appear in all output.
+Default: 1.
+.PP
+.B hookscan_list_max_bytes
+sets the maximum file list size in bytes for batch scanning via
+.BR "\-\-list" .
+Default: 1048576 (1 MB).
+.PP
+.B hookscan_list_max_entries
+sets the maximum number of entries accepted from a file list or stdin pipe.
+Default: 10000.
+.PP
 See
 .I conf.maldet
 for the full list with descriptions.
@@ -500,6 +597,161 @@ etc.) are automatically escaped before the path is used as a pattern.
 Users who previously relied on ERE regex patterns in
 .B ignore_inotify
 should update their entries to use literal path strings.
+.SH HOOK SCANNING
+.B hookscan.sh
+provides real\-time file scanning for service integrations.
+It supports multiple output modes for different services:
+.PP
+.B hookscan.sh
+[\fImode\fR] \fIfile\fR
+.PP
+Modes:
+.TP
+.B modsec
+ModSecurity \fB@inspectFile\fR (default if no mode specified).
+Stdout: \fB1\fR clean, \fB0 maldet: SIGNAME PATH\fR infected.
+.TP
+.B ftp
+pure\-ftpd \fBpure\-uploadscript\fR daemon.
+Fire\-and\-forget: quarantines on detect, no stdout needed.
+Auto\-detected when the \fBUPLOAD_VUSER\fR environment variable is set.
+.TP
+.B proftpd
+ProFTPD \fBmod_exec\fR.
+Fire\-and\-forget: quarantines on detect, no stdout needed.
+.TP
+.B exim
+Exim \fBcmdline\fR av_scanner.
+Stdout: \fBmaldet: clean\fR or \fBmaldet: SIGNAME\fR.
+.TP
+.B generic
+Machine\-parseable output for custom integrations.
+Exit codes: 0 clean, 1 error, 2 infected.
+Stdout: \fBCLEAN: PATH\fR, \fBINFECTED: SIGNAME PATH\fR, or
+\fBERROR: reason\fR.
+Accepts \fB\-\-list FILE\fR or \fB\-\-stdin\fR for batch file scanning.
+.PP
+Hook scan detections are logged to a rolling hit log
+.RI ( hook.hits.log )
+and included in periodic digest alerts.
+Individual hook scans do not create session files or fire per\-scan alerts.
+.PP
+When the escalation threshold
+.B hookscan_escalate_hits
+is exceeded (N detections within a 1\-hour window), an immediate per\-scan
+alert is fired regardless of digest settings.
+.PP
+Configuration options for hook scanning are stored in
+.BR conf.maldet.hookscan .
+The reference defaults are in
+.BR conf.maldet.hookscan.default .
+.PP
+.B Backward compatibility:
+.B hookscan.sh /path/to/file
+(no mode argument) behaves identically to prior versions \(em ModSecurity mode.
+.SS Batch File Lists (generic mode)
+.TP
+\fBhookscan.sh generic \-\-list\fR \fIFILE\fR
+Scan files listed in \fIFILE\fR (one absolute path per line).
+Each line is validated: absolute path required, no shell metacharacters,
+no path traversal, no non\-printable characters.
+Invalid lines are skipped with a syslog warning.
+.TP
+\fBhookscan.sh generic \-\-stdin\fR
+Read file paths from stdin (pipe).
+Same per\-line validation as \fB\-\-list\fR.
+Terminal input is rejected.
+.PP
+Batch output produces one \fBSTATUS: PATH\fR line per file.
+Exit code is worst\-result\-wins: 2 if any infected, 1 if any errors, 0 if
+all clean.
+.SS Usermode Restrictions
+Non\-root callers are restricted to scanning files within their home directory.
+Service UIDs listed in
+.B hookscan_service_users
+are exempt from this restriction.
+Non\-root callers are subject to rate limiting via
+.BR hookscan_user_rate_limit .
+.SH TEST ALERTS
+.B maldet \-\-test\-alert
+\fITYPE\fR \fICHANNEL\fR
+sends a synthetic test alert through the full rendering pipeline to verify
+that a delivery channel is correctly configured.
+.PP
+.B TYPE
+selects the alert template:
+.TP
+.B scan
+Per\-scan alert with 3 synthetic hits (MD5, HEX, and YARA detection types).
+Exercises the hit\-type color registry and per\-type template rendering.
+.TP
+.B digest
+Periodic summary alert with synthetic data spanning all 5 digest sources.
+.PP
+.B CHANNEL
+selects the delivery target:
+.B email\fR,
+.B slack\fR,
+.B telegram\fR, or
+.BR discord .
+.PP
+Channel isolation ensures only the specified channel receives the test alert;
+all other channels are temporarily suppressed.
+If the target channel is not enabled in
+.IR conf.maldet ,
+an error is reported.
+.PP
+The subject line is prefixed with
+.B [TEST]
+to distinguish test alerts from real detections.
+.PP
+Requires root privileges.
+.PP
+Examples:
+.TP
+Verify email alerting:
+.B maldet \-\-test\-alert scan email
+.TP
+Verify Slack digest delivery:
+.B maldet \-\-test\-alert digest slack
+.SH DIGEST ALERTS
+Digest alerts provide periodic summaries of detection activity from all
+sources: inotify monitor hits, hook scan detections, cleaned files, and
+suspended users.
+.PP
+Three trigger paths fire digest alerts:
+.TP
+.B Monitor timer
+When monitor mode is running, a digest fires every
+.B digest_interval
+(default: 24h).
+.TP
+.B cron.daily
+When
+.B cron_digest_hook=1
+(default), the daily cron job fires a digest if new hook scan detections
+exist since the last sweep.
+.TP
+.B \-\-digest CLI
+.B maldet \-\-digest
+fires an on\-demand digest reading all 5 tlog\-cursored sources.
+Cursors advance on read, so subsequent digests see only new data.
+.PP
+When monitor mode is not running, digest alerts can still fire via
+cron.daily or \fB\-\-digest\fR if hook scan detections exist.
+The monitor\-specific sections of the digest template render as empty
+when monitor mode is inactive.
+.SS Hook Scan Reports
+.TP
+\fBmaldet \-\-report hooks\fR
+Display all hook scan detections from the rolling hit log (default: last 24h).
+.TP
+\fBmaldet \-\-report hooks \-\-last\fR \fIDURATION\fR
+Filter by time: \fBNh\fR (hours), \fBNd\fR (days), \fBNm\fR (minutes).
+.TP
+\fBmaldet \-\-report hooks \-\-mode\fR \fIMODE\fR
+Filter by hook mode: \fBmodsec\fR, \fBftp\fR, \fBproftpd\fR, \fBexim\fR,
+or \fBgeneric\fR.
 .SH EXAMPLES
 .TP
 Scan all files under user web roots:
@@ -528,6 +780,27 @@ Start real\-time inotify monitoring (foreground):
 .TP
 Start real\-time inotify monitoring (background daemon):
 .B maldet \-b \-m users
+.TP
+Scan a file via the generic hook API:
+.B hookscan.sh generic /path/to/file
+.TP
+Batch scan files from a list:
+.B hookscan.sh generic \-\-list /tmp/filelist.txt
+.TP
+View hook scan activity (last 24 hours):
+.B maldet \-\-report hooks
+.TP
+View hook scan activity filtered by mode:
+.B maldet \-\-report hooks \-\-mode modsec
+.TP
+Fire an on\-demand digest alert:
+.B maldet \-\-digest
+.TP
+Test email alerting with a synthetic scan report:
+.B maldet \-\-test\-alert scan email
+.TP
+Test Slack digest delivery:
+.B maldet \-\-test\-alert digest slack
 .SH SEE ALSO
 .BR clamdscan (1),
 .BR clamscan (1),

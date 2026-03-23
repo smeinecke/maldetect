@@ -44,6 +44,7 @@ _install_core() {
 	chmod 755 "$inspath/maldet"
 	chmod 640 "$inspath/conf.maldet"
 	test -f "$inspath/conf.maldet.hookscan" && chmod 640 "$inspath/conf.maldet.hookscan"
+	test -f "$inspath/conf.maldet.hookscan.default" && chmod 640 "$inspath/conf.maldet.hookscan.default"
 	pkg_create_dirs 750 "$inspath/clean" "$inspath/pub" "$inspath/quarantine" \
 		"$inspath/sess" "$inspath/sigs" "$inspath/tmp"
 	chmod 750 "$inspath/logs" "$inspath/internals/tlog" "$inspath/internals/alert" 2>/dev/null

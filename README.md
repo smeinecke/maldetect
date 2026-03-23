@@ -1,8 +1,19 @@
 # Linux Malware Detect (LMD)
 
-[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](CHANGELOG)
-[![License: GPL v2](https://img.shields.io/badge/license-GPL_v2-green.svg)](COPYING.GPL)
-[![CI](https://github.com/rfxn/linux-malware-detect/actions/workflows/smoke-test.yml/badge.svg?branch=master)](https://github.com/rfxn/linux-malware-detect/actions/workflows/smoke-test.yml)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.svg">
+    <img alt="Linux Malware Detect" src="assets/banner-dark.svg" width="830">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://github.com/rfxn/linux-malware-detect/actions/workflows/smoke-test.yml"><img src="https://github.com/rfxn/linux-malware-detect/actions/workflows/smoke-test.yml/badge.svg?branch=master" alt="CI"></a>
+  <a href="CHANGELOG"><img src="https://img.shields.io/badge/version-2.0.1-blue.svg?style=flat-square" alt="Version"></a>
+  <a href="COPYING.GPL"><img src="https://img.shields.io/badge/license-GPL_v2-green.svg?style=flat-square" alt="License: GPL v2"></a>
+  <a href="#1-introduction"><img src="https://img.shields.io/badge/platform-Linux-orange.svg?style=flat-square" alt="Platform: Linux"></a>
+</p>
 
 **Malware scanner for Linux** — multi-stage threat detection (MD5, SHA-256, HEX, YARA,
 statistical analysis), ClamAV integration, real-time inotify monitoring,
@@ -13,7 +24,9 @@ Discord).
 > (C) 2026, Ryan MacDonald &lt;ryan@rfxn.com&gt;<br>
 > Licensed under [GNU GPL v2](COPYING.GPL)
 
-### What's New in 2.0.1
+---
+
+## What's New in 2.0.1
 
 **43x faster native scan engine** — the native scanning pipeline has been completely
 rewritten with batch parallel processing. Real-world benchmark on ~10,000 files:
@@ -50,7 +63,7 @@ See [CHANGELOG](CHANGELOG) for full details.
   - [3.8 Remote ClamAV](#38-remote-clamav)
   - [3.9 ELK Integration](#39-elk-integration)
   - [3.10 Configuration Loading Order](#310-configuration-loading-order)
-- [4. CLI Usage](#4-cli-usage)
+- [4. Usage](#4-usage)
 - [5. Ignore Options](#5-ignore-options)
 - [6. Cron Daily](#6-cron-daily)
 - [7. Inotify Monitoring](#7-inotify-monitoring)
@@ -59,9 +72,10 @@ See [CHANGELOG](CHANGELOG) for full details.
   - [8.2 Custom Signatures](#82-custom-signatures)
 - [9. Quarantine & Cleaning](#9-quarantine--cleaning)
   - [9.1 Cleaner Rules](#91-cleaner-rules)
-- [10. ModSecurity2 Upload Scanning](#10-modsecurity2-upload-scanning)
-- [11. License](#11-license)
-- [12. Support Information](#12-support-information)
+- [10. Hook Scanning](#10-hook-scanning)
+- [Integration](#integration)
+- [License](#license)
+- [Support](#support)
 
 ---
 
@@ -93,6 +107,8 @@ maldet -u
 ---
 
 ## 1. Introduction
+
+LMD's architecture, detection stages, and supported platforms.
 
 Linux Malware Detect (LMD) is a malware scanner for Linux released under the GNU GPLv2 license, designed around the threats faced in shared hosted environments. It uses threat data from network edge intrusion detection systems to extract malware that is actively being used in attacks and generates signatures for detection. In addition, threat data is derived from user submissions with the LMD checkout feature and from malware community resources.
 
@@ -151,6 +167,8 @@ LMD runs on any Linux distribution with bash and standard GNU utilities. Tested 
 
 ## 2. Installation
 
+Installing, upgrading, and removing LMD from a system.
+
 The included `install.sh` script handles all installation tasks. Previous installations are automatically backed up.
 
 ```bash
@@ -176,6 +194,8 @@ Previous installs are saved to `/usr/local/maldetect.bk{PID}` with a `maldetect.
 ---
 
 ## 3. Configuration
+
+All user-facing settings and their defaults. See `man maldet`(1) for the complete reference.
 
 The main configuration file is `/usr/local/maldetect/conf.maldet`. All options are commented for ease of configuration. Options use `0`/`1` for disable/enable unless otherwise noted.
 
@@ -356,7 +376,9 @@ Later sources override earlier values:
 
 ---
 
-## 4. CLI Usage
+## 4. Usage
+
+Command-line interface, exit codes, and common examples. See `man maldet`(1) for the complete option reference.
 
 ```
 usage: maldet [OPTION] [ARGUMENT]
@@ -384,11 +406,12 @@ QUARANTINE & RESTORE:
   -qd PATH                      override quarantine directory for this run
 
 REPORTING:
-  -e, --report [SCANID|list|latest]  view scan report
+  -e, --report [SCANID|list|latest|hooks]  view scan report
   --format text|json|html       set report output format (default: text)
   --mailto ADDRESS              email report to address
   --json-report [SCANID|list]   shorthand: --report --format json
   --alert-daily                 generate inotify monitor digest alert
+  --digest                      fire unified digest (monitor + hook sources)
   -l, --log                     view event log
 
 UPDATES:
@@ -398,14 +421,21 @@ UPDATES:
 OTHER:
   -p, --purge                   clear logs, quarantine, temp data
   -c, --checkout FILE           submit suspected malware to rfxn.com
+  --test-alert TYPE CHANNEL     test alert delivery (scan|digest, email|slack|telegram|discord)
   --mkpubpaths                  create per-user pub/ data directories
   --web-proxy IP:PORT           set HTTP/HTTPS proxy
-  -hscan, --hook-scan           scan via ModSecurity inspectFile hook
+  -hscan, --hook-scan           scan via service hook (internal use)
   -v, --version                 show version information
   -h, --help                    show detailed help
 ```
 
-**Exit codes:** `0` = success / no hits, `1` = error or all scan paths non-existent, `2` = malware hits found.
+### 4.1 Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success, no malware hits |
+| `1` | Error or all scan paths non-existent |
+| `2` | Malware hits found |
 
 **Examples:**
 
@@ -449,6 +479,8 @@ enriched fields (hash, size, owner, etc.) as `null`.
 
 ## 5. Ignore Options
 
+Excluding paths, file types, and signatures from scans and monitoring.
+
 Four ignore files control what is excluded from scanning:
 
 | File | Format | Purpose |
@@ -484,6 +516,8 @@ base64.inject.unclassed
 
 ## 6. Cron Daily
 
+Automated daily scanning, data pruning, and signature updates.
+
 The cron job installed at `/etc/cron.daily/maldet` performs three tasks:
 
 1. **Prune** quarantine, session, and temp data older than `cron_prune_days` (default: 21)
@@ -515,6 +549,8 @@ A weekly watchdog script (`/etc/cron.weekly/maldet-watchdog`) provides independe
 ---
 
 ## 7. Inotify Monitoring
+
+Real-time file monitoring with kernel inotify, digest alerts, and supervisor management.
 
 Real-time file monitoring uses the kernel inotify subsystem to detect file creation, modification, and move events. Requires a kernel with `CONFIG_INOTIFY_USER` (standard on all modern kernels).
 
@@ -556,6 +592,8 @@ When using the `users` mode, only subdirectories matching `inotify_docroot` (def
 ---
 
 ## 8. Signature System
+
+Signature types, naming conventions, updates, and custom rule files.
 
 LMD ships with five signature types:
 
@@ -626,6 +664,8 @@ Remote import URLs can be configured for automatic download during signature upd
 
 ## 9. Quarantine & Cleaning
 
+Isolating, restoring, and cleaning malware-infected files.
+
 Quarantined files are stored under `/usr/local/maldetect/quarantine/` with permissions set to `000`. Original path, owner, permissions, and modification time are recorded in `/usr/local/maldetect/sess/quarantine.hist` for full restoration.
 
 ```bash
@@ -660,34 +700,181 @@ The cleaner is a sub-function of quarantine — files must be quarantined (or us
 
 ---
 
-## 10. ModSecurity2 Upload Scanning
+## 10. Hook Scanning
 
-LMD integrates with ModSecurity2's `inspectFile` hook for real-time HTTP upload scanning via the included `hookscan.sh` script.
+Service hook API for ModSecurity, FTP, Exim, and custom integrations.
 
-**Setup:**
+LMD provides real-time file scanning for multiple services via the unified `hookscan.sh` API. A single script handles mode dispatch for ModSecurity, pure-ftpd, ProFTPD, Exim, and generic (custom) integrations.
 
-1. Enable user access scanning in `conf.maldet`:
-   ```
-   scan_user_access=1
-   ```
+Hook scan detections are logged to a rolling hit log (`hook.hits.log`) rather than creating per-scan session files. Detections are included in periodic digest alerts and can be viewed via `maldet --report hooks`.
 
-2. Add to your ModSecurity2 configuration:
-   ```apache
-   SecRequestBodyAccess On
-   SecRule FILES_TMPNAMES "@inspectFile /usr/local/maldetect/hookscan.sh" \
-       "id:'999999',log,auditlog,deny,severity:2,phase:2,t:none"
-   ```
-   For ModSecurity >= 2.9, add `SecTmpSaveUploadedFiles On` before the rule.
+### 10.1 ModSecurity
 
-3. Restart Apache.
+```apache
+SecRequestBodyAccess On
+SecTmpSaveUploadedFiles On   # Required for ModSecurity >= 2.9
+SecRule FILES_TMPNAMES "@inspectFile /usr/local/maldetect/hookscan.sh" \
+    "id:1999999,phase:2,t:none,deny,log,auditlog,severity:2, \
+     msg:'Malware upload blocked by LMD'"
+```
 
-Malicious uploads are rejected with a 406 status code and logged to the ModSecurity audit log. The default scan options enable quarantine and auto-detect ClamAV (if the `clamd` daemon is running, ClamAV is used; otherwise the native engine is used). YARA scanning is disabled by default. To customize scan options, create `conf.maldet.hookscan` in the install directory — it is sourced after the defaults and can override any scan variable.
+Malicious uploads are rejected with a deny action and logged to the ModSecurity audit log. No mode argument is needed — `hookscan.sh` defaults to ModSecurity mode for backward compatibility. Both ModSecurity v2 and v3 (libmodsecurity) use the same `popen()` contract.
+
+### 10.2 pure-ftpd
+
+```bash
+# pure-ftpd.conf (or command-line flags):
+CallUploadScript yes
+
+# Start the upload-script daemon:
+pure-uploadscript -r /usr/local/maldetect/hookscan.sh -B
+```
+
+Requires pure-ftpd compiled with `--with-uploadscript`. The mode is auto-detected via the `UPLOAD_VUSER` environment variable. Infected files are quarantined after upload (fire-and-forget — uploads cannot be blocked, only post-processed).
+
+### 10.3 ProFTPD
+
+```
+<IfModule mod_exec.c>
+  ExecEngine on
+  ExecLog /var/log/proftpd/exec.log
+  ExecTimeout 30
+  ExecOnCommand STOR /usr/local/maldetect/hookscan.sh proftpd %f
+  ExecEnviron PROFTPD_USER %u
+  ExecEnviron PROFTPD_HOME %d
+</IfModule>
+```
+
+Note: `mod_exec` always returns `PR_DECLINED` regardless of script exit code — uploads cannot be blocked by this hook. LMD quarantines infected files after the upload completes.
+
+### 10.4 Exim
+
+```
+# exim.conf
+av_scanner = cmdline:\
+  /usr/local/maldetect/hookscan.sh exim %s :\
+  maldet\: (.+):\
+  maldet\: (.+)
+```
+
+The three colon-separated fields are: command template, trigger regex, and name-capture regex. When malware is detected, Exim rejects the message using the captured signature name.
+
+### 10.5 Generic API
+
+For custom integrations, batch scanning, and third-party use:
+
+```bash
+# Single file scan
+hookscan.sh generic /path/to/file
+# Exit: 0 = clean, 1 = error, 2 = infected
+# Stdout: CLEAN: /path, INFECTED: signame /path, ERROR: reason
+
+# Batch scan from a file list
+hookscan.sh generic --list /tmp/filelist.txt
+
+# Batch scan from stdin
+find /uploads -newer /tmp/marker -type f | hookscan.sh generic --stdin
+```
+
+Batch output produces one `STATUS: PATH` line per file. Exit code is worst-result-wins.
+
+### 10.6 Configuration
+
+Hook scan configuration is stored in `conf.maldet.hookscan` (optional — defaults are built into the script). The reference defaults are in `conf.maldet.hookscan.default`.
+
+Key variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `hookscan_timeout` | `30` | Scan timeout in seconds |
+| `hookscan_fail_open` | `1` | Allow file on scan error (0 = block) |
+| `hookscan_escalate_hits` | `0` | Immediate alert at N hook hits/hour (0 = disabled) |
+| `hookscan_service_users` | `apache,nginx,...` | Service UIDs exempt from homedir restriction |
+| `hookscan_user_rate_limit` | `60` | Max scans/hour for non-root callers |
+| `hookscan_user_show_signames` | `1` | Show signature names to non-root callers |
+| `hookscan_list_max_bytes` | `1048576` | Max list file size (1 MB) |
+| `hookscan_list_max_entries` | `10000` | Max entries in file list |
 
 Run `maldet --mkpubpaths` after enabling to create per-user data directories for non-root scan operations.
 
+### 10.7 Test Alerts
+
+Verify that alert delivery channels are correctly configured:
+
+```bash
+maldet --test-alert scan email      # test per-scan email alert
+maldet --test-alert scan slack      # test per-scan Slack alert
+maldet --test-alert digest email    # test digest email alert
+maldet --test-alert digest telegram # test digest Telegram alert
+```
+
+Test alerts use the real rendering pipeline with synthetic data. The subject line is prefixed with `[TEST]`. Channel isolation ensures only the specified channel fires.
+
+### 10.8 Hook Digest
+
+Hook detections are summarized via periodic digest alerts:
+
+```bash
+# On-demand digest (reads all sources: monitor + hooks)
+maldet --digest
+
+# View hook scan activity
+maldet --report hooks                    # last 24 hours
+maldet --report hooks --last 7d          # last 7 days
+maldet --report hooks --mode modsec      # filter by mode
+```
+
+The daily cron job automatically fires a hook digest when new detections exist (controlled by `cron_digest_hook=1` in `conf.maldet`).
+
+### 10.9 CXS Migration
+
+For administrators replacing CXS with LMD:
+
+| CXS Component | LMD Equivalent |
+|---------------|---------------|
+| `cxscgi.sh` | `hookscan.sh modsec` |
+| `cxsftp.sh` | `hookscan.sh ftp` |
+| ProFTPD mod_exec to cxs | `hookscan.sh proftpd` |
+| `cxs --file` | `hookscan.sh generic` |
+| `cxswatch` | `maldet --monitor` |
+| `/etc/cxs/cxs.conf` | `conf.maldet.hookscan` |
+
 ---
 
-## 11. License
+## Integration
+
+Connecting LMD with external tools, automation pipelines, and third-party scanners.
+
+### ClamAV
+
+LMD signatures are automatically symlinked to ClamAV data directories by `install.sh`, providing dual-engine coverage. Set `scan_clamscan=auto` (default) for automatic ClamAV detection. See [3.7 ClamAV Integration](#37-clamav-integration) for engine selection and signature validation.
+
+### ELK Stack
+
+Enable `enable_statistic=1` with `elk_host`, `elk_port`, and `elk_index` to stream scan events to Elasticsearch. See [3.9 ELK Integration](#39-elk-integration).
+
+### Alerting Channels
+
+LMD supports four alert delivery channels beyond email: Slack (Block Kit), Telegram (MarkdownV2), Discord (webhook embeds), and SMTP relay for environments without a local MTA. See [3.2 Alerting](#32-alerting) for configuration.
+
+### JSON Reports
+
+Machine-readable scan output for CI/CD and automation:
+
+```bash
+maldet --format json -e SCANID    # JSON report to stdout
+maldet --json-report list         # list all scans as JSON
+```
+
+See `man maldet`(1) for the v1.0 JSON schema.
+
+### Hosting Panel Detection
+
+The daily cron auto-detects 12+ hosting control panels and adjusts scan paths. See [6. Cron Daily](#6-cron-daily) for the full panel matrix.
+
+---
+
+## License
 
 LMD is developed and supported on a volunteer basis by Ryan MacDonald [ryan@rfxn.com].
 
@@ -698,7 +885,7 @@ required under GNU GPL.
 
 ---
 
-## 12. Support Information
+## Support
 
 The LMD source repository is at: https://github.com/rfxn/linux-malware-detect
 

@@ -152,11 +152,12 @@ usage: maldet [OPTION] [ARGUMENT]
     -s|--restore FILE|SCANID    restore quarantined file(s)
 
   reporting:
-    -e|--report [SCANID|list|latest]  view scan report
+    -e|--report [SCANID|list|latest|hooks]  view scan report
     --format text|json|html       set report output format (default: text)
     --mailto ADDRESS              email report to address
     --json-report [SCANID|list]   shorthand: --report --format json
     --alert-daily                 generate inotify monitor digest alert
+    --digest                      fire unified digest (monitor + hook sources)
     -l|--log                      view event log
 
   updates:
@@ -166,6 +167,7 @@ usage: maldet [OPTION] [ARGUMENT]
   other:
     -p|--purge                  clear logs, quarantine, temp data
     -c|--checkout FILE          submit suspected malware to rfxn.com
+    --test-alert TYPE CHANNEL   send test alert (scan|digest, email|slack|telegram|discord)
     --mkpubpaths                create per-user pub/ data directories
     --web-proxy IP:PORT         set HTTP/HTTPS proxy
     -v|--version                show version information
@@ -257,14 +259,23 @@ QUARANTINE & RESTORE:
        e.g: maldet -q 050910-1534.21135 -qd /data/quarantine
 
 REPORTING:
-    -e, --report [SCANID|list|latest]
+    -e, --report [SCANID|list|latest|hooks]
        View scan report of most recent scan or of a specific SCANID.
-       Use "latest" for most recent, "list" for all. Combine with --format and --mailto.
+       Use "latest" for most recent, "list" for all, "hooks" for hook scan activity.
+       Combine with --format and --mailto.
        e.g: maldet --report
        e.g: maldet --report list
        e.g: maldet --report 050910-1534.21135
        e.g: maldet --format json -e 050910-1534.21135
        e.g: maldet --mailto admin@example.com -e 050910-1534.21135
+       e.g: maldet --report hooks
+       e.g: maldet --report hooks --last 7d
+       e.g: maldet --report hooks --mode modsec
+
+    --report hooks [--last DURATION] [--mode MODE]
+       View hook scan activity log. DURATION: Nh (hours), Nd (days),
+       Nm (minutes), default 24h. MODE: filter by hook mode (modsec,
+       ftp, proftpd, exim, generic).
 
     --format text|json|html
        Set report output format for -e/--report (default: text).
@@ -290,6 +301,12 @@ REPORTING:
     --alert-daily (also: --monitor-report)
        Generate a digest alert summarizing inotify monitor activity.
        Requires monitor mode to be running.
+
+    --digest
+       Fire a unified digest alert reading all available sources: monitor
+       session hits, hook scan hits, cleaned/suspended history. Does not
+       require monitor mode — fires if any source has new data since the
+       last digest. Cursors advance on read, preventing duplicate alerts.
 
     -l, --log
        View maldet event log
@@ -320,6 +337,17 @@ UPDATES:
 OTHER:
     -p, --purge
        Clear logs, quarantine queue, session and temporary data
+
+    --test-alert TYPE CHANNEL
+       Send a test alert with synthetic data to verify alerting configuration.
+       TYPE: scan (scan report with 3 synthetic hits) or digest (digest summary).
+       CHANNEL: email, slack, telegram, or discord.
+       Uses the real rendering pipeline with a [TEST] subject prefix.
+       Channel isolation ensures only the specified channel receives the alert.
+       Requires root privileges.
+       e.g: maldet --test-alert scan email
+       e.g: maldet --test-alert scan slack
+       e.g: maldet --test-alert digest email
 
     -c, --checkout FILE
        Submit suspected malware to rfxn.com for review & signature hashing
@@ -449,6 +477,43 @@ else
 				fi
 				genalert digest
 			;;
+			--digest)
+				_lmd_alert_init
+				genalert digest
+			;;
+			--test-alert)
+				if [ "$(id -u)" -ne 0 ]; then
+					echo "ERROR: --test-alert requires root privileges" >&2
+					exit 1
+				fi
+				shift
+				_test_type="${1:-}"
+				shift 2>/dev/null || true  # safe: handles missing arg without error
+				_test_channel="${1:-}"
+				if [ -z "$_test_type" ] || [ -z "$_test_channel" ]; then
+					echo "usage: maldet --test-alert {scan|digest} {email|slack|telegram|discord}" >&2
+					exit 1
+				fi
+				case "$_test_type" in
+					scan|digest) ;;
+					*)
+						echo "ERROR: invalid alert type '$_test_type' (use: scan or digest)" >&2
+						exit 1
+						;;
+				esac
+				case "$_test_channel" in
+					email|slack|telegram|discord) ;;
+					*)
+						echo "ERROR: invalid channel '$_test_channel' (use: email, slack, telegram, or discord)" >&2
+						exit 1
+						;;
+				esac
+				_lmd_alert_init
+				case "$_test_type" in
+					scan) _test_alert_scan "$_test_channel" ;;
+					digest) _test_alert_digest "$_test_channel" ;;
+				esac
+			;;
 			-m|--monitor)
 				header
 				shift
@@ -573,14 +638,31 @@ else
 				view
 			;;
 			-e|--report)
-				if [ -z "${_report_format:-}" ] || [ "$_report_format" = "text" ]; then
-					header
-				fi
 				shift
-				view_report "$1" "$2"
-				# consume optional email argument
-				if [ -n "$2" ]; then
-					shift
+				if [ "${1:-}" == "hooks" ]; then
+					header
+					# Parse optional --last and --mode flags
+					_hooks_last="24h"
+					_hooks_mode=""
+					shift  # consume "hooks"
+					while [ -n "${1:-}" ]; do
+						case "$1" in
+							--last) shift; _hooks_last="${1:-24h}" ;;
+							--mode) shift; _hooks_mode="${1:-}" ;;
+							*) break ;;
+						esac
+						shift
+					done
+					view_report "hooks" "$_hooks_last" "$_hooks_mode"
+				else
+					if [ -z "${_report_format:-}" ] || [ "$_report_format" = "text" ]; then
+						header
+					fi
+					view_report "$1" "$2"
+					# consume optional email argument
+					if [ -n "$2" ]; then
+						shift
+					fi
 				fi
 			;;
 			-E|--dump-report)

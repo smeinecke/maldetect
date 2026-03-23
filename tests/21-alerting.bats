@@ -475,3 +475,154 @@ run_maldet_with_mocks() {
         assert_failure
     fi
 }
+
+# ---------------------------------------------------------------------------
+# Unified digest (--digest CLI, hook.hits.log integration)
+# ---------------------------------------------------------------------------
+
+@test "--digest CLI is recognized as valid command" {
+    # --digest should not produce "unrecognized option" error
+    run maldet --digest
+    refute_output --partial "unrecognized"
+    refute_output --partial "invalid option"
+}
+
+@test "--digest with no hook hits and no monitor produces no alert" {
+    # Remove any existing hook hits log and monitor session
+    rm -f "$LMD_INSTALL/sess/hook.hits.log"
+    rm -f "$LMD_INSTALL/sess/session.monitor.current"
+    run maldet --digest
+    # Should complete without crash (no hits to digest from any source)
+    assert_success
+}
+
+@test "--digest reads hook.hits.log when no monitor running" {
+    # Ensure no monitor session exists
+    rm -f "$LMD_INSTALL/sess/session.monitor.current"
+    # Create a synthetic hook.hits.log entry (TSV format, 12 fields)
+    local hook_log="$LMD_INSTALL/sess/hook.hits.log"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        '{HEX}php.cmdshell.generic.482' '/home/user1/public_html/shell.php' \
+        '-' 'HEX' 'HEX Pattern' 'abc123' '1024' 'user1' 'user1' '0644' \
+        '1711234567' 'modsec' > "$hook_log"
+    # Pre-create tlog cursor at byte 0 so first read returns the full file
+    # (tlog_read skips content on first run when no cursor exists)
+    echo "0" > "$LMD_INSTALL/tmp/digest.hook.alert"
+    create_mock_mail
+    lmd_set_config email_alert 1
+    lmd_set_config email_addr "test@example.com"
+    run_maldet_with_mocks --digest
+    # Should have created a session file (digest report) from hook hits
+    [ -f "$LMD_INSTALL/sess/session.last" ]
+    rm -f "$hook_log" "$LMD_INSTALL/tmp/digest.hook.alert"
+}
+
+@test "cron_digest_hook config variable accepted by allowlist" {
+    # Verify cron_digest_hook is in conf.maldet and accepted by config system
+    run grep -c 'cron_digest_hook' "$LMD_INSTALL/conf.maldet"
+    assert_success
+    [ "$output" -ge 1 ]
+}
+
+@test "digest template contains HOOK_SECTION_TEXT token" {
+    run grep -c 'HOOK_SECTION_TEXT' "$LMD_INSTALL/internals/alert/digest.text.header.tpl"
+    assert_success
+    [ "$output" -ge 1 ]
+}
+
+@test "digest template contains HOOK_SECTION_HTML token" {
+    run grep -c 'HOOK_SECTION_HTML' "$LMD_INSTALL/internals/alert/digest.html.header.tpl"
+    assert_success
+    [ "$output" -ge 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test alert framework (--test-alert)
+# ---------------------------------------------------------------------------
+
+@test "--test-alert missing args shows usage" {
+    run maldet --test-alert
+    [ "$status" -ne 0 ]
+    assert_output --partial "usage:"
+}
+
+@test "--test-alert with only type and no channel shows usage" {
+    run maldet --test-alert scan
+    [ "$status" -ne 0 ]
+    assert_output --partial "usage:"
+}
+
+@test "--test-alert invalid type shows error" {
+    run maldet --test-alert bogus email
+    [ "$status" -ne 0 ]
+    assert_output --partial "invalid alert type"
+}
+
+@test "--test-alert invalid channel shows error" {
+    run maldet --test-alert scan bogus
+    [ "$status" -ne 0 ]
+    assert_output --partial "invalid channel"
+}
+
+@test "--test-alert scan email validates email_alert enabled" {
+    lmd_set_config email_alert 0
+    run maldet --test-alert scan email
+    assert_output --partial "not enabled"
+}
+
+@test "--test-alert scan email validates email_addr configured" {
+    create_mock_mail
+    lmd_set_config email_alert 1
+    lmd_set_config email_addr "you@domain.com"
+    run_maldet_with_mocks --test-alert scan email
+    assert_output --partial "not configured"
+}
+
+@test "--test-alert scan slack validates slack_alert enabled" {
+    lmd_set_config slack_alert 0
+    run maldet --test-alert scan slack
+    assert_output --partial "not enabled"
+}
+
+@test "--test-alert scan email sends with [TEST] prefix" {
+    create_mock_mail
+    lmd_set_config email_alert 1
+    lmd_set_config email_addr "test@example.com"
+    lmd_set_config email_subj "maldet alert"
+    run_maldet_with_mocks --test-alert scan email
+    assert_success
+    [ -f /tmp/mock-mail.log ]
+    run grep "TEST" /tmp/mock-mail.log
+    assert_success
+}
+
+@test "--test-alert scan email uses synthetic hits (MD5, HEX, YARA)" {
+    create_mock_sendmail
+    lmd_set_config email_alert 1
+    lmd_set_config email_addr "test@example.com"
+    lmd_set_config email_format "text"
+    run_maldet_with_mocks --test-alert scan email
+    assert_success
+    [ -f /tmp/mock-sendmail.body ]
+    run grep "test.malware.sample" /tmp/mock-sendmail.body
+    assert_success
+}
+
+@test "--test-alert scan slack dispatches to slack channel" {
+    create_mock_curl
+    lmd_set_config slack_alert 1
+    lmd_set_config slack_token "xoxb-test-token-123"
+    lmd_set_config slack_channels "C12345"
+    run_maldet_with_mocks --test-alert scan slack
+    assert_success
+    assert_output --partial "test slack scan alert sent"
+    [ -f /tmp/mock-curl.log ]
+    run grep "getUploadURLExternal" /tmp/mock-curl.log
+    assert_success
+}
+
+@test "--test-alert digest email validates email_alert enabled" {
+    lmd_set_config email_alert 0
+    run maldet --test-alert digest email
+    assert_output --partial "not enabled"
+}

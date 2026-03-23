@@ -1,3 +1,12 @@
+v2.0.1 | Mar 23 2026:
+[New] Hookscan: enforce rate limit (hookscan_user_rate_limit) for non-root generic mode
+[New] Hookscan: enforce signature masking (hookscan_user_show_signames) for non-root generic mode
+[New] README restructured to rfxn documentation convention (level-2)
+[New] SVG banners (dark/light) with scan beam glyph in assets/
+[New] SECURITY.md and CONTRIBUTING.md companion files
+[New] What's New, Integration, and Exit Codes sections in README
+[Change] Badge row updated to flat-square style with centered layout
+
 v2.0.1 | Mar 10 2026:
 
   -- New Features --
@@ -55,14 +64,34 @@ v2.0.1 | Mar 10 2026:
       /etc/userdatadomains; Bitrix panel detection; issue #268, #381
 [New] -v/--version flag displays version information and exits 0
 [New] scan_clamscan and scan_yara support 'auto' mode for runtime binary detection
+[Change] hookscan.sh rewrite: unified hook scanning API with modsec/ftp/proftpd/exim/generic
+      mode dispatch; inline config parser with allowlist validation; timeout protection via
+      timeout --kill-after; filename validation (metachar, traversal, readlink canonicalization);
+      usermode path restriction gated on UID; conf.maldet.hookscan.default reference config
+[New] Hookscan: generic mode --list FILE and --stdin for batch file scanning; 7-layer
+      validation pipeline (type, size, per-line allowlist, readlink, existence, homedir);
+      per-file CLEAN:/INFECTED:/ERROR: output with worst-result-wins exit code
+[Change] Hook scans write to rolling hook.hits.log instead of creating session files;
+      genalert suppressed for hook scans (no per-scan email/Slack/Telegram/Discord alerts)
+[New] Hook escalation: _hook_escalate_check() fires immediate alert when hook hit count
+      reaches hookscan_escalate_hits threshold within a 1-hour rolling window
+[New] Unified digest: _genalert_digest() reads from 5 tlog-cursored sources (4 monitor +
+      1 hook); monitor preamble conditional (digest works without monitor running);
+      hook section template tokens (HOOK_SECTION_TEXT/HTML); cron_digest_hook config
+[New] --digest CLI for on-demand digest alert fire (monitor + hook sources)
+[New] --report hooks: view hook scan activity log with --last DURATION (Nh/Nd/Nm) and
+      --mode MODE (modsec/ftp/proftpd/exim/generic) filters
+[New] --test-alert {scan|digest} {email|slack|telegram|discord}: send test alert with
+      synthetic data through the real rendering pipeline; channel isolation;
+      [TEST] subject prefix; root-only gate
+[Change] Docs: maldet.1 man page updated with HOOK SCANNING, TEST ALERTS, DIGEST ALERTS
+      sections; README §10 rewritten as Hook Scanning & Service Integration;
+      install.sh installs conf.maldet.hookscan.default
 
   -- Bug Fixes --
 
-[Fix] CI: align batsman workflow ref to v1.2.2; increase job timeout from 15m to
-      25m (512-test suite exceeds 15m on GHA runners)
-[Fix] Tests: force scan_hashtype=md5 in EICAR-dependent tests to prevent vacuous
-      pass on SHA-NI hardware where sha256 mode has no sigs; use case-insensitive
-      ignore_sigs patterns to match YARA sig name variants
+[Fix] Scan: extract hitname from session TSV for hook output ($hitname empty in batch
+      pipeline and when quarantine_hits=0)
 [Fix] clamav_linksigs: set 644 perms and match ClamAV dir ownership on deployed
       sig files so clamd can read rfxn.*/lmd.user.* databases
 [Fix] --report: recognize "latest" as alias for "newest" to resolve most recent scan
@@ -72,30 +101,19 @@ v2.0.1 | Mar 10 2026:
       at end of import_user_sigs(), import_conf(), lmdup(), sigup()
 [Fix] sigup: write downloaded version to maldet.sigs.ver after sigpack install as guard
       against CDN version endpoint desync causing repeated full downloads
-[Fix] Scan engine: isolate worker temp files using parent PID namespace ($$) to prevent
-      concurrent scans from deleting each other's buffers during _scan_cleanup (F-SCAN-001)
-[Fix] scan(): exit 1 when all provided scan paths do not exist; add _spaths_exist counter;
-      empty file list now exits 1 only when zero paths resolved to filesystem entries (F-SCAN-002)
-[Fix] _hash_batch_worker: detect md5sum/sha256sum backslash-escaped output; strip leading
-      backslash from hash, use length($1)+3 for path offset, apply three-step sentinel
-      unescape (\\→\001→\, \n→newline, \001→\) for filenames with \ or \n (F-ENG-001)
-[Fix] _hex_csig_batch_worker: preload _match_dir SID files into local -A _loaded_sids
-      before rule loop; _check_sid_match rewritten as O(1) array lookup; eliminates
-      up to 40,000 grep forks per scan cycle under complex CSIG rules (F-ENG-002)
-[Fix] _hex_csig_batch_worker: preload hex sigmap into local -A _sigmap_cache at worker
-      start; replace both _hex_lookup_name call sites with O(1) array lookups; eliminates
-      one awk fork per HEX hit (F-ENG-003)
-[Fix] scan_strlen: add os_freebsd guard at function entry; logs {strlen} skip message
-      rather than silently failing with wc -L (GNU extension not available on FreeBSD) (F-ENG-004)
-[Fix] Monitor mode: replace string variable with array for inotifywait --exclude arguments
-      to prevent startup failure when ignore paths contain spaces (F-MON-002)
-[Fix] Monitor mode: replace greedy awk sub() with match() in _monitor_filter_events
-      to prevent path truncation and malware bypass (F-MON-001)
-[Fix] Monitor mode: 8 defects fixed (graceful shutdown, inline loop, ERE escape,
-      kernel check, ClamAV cache, batch filter, crash recovery, session rotation)
-[Fix] Monitor runtime: remove double ClamAV scan; guard empty PID; compat.conf
-      reload order matches startup; unbounded accumulation of find-filter strings;
-      user count via awk UID threshold; batch native scan path; issue #454, #447, #459
+[Fix] Scan engine: isolate worker temp files using parent PID namespace to prevent
+      concurrent scans from deleting each other's buffers during _scan_cleanup
+[Fix] scan(): exit 1 when all provided scan paths do not exist; empty file list now
+      exits 1 only when zero paths resolved to filesystem entries
+[Fix] _hash_batch_worker: handle md5sum/sha256sum backslash-escaped output for filenames
+      containing backslash or newline characters
+[Fix] _hex_csig_batch_worker: preload SID and hex sigmap into local arrays for O(1)
+      lookups; eliminates up to 40,000 grep forks and per-hit awk forks per scan cycle
+[Fix] scan_strlen: add FreeBSD guard; wc -L (GNU extension) not available on FreeBSD
+[Fix] Monitor mode: 12 defects fixed (graceful shutdown, crash recovery, session
+      rotation, inotifywait exclude array, event filter path truncation, double
+      ClamAV scan, batch filter, PID guard, ERE escape, kernel check, ClamAV cache,
+      reload order); issue #454, #447, #459
 [Fix] Alerting: Slack migrated from deprecated files.upload API to
       files.getUploadURLExternal + files.completeUploadExternal; Telegram /bot prefix;
       token security via curl -K; panel alert signature names and path handling;

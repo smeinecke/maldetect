@@ -619,6 +619,38 @@ _scan_run_native() {
 	fi
 }
 
+_hook_escalate_check() {
+	[ "${hookscan_escalate_hits:-0}" -eq 0 ] && return 0
+	local _countfile="$tmpdir/.hook_escalate_count"
+	local _now _window_start _count _ts
+
+	_now=$(date +%s)
+	_window_start=$((_now - 3600))
+
+	if [ -f "$_countfile" ]; then
+		read -r _ts _count < "$_countfile"
+		if [ "${_ts:-0}" -lt "$_window_start" ]; then
+			_count=0
+		fi
+	else
+		_count=0
+	fi
+
+	_count=$((_count + 1))
+	printf '%s %s\n' "$_now" "$_count" > "$_countfile"
+
+	if [ "$_count" -ge "$hookscan_escalate_hits" ]; then
+		local _esc_session
+		_esc_session=$(mktemp "$tmpdir/.hook_escalation.XXXXXX")
+		_session_write_header "$_esc_session" "scan"
+		awk -F'\t' -v cutoff="$_window_start" \
+			'$13 >= cutoff && !/^#/ && NF > 0' \
+			"$sessdir/hook.hits.log" >> "$_esc_session"
+		genalert file "$_esc_session"
+		command rm -f "$_esc_session"
+		printf '%s %s\n' "$_now" "0" > "$_countfile"
+	fi
+}
 
 scan() {
 	scan_start_hr=$(date +"%b %e %Y %H:%M:%S %z")
@@ -763,11 +795,30 @@ scan() {
 	scan_et_nofl=$((scan_et - file_list_et))
 	tot_hits="$progress_hits"
 	tot_cl="$progress_cleaned"
-	_scan_finalize_session
+	# --- Session finalization ---
+	if [ -n "$hscan" ]; then
+		# HOOK SCAN: append hits to rolling log, no session file
+		if [ "$tot_hits" != "0" ] && [ -f "$scan_session" ]; then
+			local _hook_ts
+			_hook_ts=$(date +%s)
+			while IFS=$'\t' read -r _line; do
+				[[ "$_line" == "#"* ]] && continue
+				[ -z "$_line" ] && continue
+				printf '%s\t%s\t%s\n' "$_line" "${hscan_mode:-modsec}" "$_hook_ts" \
+					>> "$sessdir/hook.hits.log"
+			done < "$scan_session"
+		fi
+	else
+		_scan_finalize_session
+	fi
 
+	# --- Output block ---
 	if [ -n "$hscan" ]; then
 		if [ "$tot_hits" != "0" ]; then
-			echo "0 maldet: $hitname $spath"
+			# Extract first signature from session TSV (field 1, skip header)
+			local _hscan_sig
+			_hscan_sig=$(awk -F'\t' '!/^#/ && NF>0 {print $1; exit}' "$scan_session" 2>/dev/null)
+			echo "0 maldet: ${_hscan_sig:-MALWARE} $spath"
 			eout "{scan.hook} results returned FAIL hit found on $spath (id: $datestamp.$$)"
 		else
 			echo "1 maldet: OK"
@@ -783,7 +834,8 @@ scan() {
 	fi
 	_lmd_elog_event "$ELOG_EVT_SCAN_COMPLETED" "info" "scan completed on $hrspath" "hits=$tot_hits" "files=$tot_files" "cleaned=$tot_cl" "time=${scan_et}s"
 
-	if [ "$tot_hits" != "0" ]; then
+	# --- Alert dispatch (normal scans only) ---
+	if [ "$tot_hits" != "0" ] && [ -z "$hscan" ]; then
 		if [ "$email_ignore_clean" == "1" ] && [ "$tot_hits" != "$tot_cl" ]; then
 			genalert file "$nsess"
 		elif [ "$email_ignore_clean" == "0" ]; then
@@ -792,6 +844,11 @@ scan() {
 		if [ "$email_panel_user_alerts" == "1" ]; then
 			genalert panel "$nsess"
 		fi
+	fi
+
+	# --- Hook escalation check ---
+	if [ "$tot_hits" != "0" ] && [ -n "$hscan" ]; then
+		_hook_escalate_check
 	fi
 	_scan_cleanup
 }

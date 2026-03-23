@@ -204,6 +204,13 @@ $(cat "$_slist")
 		fi
 	fi
 
+	# Conditional: hook section (populated by _digest_set_hook_section_vars;
+	# initialize to empty if not already set to prevent stale template tokens)
+	export HOOK_SECTION_TEXT="${HOOK_SECTION_TEXT:-}"
+	export HOOK_SECTION_HTML="${HOOK_SECTION_HTML:-}"
+	export HOOK_TOTAL_HITS="${HOOK_TOTAL_HITS:-0}"
+	export HOOK_MODE_BREAKDOWN="${HOOK_MODE_BREAKDOWN:-}"
+
 	# Digest-specific
 	export MONITOR_RUNTIME="${inotify_run_time:-}"
 	export TOTAL_SCANNED="${tot_files:-0}"
@@ -1208,44 +1215,172 @@ _genalert_panel() {
 	fi
 }
 
-# _genalert_digest fmt tpl_dir type — monitor digest email + messaging dispatch
+# _digest_set_hook_section_vars — compute HOOK_SECTION_* export vars from hook hits
+# Reads $tmpdir/.digest.hook.hits (12-field TSV with hook_mode at field 12).
+# Populates HOOK_SECTION_TEXT, HOOK_SECTION_HTML, HOOK_TOTAL_HITS, HOOK_MODE_BREAKDOWN.
+# When no hook hits exist, all vars are set to empty strings.
+_digest_set_hook_section_vars() {
+	export HOOK_SECTION_TEXT=""
+	export HOOK_SECTION_HTML=""
+	export HOOK_TOTAL_HITS="0"
+	export HOOK_MODE_BREAKDOWN=""
+
+	if [ ! -s "$tmpdir/.digest.hook.hits" ]; then
+		return 0
+	fi
+
+	# Count and build mode breakdown from field 12 (hook_mode)
+	local _hook_count _mode_breakdown _hook_detail
+	_hook_count=$($wc -l < "$tmpdir/.digest.hook.hits")
+	HOOK_TOTAL_HITS="$_hook_count"
+
+	# Build mode breakdown: "modsec: N, ftp: N, ..."
+	_mode_breakdown=$(awk -F'\t' '{
+		mode = (NF >= 12) ? $12 : "unknown"
+		counts[mode]++
+	}
+	END {
+		first = 1
+		for (m in counts) {
+			if (!first) printf ", "
+			printf "%s: %d", m, counts[m]
+			first = 0
+		}
+	}' "$tmpdir/.digest.hook.hits")
+	HOOK_MODE_BREAKDOWN="$_mode_breakdown"
+
+	# Build per-entry detail lines: sig filepath hook_mode
+	_hook_detail=$(awk -F'\t' '{
+		sig = $1; fp = $2
+		mode = (NF >= 12) ? $12 : "unknown"
+		printf "  %-40s %-50s %s\n", sig, fp, mode
+	}' "$tmpdir/.digest.hook.hits")
+
+	HOOK_SECTION_TEXT="HOOK SCANNING:
+  ${_hook_count} detection(s) (${_mode_breakdown}) since last digest
+${_hook_detail}
+"
+
+	# Build HTML section
+	local _hook_rows
+	_hook_rows=$(awk -F'\t' 'BEGIN { ORS="" }
+	{
+		sig = $1; fp = $2
+		mode = (NF >= 12) ? $12 : "unknown"
+		# HTML-escape basic characters
+		gsub(/&/, "\\&amp;", sig); gsub(/</, "\\&lt;", sig); gsub(/>/, "\\&gt;", sig)
+		gsub(/&/, "\\&amp;", fp); gsub(/</, "\\&lt;", fp); gsub(/>/, "\\&gt;", fp)
+		gsub(/&/, "\\&amp;", mode); gsub(/</, "\\&lt;", mode); gsub(/>/, "\\&gt;", mode)
+		printf "<tr><td style=\"padding:4px 8px;font-family:'"'"'Courier New'"'"',Courier,monospace;font-size:12px;border-bottom:1px solid #e4e4e7;\">%s</td>", sig
+		printf "<td style=\"padding:4px 8px;font-size:12px;border-bottom:1px solid #e4e4e7;word-break:break-all;\">%s</td>", fp
+		printf "<td style=\"padding:4px 8px;font-size:12px;border-bottom:1px solid #e4e4e7;\">%s</td></tr>\n", mode
+	}' "$tmpdir/.digest.hook.hits")
+
+	HOOK_SECTION_HTML="<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"margin-bottom:12px;\">
+<tr><td style=\"color:#71717a;font-size:12px;text-transform:uppercase;letter-spacing:1px;padding-bottom:6px;\">Hook Scanning &mdash; ${_hook_count} detection(s) (${_mode_breakdown})</td></tr>
+<tr><td><table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"font-size:12px;border:1px solid #d4d4d8;border-radius:4px;overflow:hidden;\">
+<tr style=\"background-color:#f4f4f5;\"><th style=\"padding:6px 8px;text-align:left;font-size:11px;color:#52525b;\">Signature</th><th style=\"padding:6px 8px;text-align:left;font-size:11px;color:#52525b;\">File</th><th style=\"padding:6px 8px;text-align:left;font-size:11px;color:#52525b;\">Hook</th></tr>
+${_hook_rows}
+</table></td></tr></table>"
+}
+
+# _genalert_digest fmt tpl_dir type — unified digest: monitor + hook sources
+# Reads up to 5 tlog-cursored sources: 4 monitor (conditional) + 1 hook (always).
 # Type parameter preserves "daily" vs "digest" distinction for log messages.
 _genalert_digest() {
 	local _fmt="$1" _tpl_dir="$2" _type="$3"
 	local digest_tmpf=""
-	if [ ! -f "$sessdir/session.monitor.current" ]; then
-		eout "{alert} no active monitor session found, digest alert skipped"
-		return
-	fi
-	inotify_start_time=$(ps -p "$(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1)" -o lstart= 2> /dev/null)
-	scan_start_hr=$(date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z")
-	scan_start_elapsed=$(($(date +'%s')-$(date -d "$scan_start_hr" +'%s')))
-	inotify_run_time="$(($scan_start_elapsed/86400))d:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))/3600))h:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%3600/60))m:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%60))s"
+	local _has_monitor=0
 
-	rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
+	# Monitor preamble — conditional on active monitor session
+	if [ -f "$sessdir/session.monitor.current" ]; then
+		_has_monitor=1
+		inotify_start_time=$(ps -p "$(ps -A -o 'pid cmd' | grep -E maldetect | grep -E inotifywait | awk '{print$1}' | head -n1)" -o lstart= 2> /dev/null)
+		if [ -n "$inotify_start_time" ]; then
+			scan_start_hr=$(date -d "$inotify_start_time" +"%b %e %Y %H:%M:%S %z")
+			scan_start_elapsed=$(($(date +'%s')-$(date -d "$scan_start_hr" +'%s')))
+			inotify_run_time="$(($scan_start_elapsed/86400))d:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))/3600))h:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%3600/60))m:$(($(($scan_start_elapsed - $scan_start_elapsed/86400*86400))%60))s"
+		else
+			inotify_run_time="-"
+		fi
+	else
+		inotify_run_time="-"
+	fi
+
+	rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
 
 	scanid="$datestamp.$$"
-	scan_session=$(cat "$sessdir/session.monitor.current")
 
-	tlog_read "$scan_session" "digest.alert" "$tmpdir" "lines" > "$tmpdir/.digest.alert.hits"
-	tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" > "$tmpdir/.digest.clean.hits"
-	tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" > "$tmpdir/.digest.monitor.alert"
-	tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" > "$tmpdir/.digest.susp.hits"
+	# Monitor tlog sources — only read when monitor session is active
+	if [ "$_has_monitor" -eq 1 ]; then
+		scan_session=$(cat "$sessdir/session.monitor.current")
+		tlog_read "$scan_session" "digest.alert" "$tmpdir" "lines" > "$tmpdir/.digest.alert.hits"
+		tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" > "$tmpdir/.digest.clean.hits"
+		tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" > "$tmpdir/.digest.monitor.alert"
+		tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" > "$tmpdir/.digest.susp.hits"
+	else
+		touch "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
+	fi
+
+	# Hook scan hits (always read, regardless of monitor state)
+	if [ -f "$sessdir/hook.hits.log" ]; then
+		tlog_read "$sessdir/hook.hits.log" "digest.hook.alert" "$tmpdir" "bytes" > "$tmpdir/.digest.hook.hits" 2>/dev/null  # safe: tlog_read handles missing cursor
+	else
+		touch "$tmpdir/.digest.hook.hits"
+	fi
 
 	tot_hits=$($wc -l < "$tmpdir/.digest.alert.hits")
 	tot_cl=$($wc -l < "$tmpdir/.digest.clean.hits")
 	tot_files=$($wc -l < "$tmpdir/.digest.monitor.alert")
 	tot_susp=$($wc -l < "$tmpdir/.digest.susp.hits")
 
-	trim_log "$monitor_scanned_history" 50000
-	trim_log "$clean_history" 50000
-	trim_log "$suspend_history" 50000
+	# Count hook hits
+	local _hook_hit_count
+	_hook_hit_count=$($wc -l < "$tmpdir/.digest.hook.hits")
+
+	# Bail if no new data from any source
+	if [ "$tot_hits" -eq 0 ] && [ "$_hook_hit_count" -eq 0 ]; then
+		rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
+		return 0
+	fi
+
+	# Merge hook hits into main digest hits (12-field TSV -> 11-field TSV for manifest)
+	# Hook hits have an extra field (hook_mode) at position 12 — strip it for the
+	# shared manifest pipeline, but preserve the raw hook file for section rendering
+	if [ -s "$tmpdir/.digest.hook.hits" ]; then
+		# Append hook hits to the main digest hits (first 11 fields only)
+		awk -F'\t' '{
+			# Output first 11 fields (drop hook_mode field 12 if present)
+			out = ""
+			for (i = 1; i <= 11 && i <= NF; i++) {
+				if (i > 1) out = out "\t"
+				out = out $i
+			}
+			print out
+		}' "$tmpdir/.digest.hook.hits" >> "$tmpdir/.digest.alert.hits"
+		tot_hits=$($wc -l < "$tmpdir/.digest.alert.hits")
+	fi
+
+	# Export hook section data for template rendering
+	_digest_set_hook_section_vars
+
+	if [ "$_has_monitor" -eq 1 ]; then
+		trim_log "$monitor_scanned_history" 50000
+		trim_log "$clean_history" 50000
+		trim_log "$suspend_history" 50000
+	fi
+	trim_log "$sessdir/hook.hits.log" 50000
 
 	# Advance cursors past current position (prevents re-reading on next digest)
-	tlog_read "$scan_session" "digest.alert" "$tmpdir" "lines" >> /dev/null 2>&1  # safe: advance only
-	tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" >> /dev/null 2>&1  # safe: advance only
-	tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" >> /dev/null 2>&1  # safe: advance only
-	tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" >> /dev/null 2>&1  # safe: advance only
+	if [ "$_has_monitor" -eq 1 ]; then
+		tlog_read "$scan_session" "digest.alert" "$tmpdir" "lines" >> /dev/null 2>&1  # safe: advance only
+		tlog_read "$clean_history" "digest.clean.alert" "$tmpdir" "lines" >> /dev/null 2>&1  # safe: advance only
+		tlog_read "$monitor_scanned_history" "digest.monitor.alert" "$tmpdir" "lines" >> /dev/null 2>&1  # safe: advance only
+		tlog_read "$suspend_history" "digest.susp.alert" "$tmpdir" "lines" >> /dev/null 2>&1  # safe: advance only
+	fi
+	if [ -f "$sessdir/hook.hits.log" ]; then
+		tlog_read "$sessdir/hook.hits.log" "digest.hook.alert" "$tmpdir" "bytes" >> /dev/null 2>&1  # safe: advance only
+	fi
 
 	if [ -s "$tmpdir/.digest.alert.hits" ]; then
 		if [ "$tot_hits" -gt "$tot_files" ]; then
@@ -1290,7 +1425,7 @@ _genalert_digest() {
 		digest_tmpf="$_digest_text"
 
 		rm -f "$_digest_manifest" "$_digest_html"
-		rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits"
+		rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
 
 		# Messaging dispatch must run before digest temp file cleanup
 		_genalert_messaging "$_digest_text" "$_tpl_dir"
@@ -1300,6 +1435,258 @@ _genalert_digest() {
 	if [ -n "$digest_tmpf" ] && [ -f "$digest_tmpf" ]; then
 		rm -f "$digest_tmpf"
 	fi
+}
+
+# ---------------------------------------------------------------------------
+# Test Alert Framework
+# ---------------------------------------------------------------------------
+
+# _test_scan_hits — build a temp session file with 3 synthetic hits (MD5, HEX, YARA)
+# Returns the temp file path on stdout. Caller must clean up the file.
+_test_scan_hits() {
+	local _session
+	_session=$(mktemp "$tmpdir/.test_session.XXXXXX")
+	# Set scan metadata for session header
+	local _save_scanid="${scanid:-}"
+	local _save_hrspath="${hrspath:-}"
+	local _save_tot_files="${tot_files:-}"
+	local _save_tot_hits="${tot_hits:-}"
+	local _save_tot_cl="${tot_cl:-}"
+	local _save_scan_start="${scan_start_hr:-}"
+	local _save_scan_end="${scan_end_hr:-}"
+	local _save_scan_et="${scan_et:-}"
+	scanid="test-alert.$$"
+	hrspath="/home/testuser/public_html"
+	tot_files="150"
+	tot_hits="3"
+	tot_cl="0"
+	scan_start_hr=$(date +"%b %e %Y %H:%M:%S %z")
+	scan_end_hr="$scan_start_hr"
+	scan_et="5"
+	_session_write_header "$_session" "scan"
+	# 3 synthetic hits covering MD5, HEX, and YARA signature types
+	# 11-field TSV: sig, filepath, quarpath, hit_type, hit_type_label, hash, size, owner, group, mode, mtime
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		'{MD5}test.malware.sample.1' '/home/testuser/public_html/wp-content/uploads/shell.php' \
+		'-' 'MD5' 'MD5 Hash' 'ae45f3c9b1d2e4f5a6b7c8d9e0f1a2b3' \
+		'33279' 'www-data' '33' '644' "$(date +%s)" >> "$_session"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		'{HEX}php.cmdshell.generic.482' '/home/testuser/public_html/includes/config.old.php' \
+		'-' 'HEX' 'HEX Pattern' '-' \
+		'1024' 'testuser' '1000' '644' "$(date +%s)" >> "$_session"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		'{YARA}php.webshell.backdoor' '/home/testuser/public_html/assets/thumb.php' \
+		'-' 'YARA' 'YARA Rule' '-' \
+		'2048' 'testuser' '1000' '644' "$(date +%s)" >> "$_session"
+	# Restore scan context
+	scanid="$_save_scanid"
+	hrspath="$_save_hrspath"
+	tot_files="$_save_tot_files"
+	tot_hits="$_save_tot_hits"
+	tot_cl="$_save_tot_cl"
+	scan_start_hr="$_save_scan_start"
+	scan_end_hr="$_save_scan_end"
+	scan_et="$_save_scan_et"
+	echo "$_session"
+}
+
+# _test_alert_scan channel — dispatch a test scan alert to a single channel
+# Builds synthetic hit data, applies [TEST] prefix to subject, and routes
+# through the real rendering pipeline with channel isolation.
+# Saves/restores scan context vars that _genalert_scan clobbers via
+# _session_read_meta (tot_hits, tot_files, etc.) to prevent postrun()
+# from exiting with code 2 (malware found).
+_test_alert_scan() {
+	local _channel="$1"
+	local _tpl_dir="${ALERT_TEMPLATE_DIR:-$libpath/alert}"
+	local _fmt="${email_format:-html}"
+	local _session
+	_session=$(_test_scan_hits)
+
+	# Set test prefix for subject
+	local _orig_subj="${email_subj:-}"
+	email_subj="[TEST] ${email_subj:-maldet alert}"
+
+	# Point nsess_hits and scan_session at the test session so _genalert_scan
+	# and _genalert_messaging can find it for both email and messaging dispatch
+	local _save_nsess_hits="${nsess_hits:-}"
+	local _save_scan_session="${scan_session:-}"
+	nsess_hits="$_session"
+	scan_session="$_session"
+
+	# Save scan context — _genalert_scan/_session_read_meta clobber these
+	local _save_tot_hits="${tot_hits:-}" _save_tot_files="${tot_files:-}" _save_tot_cl="${tot_cl:-}"
+	local _save_scanid="${scanid:-}" _save_hrspath="${hrspath:-}" _save_days="${days:-}"
+
+	case "$_channel" in
+		email)
+			if [ "${email_alert:-0}" != "1" ]; then
+				eout "{test-alert} email alerting is not enabled (email_alert=0)" 1
+				command rm -f "$_session"
+				email_subj="$_orig_subj"
+				return 1
+			fi
+			if [ "${email_addr:-}" == "you@domain.com" ] || [ -z "${email_addr:-}" ]; then
+				eout "{test-alert} email address not configured (email_addr)" 1
+				command rm -f "$_session"
+				email_subj="$_orig_subj"
+				return 1
+			fi
+			# Suppress messaging channels — email only
+			local _orig_slack="${slack_alert:-0}" _orig_telegram="${telegram_alert:-0}" _orig_discord="${discord_alert:-0}"
+			slack_alert=0; telegram_alert=0; discord_alert=0
+			_lmd_alert_init
+			_genalert_scan "$_session" "$_fmt" "$_tpl_dir"
+			# Restore channel state
+			slack_alert="$_orig_slack"; telegram_alert="$_orig_telegram"; discord_alert="$_orig_discord"
+			_lmd_alert_init
+			;;
+		slack|telegram|discord)
+			# Check channel is enabled
+			local _enabled_var="${_channel}_alert"
+			if [ "${!_enabled_var:-0}" != "1" ]; then
+				eout "{test-alert} ${_channel} alerting is not enabled (${_enabled_var}=0)" 1
+				command rm -f "$_session"
+				email_subj="$_orig_subj"
+				nsess_hits="$_save_nsess_hits"
+				scan_session="$_save_scan_session"
+				tot_hits="$_save_tot_hits"; tot_files="$_save_tot_files"; tot_cl="$_save_tot_cl"
+				scanid="$_save_scanid"; hrspath="$_save_hrspath"; days="$_save_days"
+				return 1
+			fi
+			# Save other channel states and suppress them — isolate target channel
+			local _orig_email="${email_alert:-0}"
+			local _orig_slack="${slack_alert:-0}" _orig_telegram="${telegram_alert:-0}" _orig_discord="${discord_alert:-0}"
+			email_alert=0; slack_alert=0; telegram_alert=0; discord_alert=0
+			# Enable only target channel
+			eval "${_channel}_alert=1"
+			_lmd_alert_init
+			_genalert_scan "$_session" "$_fmt" "$_tpl_dir"
+			# Restore all channel state
+			email_alert="$_orig_email"
+			slack_alert="$_orig_slack"; telegram_alert="$_orig_telegram"; discord_alert="$_orig_discord"
+			_lmd_alert_init
+			;;
+	esac
+
+	# Restore scan context to prevent postrun() exit 2
+	tot_hits="$_save_tot_hits"; tot_files="$_save_tot_files"; tot_cl="$_save_tot_cl"
+	scanid="$_save_scanid"; hrspath="$_save_hrspath"; days="$_save_days"
+	email_subj="$_orig_subj"
+	nsess_hits="$_save_nsess_hits"
+	scan_session="$_save_scan_session"
+	command rm -f "$_session"
+	eout "{test-alert} test ${_channel} scan alert sent" 1
+}
+
+# _test_alert_digest channel — dispatch a test digest alert to a single channel
+# Creates temporary hook.hits.log entries, invokes genalert digest, then cleans up.
+# Applies channel isolation (S-REG-004) and truncates test entries after dispatch (S-REG-002).
+_test_alert_digest() {
+	local _channel="$1"
+
+	case "$_channel" in
+		email)
+			if [ "${email_alert:-0}" != "1" ]; then
+				eout "{test-alert} email alerting is not enabled (email_alert=0)" 1
+				return 1
+			fi
+			if [ "${email_addr:-}" == "you@domain.com" ] || [ -z "${email_addr:-}" ]; then
+				eout "{test-alert} email address not configured (email_addr)" 1
+				return 1
+			fi
+			;;
+		slack|telegram|discord)
+			local _enabled_var="${_channel}_alert"
+			if [ "${!_enabled_var:-0}" != "1" ]; then
+				eout "{test-alert} ${_channel} alerting is not enabled (${_enabled_var}=0)" 1
+				return 1
+			fi
+			;;
+	esac
+
+	# Create temporary test hook hits
+	local _test_hook_log="$sessdir/hook.hits.log"
+	local _had_hook_log=0
+	[ -f "$_test_hook_log" ] && _had_hook_log=1
+
+	# Record original file size so we can truncate test entries after dispatch (S-REG-002)
+	local _orig_size
+	_orig_size=$(stat -c %s "$_test_hook_log" 2>/dev/null || stat -f %z "$_test_hook_log" 2>/dev/null || echo 0)  # safe: FreeBSD fallback; 0 if file absent
+
+	# Back up existing cursor to prevent advancing the real one
+	local _cursor_file="$tmpdir/digest.hook.alert"
+	local _had_cursor=0 _cursor_backup=""
+	if [ -f "$_cursor_file" ]; then
+		_had_cursor=1
+		_cursor_backup=$(cat "$_cursor_file")
+	fi
+
+	local _now
+	_now=$(date +%s)
+	# 13-field TSV hook hit format: sig, filepath, quarpath, hit_type, hit_type_label,
+	# hash, size, owner, group, mode, mtime, hook_mode, timestamp (S-REG-003)
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		'{HEX}php.cmdshell.test.1' '/home/testuser/public_html/shell.php' \
+		'-' 'HEX' 'HEX Pattern' '-' \
+		'1024' 'testuser' '1000' '644' "$_now" 'modsec' "$_now" >> "$_test_hook_log"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		'{YARA}php.webshell.test.2' '/home/testuser/public_html/backdoor.php' \
+		'-' 'YARA' 'YARA Rule' '-' \
+		'2048' 'testuser' '1000' '644' "$_now" 'ftp' "$_now" >> "$_test_hook_log"
+
+	# Set cursor to read from the entries we just appended
+	local _file_size_before=0
+	if [ "$_had_cursor" -eq 1 ]; then
+		_file_size_before="$_cursor_backup"
+	fi
+
+	# Save scan context — genalert digest clobbers these via _genalert_digest
+	local _save_tot_hits="${tot_hits:-}" _save_tot_files="${tot_files:-}" _save_tot_cl="${tot_cl:-}"
+	local _save_scanid="${scanid:-}"
+
+	# Set test subject prefix
+	local _orig_subj="${email_subj:-}"
+	email_subj="[TEST] ${email_subj:-maldet alert}"
+
+	# Channel isolation (S-REG-004): suppress all channels, enable only target
+	local _orig_email="${email_alert:-0}"
+	local _orig_slack="${slack_alert:-0}" _orig_telegram="${telegram_alert:-0}" _orig_discord="${discord_alert:-0}"
+	email_alert=0; slack_alert=0; telegram_alert=0; discord_alert=0
+	case "$_channel" in
+		email)    email_alert=1 ;;
+		slack|telegram|discord) eval "${_channel}_alert=1" ;;
+	esac
+	_lmd_alert_init
+
+	genalert digest
+
+	# Restore channel state
+	email_alert="$_orig_email"
+	slack_alert="$_orig_slack"; telegram_alert="$_orig_telegram"; discord_alert="$_orig_discord"
+	_lmd_alert_init
+
+	email_subj="$_orig_subj"
+
+	# Restore scan context to prevent postrun() exit 2
+	tot_hits="$_save_tot_hits"; tot_files="$_save_tot_files"; tot_cl="$_save_tot_cl"
+	scanid="$_save_scanid"
+
+	# Restore cursor
+	if [ "$_had_cursor" -eq 1 ]; then
+		echo "$_cursor_backup" > "$_cursor_file"
+	else
+		command rm -f "$_cursor_file"
+	fi
+
+	# Truncate test entries from hook.hits.log (S-REG-002)
+	if [ "$_had_hook_log" -eq 1 ]; then
+		command truncate -s "$_orig_size" "$_test_hook_log"
+	else
+		command rm -f "$_test_hook_log"
+	fi
+
+	eout "{test-alert} test ${_channel} digest alert sent" 1
 }
 
 genalert() {

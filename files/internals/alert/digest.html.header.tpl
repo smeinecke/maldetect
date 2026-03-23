@@ -115,6 +115,7 @@
 {{QUARANTINE_WARNING_HTML}}
 {{CLEANED_SECTION_HTML}}
 {{SUSPENDED_SECTION_HTML}}
+{{HOOK_SECTION_HTML}}
 </td>
 </tr>
 <!-- Threat Details heading -->

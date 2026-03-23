@@ -17,7 +17,6 @@ setup() {
 teardown() {
     rm -rf "$TEST_SCAN_DIR"
     rm -f /tmp/pwned
-    rm -f /tmp/hookscan-val.*
 }
 
 # Verify hex batch temp files are cleaned up after scan
@@ -39,33 +38,19 @@ teardown() {
 }
 
 # F-004: hookscan filename validation
-# Extract the validation block from hookscan.sh by pattern (not line count)
-# so the test survives preamble changes. Spans from 'file="$1"' to the line
-# before 'inspath=' — covers case, metachar_pat, [[ =~ ]], and -f checks.
-_hookscan_validation_script() {
-    local tmpscript
-    tmpscript=$(mktemp /tmp/hookscan-val.XXXXXX)
-    printf '#!/usr/bin/env bash\n' > "$tmpscript"
-    sed -n '/^file="\$1"/,/^inspath=/{/^inspath=/d;/^file="\$1"/d;p}' \
-        "$LMD_INSTALL/hookscan.sh" >> "$tmpscript"
-    chmod 755 "$tmpscript"
-    echo "$tmpscript"
-}
-
+# Calls hookscan.sh directly to validate that dangerous filenames are rejected.
+# Metachar filenames produce modsec "infected" output (attack indicator);
+# non-existent files produce modsec "clean" output (safe default).
 @test "hookscan rejects dangerous and invalid filenames" {
-    local script
-    script=$(_hookscan_validation_script)
-    [ -s "$script" ]
-    # $() command substitution
-    run bash -c 'file="/tmp/test\$(whoami).php"; source "'"$script"'"'
-    [ "$status" -eq 1 ]
-    # Backtick injection
-    run bash -c 'file="/tmp/test\`id\`.php"; source "'"$script"'"'
-    [ "$status" -eq 1 ]
-    # Non-existent file
-    run bash -c 'file="/tmp/nonexistent_file_xyz.php"; source "'"$script"'"'
-    [ "$status" -eq 1 ]
-    rm -f "$script"
+    # $() command substitution — metachar rejection (output starts with 0)
+    run "$LMD_INSTALL/hookscan.sh" modsec '/tmp/test$(whoami).php'
+    assert_output --partial "0"
+    # Backtick injection — metachar rejection (output starts with 0)
+    run "$LMD_INSTALL/hookscan.sh" modsec '/tmp/test`id`.php'
+    assert_output --partial "0"
+    # Non-existent file — safe "clean" response (readlink -e fails)
+    run "$LMD_INSTALL/hookscan.sh" modsec "/tmp/nonexistent_file_xyz.php"
+    assert_output --partial "1 maldet: OK"
 }
 
 # F-002: -co config option injection

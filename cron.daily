@@ -92,6 +92,12 @@ if [ "$autoupdate_signatures" == "1" ]; then
 	fi
 fi
 
+# Hook scan digest — fire if hook.hits.log has content since last sweep
+if [ "${cron_digest_hook:-1}" == "1" ] && [ -f "$sessdir/hook.hits.log" ] && [ -s "$sessdir/hook.hits.log" ]; then
+	echo "$(date) cron.daily: hook digest: checking for new detections" >> "$inspath/logs/event_log"
+	$inspath/maldet --digest >> /dev/null 2>&1
+fi
+
 # if we're running inotify monitoring, send daily hit summary
 if [ "$(ps -A --user root -o "cmd" | grep -E maldetect | grep -E inotifywait)" ]; then
         $inspath/maldet --monitor-report >> /dev/null 2>&1

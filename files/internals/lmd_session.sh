@@ -238,6 +238,66 @@ _resolve_html_for_session() {
 view_report() {
 	local rid="$1"
 
+	# --- HOOKS MODE ---
+	if [ "$rid" == "hooks" ]; then
+		local _hooks_duration="${2:-24h}" _hooks_mode="${3:-}"
+		local _hook_log="$sessdir/hook.hits.log"
+		if [ ! -f "$_hook_log" ] || [ ! -s "$_hook_log" ]; then
+			eout "{report} no hook scan activity recorded" 1
+			return 0
+		fi
+		# Parse duration to seconds
+		local _dur_val _dur_unit _dur_secs
+		_dur_val="${_hooks_duration%[hdm]}"
+		_dur_unit="${_hooks_duration##*[0-9]}"
+		case "$_dur_unit" in
+			h) _dur_secs=$((_dur_val * 3600)) ;;
+			d) _dur_secs=$((_dur_val * 86400)) ;;
+			m) _dur_secs=$((_dur_val * 60)) ;;
+			*) _dur_secs=$((_dur_val * 3600)) ;;  # default hours
+		esac
+		local _cutoff
+		_cutoff=$(($(date +%s) - _dur_secs))
+
+		# Filter hook hits by time (field 13) and optionally mode (field 12)
+		local _filtered
+		_filtered=$(mktemp "$tmpdir/.hook_report.XXXXXX")
+		if [ -n "$_hooks_mode" ]; then
+			awk -F'\t' -v cutoff="$_cutoff" -v mode="$_hooks_mode" \
+				'!/^#/ && NF > 0 && $13 >= cutoff && $12 == mode' \
+				"$_hook_log" > "$_filtered"
+		else
+			awk -F'\t' -v cutoff="$_cutoff" \
+				'!/^#/ && NF > 0 && $13 >= cutoff' \
+				"$_hook_log" > "$_filtered"
+		fi
+
+		local _hit_count
+		_hit_count=$($wc -l < "$_filtered")
+		if [ "${_hit_count:-0}" -eq 0 ]; then
+			eout "{report} no hook scan activity in last $_hooks_duration" 1
+			command rm -f "$_filtered"
+			return 0
+		fi
+
+		# Display header
+		printf '\n%-20s %-10s %-35s %s\n' "TIME" "MODE" "SIGNATURE" "FILE"
+		printf '%-20s %-10s %-35s %s\n' "----" "----" "---------" "----"
+
+		# Display hits: sig=$1, filepath=$2, hook_mode=$12, timestamp=$13
+		# Single awk pass — avoids 3 subshell forks per line (S-PERF-001)
+		while IFS=$'\t' read -r _awk_ts _awk_mode _awk_sig _awk_file; do
+			[ -z "$_awk_sig" ] && continue
+			local _time_display
+			_time_display=$(date -d "@${_awk_ts}" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "$_awk_ts")  # safe: fallback to raw epoch on date parse failure
+			printf '%-20s %-10s %-35s %s\n' "$_time_display" "$_awk_mode" "$_awk_sig" "$_awk_file"
+		done < <(awk -F'\t' '{printf "%s\t%s\t%s\t%s\n", $13, $12, $1, $2}' "$_filtered")
+
+		printf '\nTotal: %s hook detections in last %s\n' "$_hit_count" "$_hooks_duration"
+		command rm -f "$_filtered"
+		return 0
+	fi
+
 	# --- LIST MODE ---
 	if [ "$rid" == "list" ]; then
 		if [ "${_report_format:-}" = "json" ]; then

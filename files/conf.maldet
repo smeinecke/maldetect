@@ -425,6 +425,12 @@ digest_interval="24h"
 # digest. 0 = disabled (legacy behavior — no per-cycle alerts).
 digest_escalate_hits="0"
 
+# Enable cron.daily hook digest sweep (default: 1)
+# When enabled, cron.daily checks hook.hits.log for new detections and
+# fires a digest alert if any are found since the last sweep.
+# Set to 0 to disable (e.g., if monitor mode handles hook digest via digest_interval).
+cron_digest_hook="1"
+
 # Additional paths to monitor alongside the primary monitor mode.
 # Line-separated file. Paths listed here are ADDED to whatever the
 # primary mode (users/path) produces — they do not replace it.

@@ -253,7 +253,7 @@ _safe_source_conf() {
 	_ssc_allowed_pat="${_ssc_allowed_pat}|default_monitor_mode|inotify_base_watches|inotify_sleep|inotify_reloadtime"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|inotify_minuid|inotify_docroot|inotify_cpunice|inotify_ionice"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|inotify_cpulimit|inotify_verbose"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|digest_interval|digest_escalate_hits|monitor_paths_extra"
+	_ssc_allowed_pat="${_ssc_allowed_pat}|digest_interval|digest_escalate_hits|cron_digest_hook|monitor_paths_extra"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_clamd_remote|remote_clamd_config|remote_clamd_max_retry|remote_clamd_retry_sleep"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|enable_statistic|elk_host|elk_port|elk_index"
 	_ssc_allowed_pat="${_ssc_allowed_pat}|string_length_scan|string_length"
