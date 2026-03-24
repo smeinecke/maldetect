@@ -211,12 +211,14 @@ lmdup() {
 		exit 1
 	fi
 	if [ "$doupdate" ]; then
+		_lmd_elog_event "$ELOG_EVT_UPDATE_STARTED" "info" "version update started" "action=lmdup" "version=$upstreamver_readable"
 		cd "$tmpwd/" || { eout "{update} failed to cd to temp dir, aborting update" 1; rm -rf "$tmpwd"; exit 1; }
 
 		get_remote_file "${lmd_current_tgzbase_url}/${lmd_current_tgzfile}" "update" "1" "$tmpwd/${lmd_current_tgzfile}"
 
 		if [ ! -s "$tmpwd/${lmd_current_tgzfile}" ]; then
 			eout "{update} could not download ${lmd_current_tgzfile}, please try again later." 1
+			_lmd_elog_event "$ELOG_EVT_UPDATE_FAILED" "error" "version update failed" "action=lmdup" "reason=download_failed"
 			cd "$inspath" ; rm -rf "$tmpwd"
 			clean_exit
 			exit 1
@@ -224,6 +226,7 @@ lmdup() {
 		if ! _verify_download "$tmpwd/${lmd_current_tgzfile}" \
 				"${lmd_current_tgzbase_url}/${lmd_current_tgzfile}" \
 				"update" "$tmpwd/${lmd_current_tgzfile}"; then
+			_lmd_elog_event "$ELOG_EVT_UPDATE_FAILED" "error" "version update failed" "action=lmdup" "reason=verify_failed"
 			cd "$inspath" ; rm -rf "$tmpwd"
 			clean_exit
 			exit 1
@@ -240,6 +243,7 @@ lmdup() {
 			install_rc=$?
 			if [ "$install_rc" -ne 0 ]; then
 				eout "{update} install.sh failed with exit code $install_rc" 1
+				_lmd_elog_event "$ELOG_EVT_UPDATE_FAILED" "error" "version update failed" "action=lmdup" "reason=install_failed" "rc=$install_rc"
 				if [ -s "$install_log" ]; then
 					eout "{update} install.sh output: $(cat "$install_log")" 0
 				fi
@@ -252,10 +256,12 @@ lmdup() {
 			cp -f "$inspath.last/sigs/custom."* "$sigdir/" 2> /dev/null
 			cp -f "$inspath.last/clean/custom."* "$inspath/clean/" 2> /dev/null
 			eout "{update} completed update v$lmd_version ${installed_hash:0:6} => v$upstreamver_readable, running signature updates..." 1
+			_lmd_elog_event "$ELOG_EVT_UPDATE_COMPLETED" "info" "version update completed" "action=lmdup" "from=$lmd_version" "to=$upstreamver_readable"
 			$inspath/maldet --update 1
 			eout "{update} update and config import completed" 1
 		else
 			eout "{update} could not download ${lmd_current_tgzfile}, please try again later." 1
+			_lmd_elog_event "$ELOG_EVT_UPDATE_FAILED" "error" "version update failed" "action=lmdup" "reason=download_failed"
 			cd "$inspath" ; rm -rf "$tmpwd"
 			clean_exit
 			exit 1
@@ -295,6 +301,7 @@ sigup() {
 
 	if [ ! -f "$upstream_sigver" ] || [ ! -s "$upstream_sigver" ]; then
 		eout "{sigup} could not download signature data from server, please try again later." 1
+		_lmd_elog_event "$ELOG_EVT_UPDATE_FAILED" "error" "signature update failed" "action=sigup" "reason=version_check_failed"
 		_grf_cleanup
 		clean_exit
 		exit 1
@@ -321,6 +328,7 @@ sigup() {
 		cd "$tmpwd/" || { eout "{sigup} failed to cd to temp dir, aborting sigup" 1; rm -rf "$tmpwd"; exit 1; }
 		tar=$(command -v tar 2> /dev/null)
 		eout "{sigup} new signature set $nver available" 1
+		_lmd_elog_event "$ELOG_EVT_UPDATE_STARTED" "info" "signature update started" "action=sigup" "version=$nver"
 
 		eout "{sigup} downloading $sig_sigpack_url" 1
 		get_remote_file "$sig_sigpack_url" "sigup" "1" "$tmpwd/maldet-sigpack.tgz"
@@ -390,6 +398,7 @@ sigup() {
 		fi
 
 		if [ "$sigpackfail" ]; then
+			_lmd_elog_event "$ELOG_EVT_UPDATE_FAILED" "error" "signature update failed" "action=sigup" "reason=sigpack_failed"
 			cd "$inspath"
 			rm -rf "$tmpwd"
 			clean_exit
@@ -400,6 +409,7 @@ sigup() {
 			_resolve_clamscan
 			_resolve_yara
 			_count_signatures "$sig_md5_file" "$sig_hex_file"
+			_lmd_elog_event "$ELOG_EVT_UPDATE_COMPLETED" "info" "signature update completed" "action=sigup" "version=$nver" "sigs=$tot_sigs"
 			eout "{sigup} $(_format_number $tot_sigs) signatures ($(_format_number $hash_sigs) $_hash_label | $(_format_number $hex_sigs) HEX | $(_format_number $csig_sigs) CSIG | $(_format_number $yara_sigs) $_yara_label | $(_format_number $user_sigs) USER)" 1
 		fi
 		cd "$inspath"

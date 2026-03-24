@@ -83,6 +83,7 @@ _scan_cleanup() {
 		"$tmpdir"/.hcb."$$".* "$tmpdir"/.csig_lp."$$".* "$tmpdir"/.csig_ll."$$".* \
 		"$tmpdir"/.csig_or."$$".* "$tmpdir"/.csig_all."$$".* \
 		"$tmpdir"/.hex_wc_tmp."$$".* "$tmpdir"/.clean_chunk."$$".* \
+		"$sessdir"/clean."$$" "$sessdir"/suspend.users."$$" \
 		2>/dev/null  # files may not exist depending on scan path
 	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* \
 		"$tmpdir"/.csig_progress.* "$tmpdir"/.csig_mtx."$$".* 2>/dev/null
@@ -774,7 +775,7 @@ scan() {
 	progress_hits=0
 	progress_cleaned=0
 	_in_scan_context=1
-	_lmd_elog_event "$ELOG_EVT_SCAN_STARTED" "info" "scan started on $hrspath" "path=$hrspath" "mode=${svc:-a}"
+	_lmd_elog_event "$ELOG_EVT_SCAN_STARTED" "info" "scan started on $hrspath" "path=$hrspath" "mode=${svc:-a}" ${hscan:+"source=hook"}
 
 	if [ -n "$hscan" ]; then
 		eout "{scan.hook} scan of $spath in progress (id: $datestamp.$$)"
@@ -832,7 +833,7 @@ scan() {
 			eout "{scan} quarantine is disabled! set quarantine_hits=1 in $cnffile or to quarantine results run: maldet -q $datestamp.$$" 1
 		fi
 	fi
-	_lmd_elog_event "$ELOG_EVT_SCAN_COMPLETED" "info" "scan completed on $hrspath" "hits=$tot_hits" "files=$tot_files" "cleaned=$tot_cl" "time=${scan_et}s"
+	_lmd_elog_event "$ELOG_EVT_SCAN_COMPLETED" "info" "scan completed on $hrspath" "hits=$tot_hits" "files=$tot_files" "cleaned=$tot_cl" "time=${scan_et}s" ${hscan:+"source=hook"}
 
 	# --- Alert dispatch (normal scans only) ---
 	if [ "$tot_hits" != "0" ] && [ -z "$hscan" ]; then

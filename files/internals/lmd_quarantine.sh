@@ -232,6 +232,7 @@ restore() {
 		fi
 		eout "{restore} quarantined file '$file' restored to '$file_path'" 1
 		_lmd_elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
+		command rm -f "$quardir/${file}.info"
 	elif [ -f "$file" ] && [ -f "${file}.info" ]; then
 		quar_get_filestat "${file}.info"
 		if ! _validate_restore_path "$file_path"; then
@@ -247,6 +248,7 @@ restore() {
 		fi
 		eout "{restore} quarantined file '$file' restored to '$file_path'" 1
 		_lmd_elog_event "$ELOG_EVT_QUARANTINE_REMOVED" "info" "restored $file to $file_path" "file=$file_path"
+		command rm -f "${file}.info"
 	else
 		eout "{restore} '$file' is not eligible for restore or could not be found" 1
 		return 1
@@ -555,7 +557,7 @@ _batch_record_hits() {
 	fi
 
 	# Summary eout — one line instead of N
-	eout "{hit} $_hit_count malware hits recorded [$_stage]"
+	eout "{hit} $_hit_count malware hits recorded [$_stage]" 1
 
 	# Per-hit elog for low volume (preserves audit trail and test contracts);
 	# summary event for high volume (performance win)
@@ -668,7 +670,7 @@ _batch_quarantine() {
 	fi
 
 	# Summary logging
-	eout "{quar} $_quar_count files quarantined [$_stage]"
+	eout "{quar} $_quar_count files quarantined [$_stage]" 1
 	if [ "$_quar_count" -le 50 ] && [ -s "$_quar_sess_block" ]; then
 		# Emit per-file elog from quarantine session block (only successfully quarantined files)
 		# Format: sig\tfilepath\tquarpath (tab-delimited)

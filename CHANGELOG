@@ -1,3 +1,19 @@
+v2.0.1 | Mar 24 2026:
+[Fix] purge() dotfile glob: replace * glob with find -delete to catch dotfiles in tmp/quarantine/sess
+[Fix] Quarantine warning in report shows correct scan ID instead of wrong datestamp.PID
+[Fix] Temp leak: cleanup .alert_html.* after email dispatch in _genalert_scan and view_report
+[Fix] -q silent success: batch quarantine/hit summary now prints to stdout
+[Fix] Sentinel leak: add clean.$$ and suspend.users.$$ to _scan_cleanup() rm list
+[Fix] Restore orphan: remove .info metadata after successful quarantine restore
+[New] _build_co_allowed_pattern() shared config allowlist; _apply_cli_co() in-memory parser
+[Fix] -co/--config-option now position-independent — works before, after, or between flags
+[Change] Eliminate tmpfile and sed dependency from -co code path
+[New] 13 tests for -co position-independence, behavioral parity, and edge cases
+[New] Audit log: purge_completed event with user identity before log truncation
+[New] Audit log: update_started/completed/failed events for sigup and lmdup
+[New] Audit log: per-channel alert_failed events for email, Slack, Telegram, Discord
+[New] Audit log: hookscan source=hook metadata on scan events + rate limit audit
+
 v2.0.1 | Mar 23 2026:
 [New] Hookscan: enforce rate limit (hookscan_user_rate_limit) for non-root generic mode
 [New] Hookscan: enforce signature masking (hookscan_user_show_signames) for non-root generic mode

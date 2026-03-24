@@ -220,45 +220,51 @@ import_user_sigs() {
 	_grf_cleanup
 }
 
+_build_co_allowed_pattern() {
+	# Build the config variable allowlist regex pattern.
+	# Shared by _safe_source_conf() (remote config) and _apply_cli_co() (CLI -co).
+	# MAINTENANCE: when adding new variables to conf.maldet, add them here.
+	local _pat
+	_pat='^(email_alert|email_addr|email_ignore_clean|email_subj'
+	_pat="${_pat}|email_panel_user_alerts|email_panel_from|email_panel_replyto|email_panel_alert_subj"
+	_pat="${_pat}|email_format|smtp_relay|smtp_from|smtp_user|smtp_pass"
+	_pat="${_pat}|slack_alert|slack_subj|slack_token|slack_channels"
+	_pat="${_pat}|telegram_alert|telegram_file_caption|telegram_bot_token|telegram_channel_id"
+	_pat="${_pat}|discord_alert|discord_webhook_url"
+	_pat="${_pat}|autoupdate_signatures|autoupdate_version|autoupdate_version_hashed|sigup_interval"
+	_pat="${_pat}|cron_prune_days|cron_daily_scan|scan_days"
+	_pat="${_pat}|import_config_url|import_config_expire"
+	_pat="${_pat}|sig_import_md5_url|sig_import_hex_url|sig_import_yara_url|sig_import_sha256_url|sig_import_csig_url"
+	_pat="${_pat}|scan_hashtype|scan_workers|scan_clamscan|scan_yara|scan_yara_timeout|scan_yara_scope|scan_csig"
+	_pat="${_pat}|scan_user_access|scan_user_access_minuid|scan_max_depth"
+	_pat="${_pat}|scan_min_filesize|scan_max_filesize|scan_hexdepth"
+	_pat="${_pat}|scan_cpunice|scan_ionice|scan_cpulimit"
+	_pat="${_pat}|scan_ignore_root|scan_ignore_user|scan_ignore_group"
+	_pat="${_pat}|scan_find_timeout|scan_export_filelist|scan_tmpdir_paths"
+	_pat="${_pat}|quarantine_hits|quarantine_clean|quarantine_on_error"
+	_pat="${_pat}|quarantine_suspend_user|quarantine_suspend_user_minuid"
+	_pat="${_pat}|default_monitor_mode|inotify_base_watches|inotify_sleep|inotify_reloadtime"
+	_pat="${_pat}|inotify_minuid|inotify_docroot|inotify_cpunice|inotify_ionice"
+	_pat="${_pat}|inotify_cpulimit|inotify_verbose"
+	_pat="${_pat}|digest_interval|digest_escalate_hits|cron_digest_hook|monitor_paths_extra"
+	_pat="${_pat}|scan_clamd_remote|remote_clamd_config|remote_clamd_max_retry|remote_clamd_retry_sleep"
+	_pat="${_pat}|enable_statistic|elk_host|elk_port|elk_index"
+	_pat="${_pat}|string_length_scan|string_length"
+	_pat="${_pat}|session_legacy_compat"
+	_pat="${_pat})\$"
+	printf -v "$1" '%s' "$_pat"
+}
+
 _safe_source_conf() {
 	# Parse a remote config file safely, accepting only known conf.maldet
 	# variable names. Uses a TRUE ALLOWLIST -- any variable not listed here
 	# is rejected, preventing override of internal path vars (inspath,
 	# sigdir, cldir, etc.) via compromised import_config_url.
-	# MAINTENANCE: when adding new variables to conf.maldet, also add them
-	# to _ssc_allowed_pat below.
+	# MAINTENANCE: allowlist is in _build_co_allowed_pattern().
 	local _ssc_file="$1"
 	local _ssc_line _ssc_var _ssc_val
-	# Allowlist: every user-facing variable defined in conf.maldet.
-	# Organized by section to ease maintenance.
 	local _ssc_allowed_pat
-	_ssc_allowed_pat='^(email_alert|email_addr|email_ignore_clean|email_subj'
-	_ssc_allowed_pat="${_ssc_allowed_pat}|email_panel_user_alerts|email_panel_from|email_panel_replyto|email_panel_alert_subj"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|email_format|smtp_relay|smtp_from|smtp_user|smtp_pass"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|slack_alert|slack_subj|slack_token|slack_channels"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|telegram_alert|telegram_file_caption|telegram_bot_token|telegram_channel_id"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|discord_alert|discord_webhook_url"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|autoupdate_signatures|autoupdate_version|autoupdate_version_hashed|sigup_interval"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|cron_prune_days|cron_daily_scan|scan_days"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|import_config_url|import_config_expire"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|sig_import_md5_url|sig_import_hex_url|sig_import_yara_url|sig_import_sha256_url|sig_import_csig_url"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_hashtype|scan_workers|scan_clamscan|scan_yara|scan_yara_timeout|scan_yara_scope|scan_csig"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_user_access|scan_user_access_minuid|scan_max_depth"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_min_filesize|scan_max_filesize|scan_hexdepth"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_cpunice|scan_ionice|scan_cpulimit"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_ignore_root|scan_ignore_user|scan_ignore_group"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_find_timeout|scan_export_filelist|scan_tmpdir_paths"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|quarantine_hits|quarantine_clean|quarantine_on_error"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|quarantine_suspend_user|quarantine_suspend_user_minuid"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|default_monitor_mode|inotify_base_watches|inotify_sleep|inotify_reloadtime"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|inotify_minuid|inotify_docroot|inotify_cpunice|inotify_ionice"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|inotify_cpulimit|inotify_verbose"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|digest_interval|digest_escalate_hits|cron_digest_hook|monitor_paths_extra"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|scan_clamd_remote|remote_clamd_config|remote_clamd_max_retry|remote_clamd_retry_sleep"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|enable_statistic|elk_host|elk_port|elk_index"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|string_length_scan|string_length"
-	_ssc_allowed_pat="${_ssc_allowed_pat}|session_legacy_compat"
-	_ssc_allowed_pat="${_ssc_allowed_pat})\$"
+	_build_co_allowed_pattern _ssc_allowed_pat
 	while IFS= read -r _ssc_line || [ -n "$_ssc_line" ]; do
 		# Skip blank lines and comments
 		case "$_ssc_line" in
@@ -290,6 +296,79 @@ _safe_source_conf() {
 			eout "{importconf} WARNING: skipped non-assignment line in remote config"
 		fi
 	done < "$_ssc_file"
+}
+
+_apply_cli_co() {
+	# Apply -co/--config-option overrides in memory (no temp file).
+	# Two-pass batch validation: if ANY pair fails, NO variables are set.
+	# Splitting: comma followed by VARNAME= starts a new pair; commas
+	# inside values (e.g., slack_channels=#general,#alerts) are preserved.
+	local _aco_arg="$1"
+	local _aco_allowed_pat
+	_build_co_allowed_pattern _aco_allowed_pat
+
+	# Split on ", *VARNAME=" boundaries using bash regex
+	local _aco_remaining="$_aco_arg" _aco_match _aco_prefix _aco_result=""
+	local _aco_split_pat=', *([a-zA-Z_][a-zA-Z0-9_]*)='
+	while [[ "$_aco_remaining" =~ $_aco_split_pat ]]; do
+		_aco_match="${BASH_REMATCH[0]}"
+		_aco_prefix="${_aco_remaining%%"$_aco_match"*}"
+		_aco_result="${_aco_result}${_aco_prefix}"$'\x01'"${BASH_REMATCH[1]}="
+		_aco_remaining="${_aco_remaining#*"$_aco_match"}"
+	done
+	_aco_result="${_aco_result}${_aco_remaining}"
+
+	local _aco_pairs
+	IFS=$'\x01' read -ra _aco_pairs <<< "$_aco_result"
+
+	# Pass 1: validate all pairs
+	local _aco_vars=() _aco_vals=() _aco_fail=0
+	local _aco_pair _aco_var _aco_val
+	for _aco_pair in "${_aco_pairs[@]}"; do
+		[ -z "$_aco_pair" ] && continue
+		_aco_var="${_aco_pair%%=*}"
+		_aco_val="${_aco_pair#*=}"
+		# Strip surrounding quotes
+		case "$_aco_val" in
+			\"*\") _aco_val="${_aco_val#\"}"; _aco_val="${_aco_val%\"}" ;;
+			\'*\') _aco_val="${_aco_val#\'}"; _aco_val="${_aco_val%\'}" ;;
+		esac
+		# Block compatcnf override
+		if [[ "$_aco_var" == "compatcnf" ]]; then
+			_aco_fail=1; continue
+		fi
+		# Reject shell metacharacters (not semicolons — safe under printf -v)
+		case "$_aco_val" in
+			*'$'*|*'`'*|*'|'*|*'&'*|*'('*|*')'*)
+				_aco_fail=1; continue
+				;;
+		esac
+		# Allowlist check
+		if ! [[ "$_aco_var" =~ $_aco_allowed_pat ]]; then
+			_aco_fail=1; continue
+		fi
+		_aco_vars+=("$_aco_var")
+		_aco_vals+=("$_aco_val")
+	done
+
+	# Gate: reject entire batch if any pair failed
+	if [ "$_aco_fail" -eq 1 ]; then
+		eout "{config} WARNING: rejected unsafe -co value" 1
+		return 1
+	fi
+
+	# Pass 2: apply all validated pairs
+	local _aco_idx
+	for (( _aco_idx=0; _aco_idx<${#_aco_vars[@]}; _aco_idx++ )); do
+		printf -v "${_aco_vars[$_aco_idx]}" '%s' "${_aco_vals[$_aco_idx]}"
+	done
+
+	_lmd_cli_co_applied=1
+
+	# Re-source compat.conf for deprecated variable migration
+	if [ -f "$compatcnf" ]; then
+		source "$compatcnf"
+	fi
 }
 
 import_conf() {

@@ -116,6 +116,14 @@ for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
 				exit 1
 			fi
 		;;
+		-co|--config-option)
+			((_i++))
+			if [ "$_i" -ge "${#_all_args[@]}" ]; then
+				echo "ERROR: -co/--config-option requires a VAR=VAL argument" >&2
+				exit 1
+			fi
+			_apply_cli_co "${_all_args[$_i]}"
+		;;
 		*)
 			_remaining_args+=("${_all_args[$_i]}")
 		;;
@@ -429,29 +437,6 @@ else
 				sessdir=$userbasedir/$user/sess
 				tmpdir=$userbasedir/$user/tmp
 				maldet_log=$userbasedir/$user/event_log
-			;;
-			-co|--config-option)
-				shift
-				user=$(whoami)
-				if [ "$user" != "root" ]; then
-					tmpdir=$userbasedir/$user/tmp
-				fi
-				tmpco="$tmpdir/config.cli"
-				rm -f "$tmpco"
-				touch "$tmpco"
-				echo ,$1 | sed -e 's/-\(-config-option\|co\) //' -e 's/\(, *[a-zA-Z0-9_][a-zA-Z0-9_]*=\)/\n\1\n/g' | sed -e '1d' -e 's/^\([^,].*\|.*[^=]\)$/"\1"/' | sed -e '$!N;s/\n//' -e 's/^, *//' | grep -v "^ *compatcnf" > "$tmpco"
-				# Validate: reject lines with command substitution or shell metacharacters
-				if grep -qvE '^[a-zA-Z_][a-zA-Z0-9_]*=("[^"$`]*"|[^;|&$`()]*)?$' "$tmpco"; then
-					eout "{config} WARNING: rejected unsafe -co value" 1
-					rm -f "$tmpco"
-				else
-					_safe_source_conf "$tmpco"
-					_lmd_cli_co_applied=1
-					rm -f "$tmpco"
-				fi
-				if [ -f "$compatcnf" ]; then
-					source "$compatcnf"
-				fi
 			;;
 			-c|--checkout)
 				shift

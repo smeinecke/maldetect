@@ -128,6 +128,8 @@ _hook_rate_check() {
 
 	if [ "${_count:-0}" -ge "${hookscan_user_rate_limit:-60}" ]; then
 		logger -t maldet-hookscan "rate limit exceeded for UID $_uid (${_count}/${hookscan_user_rate_limit} scans/hr)"
+		command -v elog_event >/dev/null 2>&1 && \
+			elog_event "threshold_exceeded" "warn" "hook rate limit exceeded" "uid=$_uid" "count=$_count" "limit=${hookscan_user_rate_limit:-60}"
 		echo "ERROR: rate limit exceeded (${_count}/${hookscan_user_rate_limit} scans/hour)"
 		exit 1
 	fi
@@ -314,6 +316,22 @@ if [ -f "$hookcnf" ]; then
 				;;
 		esac
 	done < "$hookcnf"
+fi
+
+# --- Source elog_lib for audit trail (optional — graceful if absent) ---
+if [ -f "${elog_lib:-}" ]; then
+	ELOG_APP="maldet"
+	ELOG_STDOUT="never"
+	if [ "$(id -u)" -eq 0 ]; then
+		ELOG_AUDIT_FILE="/var/log/maldet/audit.log"
+		[ -d "/var/log/maldet" ] || mkdir -m 750 "/var/log/maldet" 2>/dev/null  # safe: dir may exist
+	else
+		ELOG_AUDIT_FILE=""
+	fi
+	export ELOG_APP ELOG_STDOUT ELOG_AUDIT_FILE
+	# shellcheck disable=SC1090
+	source "$elog_lib"
+	elog_init 2>/dev/null  # safe: stderr suppressed for missing log dir
 fi
 
 # --- Caller identity resolution ---

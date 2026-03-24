@@ -232,6 +232,16 @@ trap_exit() {
 		_monitor_shutdown
 	elif [ "$svc" == "a" ] || [ "$svc" == "r" ] || [ "$svc" == "f" ]; then
 		echo
+		# Compute end-time vars before session finalization — scan()
+		# sets these at completion (lmd_scan.sh:792-797) but the trap
+		# fires before reaching that code.
+		if [ -n "$scan_start" ]; then
+			scan_end_hr=$(date +"%b %e %Y %H:%M:%S %z")
+			scan_end=$(date +"%s")
+			scan_et=$((scan_end - scan_start))
+		fi
+		tot_hits="${progress_hits:-0}"
+		tot_cl="${progress_cleaned:-0}"
 		_scan_finalize_session
 		if [ "$tot_hits" != "0" ]; then
 			if [ "$email_ignore_clean" == "1" ] && [ "$tot_hits" != "$tot_cl" ]; then
@@ -254,6 +264,14 @@ trap_exit() {
 clean_exit() {
 	# Write TSV session file from in-flight scan_session if it has data
 	if [ -f "$scan_session" ] && [ -s "$scan_session" ]; then
+		# Compute end-time vars if scan was in progress (same as trap_exit)
+		if [ -n "$scan_start" ] && [ -z "$scan_et" ]; then
+			scan_end_hr=$(date +"%b %e %Y %H:%M:%S %z")
+			scan_end=$(date +"%s")
+			scan_et=$((scan_end - scan_start))
+		fi
+		tot_hits="${progress_hits:-${tot_hits:-0}}"
+		tot_cl="${progress_cleaned:-${tot_cl:-0}}"
 		_scan_finalize_session
 	fi
 	_scan_cleanup

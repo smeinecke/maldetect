@@ -150,13 +150,13 @@ _lmd_set_global_vars() {
 	if [ "${quarantine_hits:-0}" = "0" ] && [ "${tot_hits:-0}" != "0" ]; then
 		QUARANTINE_WARNING_TEXT="WARNING: Automatic quarantine is currently disabled, detected threats are still accessible to users!
 To enable, set quarantine_hits=1 and/or to quarantine hits from this scan run:
-/usr/local/sbin/maldet -q ${datestamp:-}.$$
+/usr/local/sbin/maldet -q ${scanid:-}
 "
 		QUARANTINE_WARNING_HTML="<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"margin-bottom:16px;background-color:#fefce8;border:1px solid #fde68a;border-radius:8px;overflow:hidden;\">
 <tr><td style=\"background-color:#d97706;height:3px;font-size:0;line-height:0;\">&nbsp;</td></tr>
 <tr><td style=\"padding:12px 16px;color:#92400e;font-size:13px;\">
 <strong>Warning:</strong> Automatic quarantine is disabled. Detected threats are still accessible to users.<br>
-To enable, set <code style=\"font-family:'Courier New',Courier,monospace;font-size:12px;\">quarantine_hits=1</code> or quarantine this scan: <code style=\"font-family:'Courier New',Courier,monospace;font-size:12px;\">maldet -q ${datestamp:-}.$$</code>
+To enable, set <code style=\"font-family:'Courier New',Courier,monospace;font-size:12px;\">quarantine_hits=1</code> or quarantine this scan: <code style=\"font-family:'Courier New',Courier,monospace;font-size:12px;\">maldet -q ${scanid:-}</code>
 </td></tr></table>"
 	fi
 
@@ -923,6 +923,7 @@ _lmd_render_messaging() {
 			_alert_tpl_render "$_ALERT_TPL_RESOLVED" > "$_slack_payload"
 			_ch_err=$(_alert_handle_slack "$subject" "$_slack_payload" "" "$attachment" 2>&1 1>/dev/null) || {
 				eout "{alert} slack delivery failed${_ch_err:+: $_ch_err}"
+				_lmd_elog_event "$ELOG_EVT_ALERT_FAILED" "error" "slack delivery failed" "channel=slack" "error=${_ch_err:-unknown}"
 				rc=1
 			}
 			rm -f "$_slack_payload"
@@ -938,6 +939,7 @@ _lmd_render_messaging() {
 			_alert_tpl_render "$_ALERT_TPL_RESOLVED" > "$_tg_payload"
 			_ch_err=$(_alert_handle_telegram "$subject" "$_tg_payload" "" "$attachment" 2>&1 1>/dev/null) || {
 				eout "{alert} telegram delivery failed${_ch_err:+: $_ch_err}"
+				_lmd_elog_event "$ELOG_EVT_ALERT_FAILED" "error" "telegram delivery failed" "channel=telegram" "error=${_ch_err:-unknown}"
 				rc=1
 			}
 			rm -f "$_tg_payload"
@@ -953,6 +955,7 @@ _lmd_render_messaging() {
 			_alert_tpl_render "$_ALERT_TPL_RESOLVED" > "$_dc_payload"
 			_ch_err=$(_alert_handle_discord "$subject" "$_dc_payload" "" "$attachment" 2>&1 1>/dev/null) || {
 				eout "{alert} discord delivery failed${_ch_err:+: $_ch_err}"
+				_lmd_elog_event "$ELOG_EVT_ALERT_FAILED" "error" "discord delivery failed" "channel=discord" "error=${_ch_err:-unknown}"
 				rc=1
 			}
 			rm -f "$_dc_payload"
@@ -1055,6 +1058,7 @@ _genalert_scan() {
 		fi
 		if ! _alert_deliver_email "$email_addr" "$email_subj" "$_file" "$_html" "$_fmt"; then
 			eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
+			_lmd_elog_event "$ELOG_EVT_ALERT_FAILED" "error" "email delivery failed" "channel=email" "recipients=$email_addr"
 		else
 			_lmd_elog_event "$ELOG_EVT_ALERT_SENT" "info" "scan report emailed" "recipients=$email_addr"
 		fi
@@ -1073,6 +1077,7 @@ _genalert_scan() {
 	fi
 	# Messaging dispatch runs regardless of email_alert setting
 	_genalert_messaging "$_file" "$_tpl_dir"
+	command rm -f "$_html"  # cleanup rendered HTML tempfile
 }
 
 # _genalert_panel file fmt tpl_dir — per-user control panel email alerts
@@ -1419,6 +1424,7 @@ _genalert_digest() {
 		if _alert_deliver_email "$email_addr" "$digest_subj" "$_digest_text" "$_digest_html" "$_fmt"; then
 			eout "{alert} sent $_type alert to $email_addr"
 		else
+			_lmd_elog_event "$ELOG_EVT_ALERT_FAILED" "error" "digest email delivery failed" "channel=email" "recipients=$email_addr"
 			eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
 		fi
 		# Alias for outer cleanup guard: _digest_text is scoped inside the if-block

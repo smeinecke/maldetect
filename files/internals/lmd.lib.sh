@@ -48,6 +48,18 @@ ELOG_EVT_MONITOR_STARTED="monitor_started"
 ELOG_EVT_MONITOR_STOPPED="monitor_stopped"
 # shellcheck disable=SC2034
 ELOG_EVT_ALERT_SENT="alert_sent"
+# shellcheck disable=SC2034
+ELOG_EVT_ALERT_FAILED="alert_failed"
+# shellcheck disable=SC2034
+ELOG_EVT_PURGE_COMPLETED="purge_completed"
+# shellcheck disable=SC2034
+ELOG_EVT_RATE_LIMITED="threshold_exceeded"  # reuse upstream type for hook rate limiting
+# shellcheck disable=SC2034
+ELOG_EVT_UPDATE_COMPLETED="update_completed"
+# shellcheck disable=SC2034
+ELOG_EVT_UPDATE_FAILED="update_failed"
+# shellcheck disable=SC2034
+ELOG_EVT_UPDATE_STARTED="update_started"
 
 ## --- Shared utility functions ---
 # These are used across multiple sub-libraries and must be defined before

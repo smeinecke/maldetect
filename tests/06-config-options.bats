@@ -121,3 +121,93 @@ teardown() {
     assert_success
     assert_output --regexp "[0-9,]+ YARA "
 }
+
+# ── Position-independence tests ──────────────────────────────────────
+
+@test "-co after --scan-all is applied" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR" -co scan_max_filesize=1
+    assert_success
+    assert_output --partial "empty file list"
+}
+
+@test "-co between modifiers and --scan-all is applied" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co scan_max_filesize=1 -a "$TEST_SCAN_DIR"
+    assert_success
+    assert_output --partial "empty file list"
+}
+
+@test "-co with comma-separated values after action" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR" -co scan_max_filesize=1,scan_ignore_root=0
+    assert_success
+    assert_output --partial "empty file list"
+}
+
+@test "multiple -co flags in mixed positions" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co scan_max_filesize=1 -a "$TEST_SCAN_DIR" -co scan_ignore_root=0
+    assert_success
+    assert_output --partial "empty file list"
+}
+
+# ── Behavioral parity tests ─────────────────────────────────────────
+
+@test "-co value with URL is preserved" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co import_config_url=https://example.com/config -a "$TEST_SCAN_DIR"
+    assert_success
+}
+
+@test "-co value with email address is preserved" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co email_addr=admin@example.com -a "$TEST_SCAN_DIR"
+    assert_success
+}
+
+@test "-co empty value clears variable" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co scan_tmpdir_paths= -a "$TEST_SCAN_DIR"
+    assert_success
+}
+
+@test "-co value containing commas is not falsely split" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co 'slack_channels=#general,#alerts' -a "$TEST_SCAN_DIR"
+    assert_success
+}
+
+@test "-co batch-rejects when any pair has metacharacters" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co 'scan_max_filesize=$(id),quarantine_hits=1' -a "$TEST_SCAN_DIR"
+    assert_output --partial "rejected unsafe -co value"
+}
+
+@test "-co accepts semicolons in values as literals" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co 'email_subj=Alert; scan done' -a "$TEST_SCAN_DIR"
+    assert_success
+    refute_output --partial "rejected unsafe -co value"
+}
+
+@test "-co at end of argv without value prints error" {
+    run maldet -a "$TEST_SCAN_DIR" -co
+    assert_failure
+    assert_output --partial "requires a VAR=VAL argument"
+}
+
+@test "multiple -co for same variable uses last value" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    # First sets huge max (no filtering), second sets tiny max (filters everything)
+    run maldet -co scan_max_filesize=999999 -co scan_max_filesize=1 -a "$TEST_SCAN_DIR"
+    assert_success
+    assert_output --partial "empty file list"
+}
+
+@test "-co rejects deprecated variable not on allowlist" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    # quar_hits is a deprecated name mapped via compat.conf but NOT on the allowlist
+    run maldet -co quar_hits=1 -a "$TEST_SCAN_DIR"
+    assert_output --partial "rejected unsafe -co value"
+}

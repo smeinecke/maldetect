@@ -316,8 +316,15 @@ view_report() {
 				_time_u=$(date -d "$scan_start_hr" "+%s" 2>/dev/null)
 				# Strip timezone offset for consistent column alignment with legacy pass
 				_time_display=$(echo "$scan_start_hr" | awk '{print $1,$2,$3,$4}')
-				_etime="RUNTIME: ${scan_et:--}s"
-				echo "$_time_u | $_time_display | SCANID: $scanid | $_etime | FILES: ${tot_files:--} | HITS: ${tot_hits:--} | CLEANED: ${tot_cl:-0}" >> "$tmpf"
+				# Handle "-" sentinel from interrupted scans (no end-time recorded)
+				if [ "$scan_et" = "-" ] || [ -z "$scan_et" ]; then
+					_etime="RUNTIME: n/a"
+				else
+					_etime="RUNTIME: ${scan_et}s"
+				fi
+				local _cl="${tot_cl:-0}"
+				[ "$_cl" = "-" ] && _cl="0"
+				echo "$_time_u | $_time_display | SCANID: $scanid | $_etime | FILES: ${tot_files:--} | HITS: ${tot_hits:--} | CLEANED: $_cl" >> "$tmpf"
 				_seen_ids="$_seen_ids $_sid"
 			fi
 		done
@@ -335,8 +342,9 @@ view_report() {
 			TIME=$(grep -E "^TIME|^STARTED" <<< "$_meta" | sed -e 's/TIME: //' -e 's/STARTED: //' | awk '{print$1,$2,$3,$4}')
 			TIME_U=$(date -d "$TIME" "+%s" 2>/dev/null)
 			ETIME=$(grep "ELAPSED" <<< "$_meta" | awk '{print$1,$2}' | sed 's/ELAPSED/RUNTIME/')
-			if [ -z "$ETIME" ]; then
-				ETIME="RUNTIME: unknown"
+			# Empty ETIME or bare "RUNTIME: s" (no number) from interrupted scans
+			if [ -z "$ETIME" ] || [ "$ETIME" = "RUNTIME: s" ]; then
+				ETIME="RUNTIME: n/a"
 			fi
 			if [ -n "$SCANID" ] && [ -n "$TIME" ]; then
 				clean_zero=$(echo $CLEAN | awk '{print$2}')
@@ -430,6 +438,7 @@ view_report() {
 			exit 1
 		fi
 		eout "{report} report ID $rid sent to $_mailto" 1
+		command rm -f "$_html"  # cleanup rendered HTML tempfile
 		exit 0
 	fi
 
@@ -493,6 +502,7 @@ _inotify_trim_log() {
 }
 
 purge() {
+	_lmd_elog_event "$ELOG_EVT_PURGE_COMPLETED" "warn" "logs and quarantine data purged" "user=$(id -un)"
 	:> "$maldet_log"
 	if [ -f "$inotify_log" ]; then
 		log_size=$($wc -l < "$inotify_log")
@@ -500,8 +510,10 @@ purge() {
 			_inotify_trim_log "$(($log_size - 1000))"
 		fi
 	fi
-	rm -f "$tmpdir"/* "$quardir"/* "$sessdir"/* 2> /dev/null
-	command rm -f "$sessdir/.session_format"  # reset legacy compat auto-detection cache
+	$find "$tmpdir" -maxdepth 1 -type f -delete 2>/dev/null  # dotfiles missed by glob *
+	$find "$tmpdir" -maxdepth 1 -mindepth 1 -type d -exec rm -rf {} + 2>/dev/null  # subdirs
+	$find "$quardir" -maxdepth 1 -type f -delete 2>/dev/null
+	$find "$sessdir" -maxdepth 1 -type f -delete 2>/dev/null
 	eout "{glob} logs and quarantine data cleared by user request (-p)" 1
 }
 
