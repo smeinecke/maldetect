@@ -17,8 +17,9 @@ setup() {
     echo "6576616c286261736536345f6465636f646528:base64.inject.unclassed.99" \
         > "$LMD_INSTALL/sigs/custom.hex.dat"
 
-    # Suppress builtin sigs that match the same pattern but have no clean script
-    printf '%s\n' "php.base64.inject" "php.inject.inject" > "$LMD_INSTALL/ignore_sigs"
+    # Suppress builtin sigs that match eval(base64_decode but have no clean script.
+    # ignore_sigs uses grep -E; regex patterns future-proof against CDN sig additions.
+    printf '%s\n' "php\.base64\.inject" "php\.inject\." > "$LMD_INSTALL/ignore_sigs"
 }
 
 teardown() {

@@ -47,7 +47,7 @@ Use \fB\-b\fR before \fB\-\-monitor\fR to daemonize: \fBmaldet \-b \-m users\fR.
 \fBFILE\fR reads paths from a file.
 \fBreload\fR triggers a configuration reload.
 .TP
-\fB\-k\fR, \fB\-\-kill\-monitor\fR
+\fB\-k\fR, \fB\-\-kill\-monitor\fR (also: \fB\-kill\fR)
 Stop the inotify monitoring service.
 Sends SIGTERM to the supervisor for a clean shutdown; escalates to SIGKILL
 after a 10-second timeout if the process does not exit.
@@ -96,10 +96,10 @@ Requires monitor mode to be running.
 Display the event log.
 .SS Updates
 .TP
-\fB\-u\fR, \fB\-\-update\-sigs\fR [\fB\-\-force\fR]
+\fB\-u\fR, \fB\-\-update\-sigs\fR (also: \fB\-\-update\fR) [\fB\-\-force\fR]
 Update malware signatures from rfxn.com.
 .TP
-\fB\-d\fR, \fB\-\-update\-ver\fR [\fB\-\-force\fR|\fB\-\-beta\fR]
+\fB\-d\fR, \fB\-\-update\-ver\fR (also: \fB\-\-update\-version\fR) [\fB\-\-force\fR|\fB\-\-beta\fR]
 Update the LMD installation to the latest version.
 .TP
 \fB\-\-cron\-sigup\fR
@@ -126,11 +126,12 @@ Run as the specified user (for viewing reports or restoring quarantine).
 .TP
 \fB\-co\fR, \fB\-\-config\-option\fR \fIVAR\fR=\fIVAL\fR[,\fIVAR\fR=\fIVAL\fR,...]
 Override configuration options at runtime.
+May appear anywhere in the command line.
 .TP
-\fB\-\-web\-proxy\fR \fIIP\fR:\fIPORT\fR
+\fB\-\-web\-proxy\fR (also: \fB\-\-wget\-proxy\fR, \fB\-\-curl\-proxy\fR) \fIIP\fR:\fIPORT\fR
 Set HTTP/HTTPS proxy for all remote connections.
 .TP
-\fB\-hscan\fR, \fB\-\-hook\-scan\fR
+\fB\-hscan\fR, \fB\-\-hook\-scan\fR (also: \fB\-\-modsec\fR)
 Scan a single file supplied by a service hook (ModSecurity, pure\-ftpd,
 ProFTPD, Exim, or custom).
 Used internally by \fBhookscan.sh\fR; not intended for direct invocation.
@@ -182,9 +183,9 @@ Backward compatibility variable mappings.
 Core library sourcing hub \(em sources all sub-libraries in dependency order.
 .TP
 .B /usr/local/maldetect/internals/lmd_*.sh
-Decomposed function libraries: lmd_init, lmd_config, lmd_scan, lmd_engine,
-lmd_clamav, lmd_yara, lmd_sigs, lmd_quarantine, lmd_session, lmd_monitor,
-lmd_update.
+Decomposed function libraries: lmd_config, lmd_init, lmd_clamav, lmd_sigs,
+lmd_engine, lmd_yara, lmd_quarantine, lmd_session, lmd_scan, lmd_monitor,
+lmd_update, lmd_alert.
 .TP
 .I /usr/local/maldetect/internals/alert_lib.sh
 Shared alerting library (email, Slack, Telegram, Discord delivery).
@@ -275,15 +276,23 @@ Key variables by category:
 .B Alerting:
 .BR email_alert ,
 .BR email_addr ,
+.BR email_ignore_clean ,
+.BR email_subj ,
+.BR email_panel_user_alerts ,
+.BR email_panel_from ,
+.BR email_panel_replyto ,
+.BR email_panel_alert_subj ,
 .BR email_format ,
 .BR smtp_relay ,
 .BR smtp_from ,
 .BR smtp_user ,
 .BR smtp_pass ,
 .BR slack_alert ,
+.BR slack_subj ,
 .BR slack_token ,
 .BR slack_channels ,
 .BR telegram_alert ,
+.BR telegram_file_caption ,
 .BR telegram_bot_token ,
 .BR telegram_channel_id ,
 .BR discord_alert ,
@@ -294,28 +303,45 @@ Key variables by category:
 .BR scan_clamscan ,
 .BR scan_csig ,
 .BR scan_yara ,
+.BR scan_yara_timeout ,
 .BR scan_yara_scope ,
 .BR scan_workers ,
-.BR scan_hexdepth ,
+.BR scan_user_access ,
+.BR scan_user_access_minuid ,
+.BR scan_max_depth ,
+.BR scan_min_filesize ,
 .BR scan_max_filesize ,
+.BR scan_hexdepth ,
 .BR scan_find_timeout ,
+.BR scan_export_filelist ,
+.BR scan_tmpdir_paths ,
 .BR scan_cpunice ,
+.BR scan_ionice ,
+.BR scan_cpulimit ,
 .BR scan_ignore_root ,
-.BR string_length_scan .
+.BR scan_ignore_user ,
+.BR scan_ignore_group ,
+.BR string_length_scan ,
+.BR string_length .
 .PP
 .B Quarantine:
 .BR quarantine_hits ,
 .BR quarantine_clean ,
 .BR quarantine_suspend_user ,
-.BR quarantine_suspend_user_minuid .
+.BR quarantine_suspend_user_minuid ,
+.BR quarantine_on_error .
 .PP
 .B Monitoring:
 .BR default_monitor_mode ,
+.BR inotify_base_watches ,
 .BR inotify_minuid ,
 .BR inotify_docroot ,
 .BR inotify_sleep ,
 .BR inotify_reloadtime ,
 .BR inotify_cpunice ,
+.BR inotify_ionice ,
+.BR inotify_cpulimit ,
+.BR inotify_verbose ,
 .BR digest_interval ,
 .BR digest_escalate_hits ,
 .BR monitor_paths_extra .
@@ -331,6 +357,18 @@ Key variables by category:
 .BR hookscan_list_max_entries ,
 .BR cron_digest_hook .
 .PP
+.B Remote ClamAV:
+.BR scan_clamd_remote ,
+.BR remote_clamd_config ,
+.BR remote_clamd_max_retry ,
+.BR remote_clamd_retry_sleep .
+.PP
+.B ELK Integration:
+.BR enable_statistic ,
+.BR elk_host ,
+.BR elk_port ,
+.BR elk_index .
+.PP
 .B Maintenance:
 .BR autoupdate_signatures ,
 .BR autoupdate_version ,
@@ -338,7 +376,17 @@ Key variables by category:
 .BR sigup_interval ,
 .BR cron_prune_days ,
 .BR cron_daily_scan ,
-.BR scan_days .
+.BR scan_days ,
+.BR import_config_url ,
+.BR import_config_expire ,
+.BR session_legacy_compat .
+.PP
+.B Signature Import:
+.BR sig_import_md5_url ,
+.BR sig_import_hex_url ,
+.BR sig_import_yara_url ,
+.BR sig_import_sha256_url ,
+.BR sig_import_csig_url .
 .PP
 .B autoupdate_version_hashed
 validates the SHA\-256 hash of installed LMD executables against known good

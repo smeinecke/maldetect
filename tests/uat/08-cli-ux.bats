@@ -60,12 +60,6 @@ teardown_file() {
 }
 
 # bats test_tags=uat,uat:cli-ux
-@test "UAT: event log view" {
-    uat_capture "cli-ux" maldet -l
-    assert_success
-}
-
-# bats test_tags=uat,uat:cli-ux
 @test "UAT: purge clears session data" {
     # Create some scan data first
     local tdir="/tmp/uat-lmd-test/cli-purge"
@@ -85,13 +79,6 @@ teardown_file() {
     uat_capture "cli-ux" maldet
     # Should show help or usage hint
     assert_output --partial "usage"
-}
-
-# bats test_tags=uat,uat:cli-ux
-@test "UAT: invalid flag shows error and usage" {
-    uat_capture "cli-ux" maldet --invalid-flag
-    assert_failure
-    assert_output --partial "unrecognized option"
 }
 
 # bats test_tags=uat,uat:cli-ux

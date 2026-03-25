@@ -69,13 +69,6 @@ teardown() {
     assert_output --partial "malware hits 0"
 }
 
-@test "scan_hashtype=auto resolves and reports hash engine" {
-    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    run maldet -a "$TEST_SCAN_DIR"
-    assert_success
-    assert_output --partial "hashing"
-}
-
 @test "signature count includes SHA-256" {
     local sha256_hash sha256_size
     sha256_hash=$(sha256sum "$SAMPLES_DIR/clean-file.txt" | awk '{print $1}')

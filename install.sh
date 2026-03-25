@@ -298,12 +298,11 @@ _import_config() {
 
 _restart_monitor() {
 	if [ "${monmode:-}" == "1" ]; then
-		pkg_info "NOTE: monitor process uses legacy forking model; restart to use new supervisor mode"
 		if pkg_is_systemd && systemctl is-enabled maldet.service >/dev/null 2>&1; then
 			pkg_info "restarting monitor via systemctl"
 			systemctl restart maldet.service >>/dev/null 2>&1 &
 		else
-			pkg_info "restarting monitor with '-b -m users'"
+			pkg_info "restarting monitor with supervisor mode"
 			"$inspath/maldet" -b -m users >>/dev/null 2>&1 &
 		fi
 	fi
@@ -320,10 +319,18 @@ if [ -d "$inspath" ] && [ -d "files" ]; then
 	echo "            (C) 2026, Ryan MacDonald <ryan@rfxn.com>"
 	echo "This program may be freely redistributed under the terms of the GNU GPL v2"
 
-	# Stop active monitor before backup
-	if [ "$(ps -A --user root -o "command" 2>/dev/null | grep maldetect | grep inotifywait)" ]; then
-		"$inspath/maldet" -k >>/dev/null 2>&1
+	# Stop active monitor before backup (detect both supervisor and legacy modes)
+	if [ -f "$inspath/tmp/monitor.pid" ]; then
+		_mpid=$(command cat "$inspath/tmp/monitor.pid")
+		if [ -n "$_mpid" ] && kill -0 "$_mpid" 2>/dev/null; then
+			monmode=1
+		fi
+	fi
+	if [ "${monmode:-}" != "1" ] && [ "$(ps -A --user root -o "command" 2>/dev/null | grep maldetect | grep inotifywait)" ]; then
 		monmode=1
+	fi
+	if [ "${monmode:-}" == "1" ]; then
+		"$inspath/maldet" -k >>/dev/null 2>&1
 	fi
 
 	pkg_section "Backing up existing installation"

@@ -112,3 +112,146 @@ teardown() {
     run grep "test.hex.php.1" "$hitsfile"
     assert_success
 }
+
+# Helper to source the LMD function stack for direct function testing
+_source_lmd_stack() {
+    set +eu
+    source "$LMD_INSTALL/internals/internals.conf"
+    source "$LMD_INSTALL/conf.maldet"
+    source "$LMD_INSTALL/internals/lmd.lib.sh"
+}
+
+# --- HEX wildcard compilation tests (call _hex_compile_wildcards_awk directly) ---
+
+@test "HEX wildcard: ?? compiles to [0-9a-f]{2}" {
+    _source_lmd_stack
+    local runtime_hex_regex runtime_hex_literal _hex_wc_tmp
+    runtime_hex_regex=$(mktemp)
+    runtime_hex_literal=$(mktemp)
+    _hex_wc_tmp=$(mktemp)
+    printf '%s\t%s\n' "aa??bb" "{HEX}test.wc.1" > "$_hex_wc_tmp"
+    _hex_compile_wildcards_awk
+    local compiled
+    compiled=$(cut -f2 "$runtime_hex_regex")
+    [ "$compiled" = "aa[0-9a-f]{2}bb" ]
+    rm -f "$runtime_hex_regex" "$runtime_hex_literal" "$_hex_wc_tmp"
+}
+
+@test "HEX wildcard: * compiles to [0-9a-f]*" {
+    _source_lmd_stack
+    local runtime_hex_regex runtime_hex_literal _hex_wc_tmp
+    runtime_hex_regex=$(mktemp)
+    runtime_hex_literal=$(mktemp)
+    _hex_wc_tmp=$(mktemp)
+    printf '%s\t%s\n' "aa*bb" "{HEX}test.wc.2" > "$_hex_wc_tmp"
+    _hex_compile_wildcards_awk
+    local compiled
+    compiled=$(cut -f2 "$runtime_hex_regex")
+    [ "$compiled" = "aa[0-9a-f]*bb" ]
+    rm -f "$runtime_hex_regex" "$runtime_hex_literal" "$_hex_wc_tmp"
+}
+
+@test "HEX wildcard: ?x nibble compiles to [0-9a-f]x" {
+    _source_lmd_stack
+    local runtime_hex_regex runtime_hex_literal _hex_wc_tmp
+    runtime_hex_regex=$(mktemp)
+    runtime_hex_literal=$(mktemp)
+    _hex_wc_tmp=$(mktemp)
+    printf '%s\t%s\n' "?aff" "{HEX}test.wc.3" > "$_hex_wc_tmp"
+    _hex_compile_wildcards_awk
+    local compiled
+    compiled=$(cut -f2 "$runtime_hex_regex")
+    [ "$compiled" = "[0-9a-f]aff" ]
+    rm -f "$runtime_hex_regex" "$runtime_hex_literal" "$_hex_wc_tmp"
+}
+
+@test "HEX wildcard: x? nibble compiles to x[0-9a-f]" {
+    _source_lmd_stack
+    local runtime_hex_regex runtime_hex_literal _hex_wc_tmp
+    runtime_hex_regex=$(mktemp)
+    runtime_hex_literal=$(mktemp)
+    _hex_wc_tmp=$(mktemp)
+    # ffb? — b is hex, ? at end-of-string forces x? (low nibble) codepath
+    printf '%s\t%s\n' "ffb?" "{HEX}test.wc.4" > "$_hex_wc_tmp"
+    _hex_compile_wildcards_awk
+    local compiled
+    compiled=$(cut -f2 "$runtime_hex_regex")
+    [ "$compiled" = "ffb[0-9a-f]" ]
+    rm -f "$runtime_hex_regex" "$runtime_hex_literal" "$_hex_wc_tmp"
+}
+
+@test "HEX wildcard: {N-M} compiles to [0-9a-f]{2N,2M}" {
+    _source_lmd_stack
+    local runtime_hex_regex runtime_hex_literal _hex_wc_tmp
+    runtime_hex_regex=$(mktemp)
+    runtime_hex_literal=$(mktemp)
+    _hex_wc_tmp=$(mktemp)
+    printf '%s\t%s\n' "aa{3-5}bb" "{HEX}test.wc.5" > "$_hex_wc_tmp"
+    _hex_compile_wildcards_awk
+    local compiled
+    compiled=$(cut -f2 "$runtime_hex_regex")
+    [ "$compiled" = "aa[0-9a-f]{6,10}bb" ]
+    rm -f "$runtime_hex_regex" "$runtime_hex_literal" "$_hex_wc_tmp"
+}
+
+@test "HEX wildcard: (a|b) alternation passes through" {
+    _source_lmd_stack
+    local runtime_hex_regex runtime_hex_literal _hex_wc_tmp
+    runtime_hex_regex=$(mktemp)
+    runtime_hex_literal=$(mktemp)
+    _hex_wc_tmp=$(mktemp)
+    printf '%s\t%s\n' "aa(63|64)bb" "{HEX}test.wc.6" > "$_hex_wc_tmp"
+    _hex_compile_wildcards_awk
+    local compiled
+    compiled=$(cut -f2 "$runtime_hex_regex")
+    [ "$compiled" = "aa(63|64)bb" ]
+    rm -f "$runtime_hex_regex" "$runtime_hex_literal" "$_hex_wc_tmp"
+}
+
+@test "HEX wildcard: ?? before nibble ordering" {
+    _source_lmd_stack
+    local runtime_hex_regex runtime_hex_literal _hex_wc_tmp
+    runtime_hex_regex=$(mktemp)
+    runtime_hex_literal=$(mktemp)
+    _hex_wc_tmp=$(mktemp)
+    # aa??b? — ?? must be processed before b? nibble
+    printf '%s\t%s\n' "aa??b?" "{HEX}test.wc.7" > "$_hex_wc_tmp"
+    _hex_compile_wildcards_awk
+    local compiled
+    compiled=$(cut -f2 "$runtime_hex_regex")
+    # ?? → [0-9a-f]{2}, then b? → b[0-9a-f]
+    [ "$compiled" = "aa[0-9a-f]{2}b[0-9a-f]" ]
+    rm -f "$runtime_hex_regex" "$runtime_hex_literal" "$_hex_wc_tmp"
+}
+
+@test "HEX wildcard: mixed pattern all token types" {
+    _source_lmd_stack
+    local runtime_hex_regex runtime_hex_literal _hex_wc_tmp
+    runtime_hex_regex=$(mktemp)
+    runtime_hex_literal=$(mktemp)
+    _hex_wc_tmp=$(mktemp)
+    # ??a?(63|64)?b{2-4}* — all 6 token types
+    printf '%s\t%s\n' '??a?(63|64)?b{2-4}*' '{HEX}test.wc.8' > "$_hex_wc_tmp"
+    _hex_compile_wildcards_awk
+    local compiled
+    compiled=$(cut -f2 "$runtime_hex_regex")
+    # ?? → [0-9a-f]{2}
+    # a? → a[0-9a-f] (low nibble — a is hex, ? follows, next char ( is not hex)
+    # (63|64) → passthrough
+    # ?b → [0-9a-f]b (high nibble)
+    # {2-4} → [0-9a-f]{4,8}
+    # * → [0-9a-f]*
+    [ "$compiled" = "[0-9a-f]{2}a[0-9a-f](63|64)[0-9a-f]b[0-9a-f]{4,8}[0-9a-f]*" ]
+    rm -f "$runtime_hex_regex" "$runtime_hex_literal" "$_hex_wc_tmp"
+}
+
+@test "HEX wildcard: scan detects via wildcard pattern" {
+    # Use a ?? wildcard in the hex sig — replace one known byte with ??
+    # eval(base64_decode( = 6576616c286261736536345f6465636f646528
+    # Replace byte at position 5 (0x28 = '(') with ?? wildcard
+    echo "6576616c??6261736536345f6465636f646528:{HEX}test.wc.scan.1" > "$LMD_INSTALL/sigs/custom.hex.dat"
+    cp "$SAMPLES_DIR/test-hex-match.php" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+}

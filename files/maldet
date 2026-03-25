@@ -324,7 +324,7 @@ YARA SCANNING:
     independently of ClamAV. Enable via conf.maldet or runtime -co flag.
 
     Config options (set in conf.maldet or via -co):
-      scan_yara              enable YARA scan stage [0|1] (default: 0)
+      scan_yara              enable YARA scan stage [auto|0|1] (default: auto)
       scan_yara_timeout      YARA timeout in seconds (default: 300, 0=none)
       scan_yara_scope        rule scope when ClamAV also active [all|custom]
                              (default: custom)
@@ -341,6 +341,10 @@ UPDATES:
 
     -d, --update-ver (also: --update-version) [--force|--beta]
        Update the installed version from rfxn.com
+
+    --cron-sigup
+       Perform a signature update for the independent cron job.
+       Internal use only — invoked by /etc/cron.d/maldet-sigup.
 
 OTHER:
     -p, --purge

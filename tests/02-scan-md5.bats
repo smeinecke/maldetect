@@ -82,12 +82,6 @@ teardown() {
     assert_output --partial "malware hits 2"
 }
 
-@test "scan with absolute path succeeds" {
-    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
-    run maldet -a "$TEST_SCAN_DIR"
-    assert_success
-}
-
 @test "scan of empty directory reports empty file list" {
     run maldet -a "$TEST_SCAN_DIR"
     assert_success

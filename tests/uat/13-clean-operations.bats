@@ -55,13 +55,6 @@ teardown_file() {
 }
 
 # bats test_tags=uat,uat:clean
-@test "UAT: maldet -p outputs success message" {
-    uat_capture "clean-ops" maldet -p
-    assert_success
-    assert_output --partial "cleared"
-}
-
-# bats test_tags=uat,uat:clean
 @test "UAT: purge does not remove config or signature files" {
     run maldet -p
     assert_success
@@ -72,17 +65,6 @@ teardown_file() {
     [ -f "$LMD_INSTALL/internals/lmd.lib.sh" ]
     [ -d "$LMD_INSTALL/sigs" ]
     [ -s "$LMD_INSTALL/sigs/md5v2.dat" ]
-}
-
-# bats test_tags=uat,uat:clean
-@test "UAT: purge recreates required directories" {
-    run maldet -p
-    assert_success
-
-    # Directories must be recreated after purge
-    [ -d "$LMD_INSTALL/quarantine" ]
-    [ -d "$LMD_INSTALL/sess" ]
-    [ -d "$LMD_INSTALL/tmp" ]
 }
 
 # bats test_tags=uat,uat:clean

@@ -94,12 +94,14 @@ _source_compat() {
     [ "$scan_workers" = "4" ]
 }
 
-@test "compat.conf sourced after conf.maldet in maldet entry point" {
-    run grep -n 'source.*compatcnf' "$LMD_INSTALL/maldet"
+@test "compat.conf sourced after conf.maldet in source chain" {
+    # After library decomposition, cnf and compatcnf are both sourced from lmd.lib.sh
+    local libhub="$LMD_INSTALL/internals/lmd.lib.sh"
+    run grep -n 'source.*compatcnf' "$libhub"
     assert_success
     local compat_line
     compat_line=$(echo "$output" | head -1 | cut -d: -f1)
-    run grep -n 'source.*cnf' "$LMD_INSTALL/maldet"
+    run grep -n 'source.*cnf' "$libhub"
     assert_success
     local cnf_line
     cnf_line=$(echo "$output" | head -1 | cut -d: -f1)

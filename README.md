@@ -221,6 +221,8 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `sig_import_md5_url` | URL to download custom MD5 signatures | — |
 | `sig_import_hex_url` | URL to download custom HEX signatures | — |
 | `sig_import_yara_url` | URL to download custom YARA rules | — |
+| `sig_import_sha256_url` | URL to download custom SHA-256 signatures | — |
+| `sig_import_csig_url` | URL to download custom compound signatures | — |
 | `session_legacy_compat` | Generate legacy plaintext session files alongside TSV: `auto` (detect old-format sessions), `1` (always), `0` (TSV only) | `auto` |
 
 ### 3.2 Alerting
@@ -327,6 +329,7 @@ maldet -co scan_yara=1 -a /home/?/public_html
 | `inotify_verbose` | Log every file scanned (debug only) | `0` |
 | `digest_interval` | Interval between periodic digest summary alerts: `24h`, `30m`, `7d`, `0` (disabled) | `24h` |
 | `digest_escalate_hits` | Hit count threshold for immediate escalation alert; `0` = disabled | `0` |
+| `cron_digest_hook` | Enable cron.daily hook digest sweep (fires digest if new hook detections exist) | `1` |
 | `monitor_paths_extra` | Path to a line-separated file of additional inotify watch paths | `/usr/local/maldetect/monitor_paths.extra` |
 
 ### 3.7 ClamAV Integration
@@ -417,6 +420,7 @@ REPORTING:
 UPDATES:
   -u, --update-sigs [--force]   update malware signatures
   -d, --update-ver [--force|--beta]  update LMD version
+  --cron-sigup                  cron sig update (internal use)
 
 OTHER:
   -p, --purge                   clear logs, quarantine, temp data

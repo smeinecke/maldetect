@@ -129,259 +129,12 @@ _count_signatures() {
 	tot_sigs=$((hash_sigs + hex_sigs + csig_sigs + _yara_active_sigs + user_sigs))
 }
 
-_hex_compile_pattern() {
-	# Convert a ClamAV hex pattern to ERE if it contains wildcards.
-	# Returns 0 (true) if conversion was needed, 1 (false) if pure literal.
-	# Output: ERE pattern on stdout.
-	local _pat="$1"
-	local _has_wildcard=0
-	# Detect ClamAV wildcard tokens: ??, (alt), *, nibble ?x/x?, {N-M} bounded gap
-	# Lowercase only — matches sed scope below; od outputs lowercase hex
-	local _wc_re='(\?\?|\(.*\|.*\)|\*|\?[0-9a-f]|[0-9a-f]\?|\{[0-9]+-[0-9]+\})'
-	if [[ "$_pat" =~ $_wc_re ]]; then
-		_has_wildcard=1
-	fi
-	if [ "$_has_wildcard" == "0" ]; then
-		return 1
-	fi
-	# Convert wildcards to ERE:
-	#   ?? → [0-9a-f]{2}  (any byte)
-	#   *  → [0-9a-f]*    (variable length)
-	#   ?x → [0-9a-f]x    (nibble wildcard, high)
-	#   x? → x[0-9a-f]    (nibble wildcard, low)
-	#   (aa|bb) → already ERE, passthrough
-	local _ere="$_pat"
-	# Order matters: ?? before single-nibble ?x
-	# Note: $sed on FreeBSD already includes -E; double -E is harmless
-	_ere=$(echo "$_ere" | $sed -E 's/\?\?/[0-9a-f]{2}/g')
-	# Nibble wildcards: ?x where x is hex digit (high nibble wild)
-	_ere=$(echo "$_ere" | $sed -E 's/\?([0-9a-f])/[0-9a-f]\1/g')
-	# Nibble wildcards: x? where x is hex digit (low nibble wild)
-	_ere=$(echo "$_ere" | $sed -E 's/([0-9a-f])\?/\1[0-9a-f]/g')
-	# * → variable length match
-	_ere=$(echo "$_ere" | $sed -E 's/\*/[0-9a-f]*/g')
-	# {N-M} → bounded gap: N-M bytes = 2N-2M hex chars
-	# Bash loop with shell arithmetic (sed cannot multiply, awk match()
-	# capture groups are gawk-only — mawk on Ubuntu/Debian lacks them)
-	local _gap_re='\{([0-9]+)-([0-9]+)\}'
-	while [[ "$_ere" =~ $_gap_re ]]; do
-		local _gap_n="${BASH_REMATCH[1]}" _gap_m="${BASH_REMATCH[2]}"
-		local _hex_lo=$((_gap_n * 2)) _hex_hi=$((_gap_m * 2))
-		local _gap_old="{${_gap_n}-${_gap_m}}"
-		local _gap_new="[0-9a-f]{${_hex_lo},${_hex_hi}}"
-		_ere="${_ere/"$_gap_old"/$_gap_new}"
-	done
-	echo "$_ere"
-	return 0
-}
-
-_csig_compile_subsig() {
-	# Compile one csig subsig to ERE, handling i:/w:/iw: prefixes and wildcards.
-	# Output: ERE pattern on stdout.
-	# Prefix flags:
-	#   i: = case-insensitive (fold alpha hex bytes 41-5a to alternation)
-	#   w: = wide/UTF-16LE (insert 00 between each hex byte pair)
-	#   iw: or wi: = both
-	local _raw="$1"
-	local _do_icase=0 _do_wide=0
-
-	# Strip prefix flags
-	case "$_raw" in
-		iw:*|wi:*) _do_icase=1; _do_wide=1; _raw="${_raw#*:}" ;;
-		i:*) _do_icase=1; _raw="${_raw#i:}" ;;
-		w:*) _do_wide=1; _raw="${_raw#w:}" ;;
-	esac
-
-	# Apply wide interleaving: insert 00 between each hex byte pair.
-	# Only literal hex bytes are interleaved; wildcards pass through.
-	if [ "$_do_wide" == "1" ]; then
-		local _wide="" _wpos=0 _wlen=${#_raw}
-		while [ "$_wpos" -lt "$_wlen" ]; do
-			local _wch="${_raw:_wpos:1}"
-			local _wch2="${_raw:_wpos:2}"
-			# Check for multi-char wildcard tokens
-			if [ "$_wch2" == "??" ]; then
-				# ?? wildcard — pass through, add 00 after
-				_wide="${_wide}??00"
-				_wpos=$((_wpos + 2))
-			elif [ "$_wch" == "*" ]; then
-				# * wildcard — pass through as-is
-				_wide="${_wide}*"
-				_wpos=$((_wpos + 1))
-			elif [ "$_wch" == "{" ]; then
-				# {N-M} bounded gap — double values for wide byte spacing
-				local _gap_tok="${_raw:_wpos}"
-				_gap_tok="${_gap_tok%%\}*}}"
-				# Extract N and M, double them for UTF-16LE (each char = 2 bytes)
-				local _gap_inner="${_gap_tok#\{}"
-				_gap_inner="${_gap_inner%\}}"
-				local _gap_lo="${_gap_inner%-*}"
-				local _gap_hi="${_gap_inner#*-}"
-				_wide="${_wide}{$((_gap_lo * 2))-$((_gap_hi * 2))}"
-				_wpos=$((_wpos + ${#_gap_tok}))
-			elif [ "$_wch" == "(" ]; then
-				# (alt|alt) group — pass through
-				local _alt_tok="${_raw:_wpos}"
-				_alt_tok="${_alt_tok%%)*})"
-				_wide="${_wide}${_alt_tok}"
-				_wpos=$((_wpos + ${#_alt_tok}))
-			else
-				# Literal hex byte pair or nibble wildcard
-				if [ $((_wpos + 2)) -le "$_wlen" ]; then
-					_wide="${_wide}${_wch2}00"
-					_wpos=$((_wpos + 2))
-				else
-					# Odd trailing char (shouldn't happen in valid sigs)
-					_wide="${_wide}${_wch}"
-					_wpos=$((_wpos + 1))
-				fi
-			fi
-		done
-		# Remove trailing 00 (last byte doesn't need null separator)
-		if [ "${_wide: -2}" == "00" ]; then
-			_wide="${_wide%00}"
-		fi
-		_raw="$_wide"
-	fi
-
-	# Compile wildcards to ERE via shared helper
-	local _ere
-	if _ere=$(_hex_compile_pattern "$_raw"); then
-		: # _ere is set from stdout
-	else
-		_ere="$_raw"
-	fi
-
-	# Apply case-folding: for each alpha hex byte 41-5a, generate (XX|xx) alternation
-	if [ "$_do_icase" == "1" ]; then
-		local _folded="" _fpos=0 _flen=${#_ere}
-		while [ "$_fpos" -lt "$_flen" ]; do
-			local _fc="${_ere:_fpos:1}"
-			# Skip over ERE metachar sequences using pure bash (no sed —
-			# $sed prepends -E on FreeBSD which breaks BRE capture groups)
-			if [ "$_fc" == "[" ]; then
-				# Pass through entire character class [...] as-is
-				local _tail="${_ere:_fpos}"
-				local _close="${_tail#*]}"
-				local _cls_end="${_tail%"$_close"}"
-				if [ -n "$_cls_end" ] && [ "$_cls_end" != "$_tail" ]; then
-					_folded="${_folded}${_cls_end}"
-					_fpos=$((_fpos + ${#_cls_end}))
-				else
-					_folded="${_folded}${_fc}"
-					_fpos=$((_fpos + 1))
-				fi
-			elif [ "$_fc" == "(" ]; then
-				# Pass through ERE groups (...) as-is
-				local _tail="${_ere:_fpos}"
-				local _close="${_tail#*\)}"
-				local _grp_end="${_tail%"$_close"}"
-				if [ -n "$_grp_end" ] && [ "$_grp_end" != "$_tail" ]; then
-					_folded="${_folded}${_grp_end}"
-					_fpos=$((_fpos + ${#_grp_end}))
-				else
-					_folded="${_folded}${_fc}"
-					_fpos=$((_fpos + 1))
-				fi
-			elif [ "$_fc" == "{" ]; then
-				# Pass through quantifiers {N,M} as-is
-				local _tail="${_ere:_fpos}"
-				local _close="${_tail#*\}}"
-				local _qt_end="${_tail%"$_close"}"
-				if [ -n "$_qt_end" ] && [ "$_qt_end" != "$_tail" ]; then
-					_folded="${_folded}${_qt_end}"
-					_fpos=$((_fpos + ${#_qt_end}))
-				else
-					_folded="${_folded}${_fc}"
-					_fpos=$((_fpos + 1))
-				fi
-			else
-				# Check for hex byte pair (two hex chars)
-				local _fc2="${_ere:_fpos:2}"
-				local _hex_byte_re='^[0-9a-f]{2}$'
-				if [[ "$_fc2" =~ $_hex_byte_re ]]; then
-					# Check if this is an alpha byte (41-5a = A-Z)
-					local _dec
-					_dec=$(printf '%d' "0x${_fc2}" 2>/dev/null) || _dec=0
-					if [ "$_dec" -ge 65 ] && [ "$_dec" -le 90 ]; then
-						# Uppercase alpha — generate (UC|LC) alternation
-						local _lc
-						_lc=$(printf '%02x' $((_dec + 32)))
-						_folded="${_folded}(${_fc2}|${_lc})"
-					elif [ "$_dec" -ge 97 ] && [ "$_dec" -le 122 ]; then
-						# Lowercase alpha — generate (UC|LC) alternation
-						local _uc
-						_uc=$(printf '%02x' $((_dec - 32)))
-						_folded="${_folded}(${_uc}|${_fc2})"
-					else
-						_folded="${_folded}${_fc2}"
-					fi
-					_fpos=$((_fpos + 2))
-				else
-					_folded="${_folded}${_fc}"
-					_fpos=$((_fpos + 1))
-				fi
-			fi
-		done
-		_ere="$_folded"
-	fi
-
-	echo "$_ere"
-}
-
-_csig_classify_subsig() {
-	# Classify a compiled subsig ERE and write to the appropriate batch file.
-	# $1=SID, $2=ERE, $3=literals_file, $4=wildcards_file, $5=universals_file
-	local _sid="$1" _ere="$2" _lit_f="$3" _wc_f="$4" _uni_f="$5"
-	# Universal: raw ERE shorter than 8 chars (< 4 bytes hex = zero selectivity)
-	if [ "${#_ere}" -lt 8 ]; then
-		echo "$_sid" >> "$_uni_f"
-		return
-	fi
-	# Wildcard: contains ERE metacharacters from _hex_compile_pattern output
-	# Check for: character class [0-9a-f], alternation group (a|b), or bare alternation |
-	local _wc_detect='(\[0-9a-f\]|\(.*\||\|)'
-	if [[ "$_ere" =~ $_wc_detect ]]; then
-		printf '%d\t%s\n' "$_sid" "$_ere" >> "$_wc_f"
-	else
-		printf '%d\t%s\n' "$_sid" "$_ere" >> "$_lit_f"
-	fi
-}
-
-_csig_dedup_subsig() {
-	# Assign a unique SID for a compiled ERE. Returns existing SID if pattern
-	# was already seen. Sets _result_sid as output (avoids subshell).
-	# Uses parallel indexed arrays for bash 4.1 compat (no declare -A).
-	# CONTRACT: Must only be called from _csig_compile_rules(). Relies on
-	# caller-scope locals: _dedup_eres, _dedup_sids, _dedup_count, _next_sid.
-	# Caller must declare: local _result_sid before each call.
-	local _ere="$1"
-	local _di
-	for (( _di=0; _di<_dedup_count; _di++ )); do
-		if [ "${_dedup_eres[$_di]}" == "$_ere" ]; then
-			_result_sid="${_dedup_sids[$_di]}"
-			return 0
-		fi
-	done
-	# New unique ERE
-	_result_sid="$_next_sid"
-	_dedup_eres[$_dedup_count]="$_ere"
-	_dedup_sids[$_dedup_count]="$_next_sid"
-	_dedup_count=$((_dedup_count + 1))
-	_next_sid=$((_next_sid + 1))
-	# Classify and write to tier file (only on first assignment)
-	_csig_classify_subsig "$_result_sid" "$_ere" \
-		"$runtime_csig_literals" "$runtime_csig_wildcards" "$runtime_csig_universals"
-}
-
 _csig_compile_rules() {
 	# Parse csig.dat lines and compile to batch-format rule files.
 	# Input: $1 = runtime csig file (merged base + custom, ignore-filtered)
 	# Output: writes runtime_csig_batch_compiled plus tier files (literals/wildcards/universals).
 	# Format: SIGNAME\tTYPE\tTHRESHOLD\tSPEC (SID-referenced)
 	local _csig_src="$1"
-	local _line _signame _sigs_field _threshold _rule_type
-	local _compiled_count=0
 
 	# Batch-format output files
 	if [ -n "$runtime_csig_batch_compiled" ]; then
@@ -391,181 +144,271 @@ _csig_compile_rules() {
 		: > "$runtime_csig_universals"
 	fi
 
-	# Subsig dedup: parallel indexed arrays (bash 4.1 — no declare -A)
-	local _dedup_eres _dedup_sids _dedup_count=0 _next_sid=0
-	_dedup_eres=()
-	_dedup_sids=()
+	local _csig_awk_warnings
+	_csig_awk_warnings=$(mktemp "$tmpdir/.csig_awk_warn.XXXXXX")
+	awk -v batch_file="$runtime_csig_batch_compiled" \
+		-v lit_file="$runtime_csig_literals" \
+		-v wc_file="$runtime_csig_wildcards" \
+		-v uni_file="$runtime_csig_universals" '
+function hex2dec(s,    hi, lo, hx) {
+	hx = "0123456789abcdef"
+	hi = index(hx, substr(s, 1, 1)) - 1
+	lo = index(hx, substr(s, 2, 1)) - 1
+	if (hi < 0 || lo < 0) return -1
+	return hi * 16 + lo
+}
+function compile_wildcards(pat,    ere, i, c, c2, n, gap, lo, hi, pre, post, rep, parts) {
+	ere = pat
+	gsub(/\?\?/, "[0-9a-f]{2}", ere)
+	n = length(ere)
+	pat = ""
+	for (i = 1; i <= n; i++) {
+		c = substr(ere, i, 1)
+		if (c == "[") {
+			while (i <= n && substr(ere, i, 1) != "]") { pat = pat substr(ere, i, 1); i++ }
+			if (i <= n) pat = pat substr(ere, i, 1)
+		} else if (c == "(") {
+			while (i <= n && substr(ere, i, 1) != ")") { pat = pat substr(ere, i, 1); i++ }
+			if (i <= n) pat = pat substr(ere, i, 1)
+		} else if (c == "?" && i < n) {
+			c2 = substr(ere, i+1, 1)
+			if (c2 ~ /[0-9a-f]/) { pat = pat "[0-9a-f]" c2; i++ }
+			else pat = pat c
+		} else if (c ~ /[0-9a-f]/ && i < n && substr(ere, i+1, 1) == "?") {
+			if (i+1 < n && substr(ere, i+2, 1) ~ /[0-9a-f]/) pat = pat c
+			else { pat = pat c "[0-9a-f]"; i++ }
+		} else {
+			pat = pat c
+		}
+	}
+	ere = pat
+	gsub(/\*/, "[0-9a-f]*", ere)
+	while (match(ere, /\{[0-9]+-[0-9]+\}/)) {
+		gap = substr(ere, RSTART+1, RLENGTH-2)
+		split(gap, parts, "-")
+		lo = parts[1] * 2; hi = parts[2] * 2
+		pre = substr(ere, 1, RSTART-1)
+		post = substr(ere, RSTART+RLENGTH)
+		ere = pre "[0-9a-f]{" lo "," hi "}" post
+	}
+	return ere
+}
+function wide_interleave(pat,    out, i, n, c, c2, gap, inner, glo, ghi, alt, gp) {
+	n = length(pat); out = ""
+	for (i = 1; i <= n; ) {
+		c = substr(pat, i, 1); c2 = substr(pat, i, 2)
+		if (c2 == "??") { out = out "??00"; i += 2 }
+		else if (c == "*") { out = out "*"; i++ }
+		else if (c == "{") {
+			gap = substr(pat, i)
+			sub(/\}.*/, "}", gap)
+			inner = substr(gap, 2, length(gap)-2)
+			split(inner, gp, "-")
+			glo = gp[1] * 2; ghi = gp[2] * 2
+			out = out "{" glo "-" ghi "}"
+			i += length(gap)
+		} else if (c == "(") {
+			alt = substr(pat, i)
+			sub(/\).*/, ")", alt)
+			out = out alt
+			i += length(alt)
+		} else {
+			if (i < n) { out = out c2 "00"; i += 2 }
+			else { out = out c; i++ }
+		}
+	}
+	# Remove trailing 00
+	if (substr(out, length(out)-1) == "00") out = substr(out, 1, length(out)-2)
+	return out
+}
+function case_fold(ere,    out, i, n, c, c2, d, uc, lc) {
+	n = length(ere); out = ""
+	for (i = 1; i <= n; ) {
+		c = substr(ere, i, 1)
+		if (c == "[") {
+			while (i <= n && substr(ere, i, 1) != "]") { out = out substr(ere, i, 1); i++ }
+			if (i <= n) { out = out substr(ere, i, 1); i++ }
+		} else if (c == "(") {
+			while (i <= n && substr(ere, i, 1) != ")") { out = out substr(ere, i, 1); i++ }
+			if (i <= n) { out = out substr(ere, i, 1); i++ }
+		} else if (c == "{") {
+			while (i <= n && substr(ere, i, 1) != "}") { out = out substr(ere, i, 1); i++ }
+			if (i <= n) { out = out substr(ere, i, 1); i++ }
+		} else {
+			c2 = substr(ere, i, 2)
+			if (c2 ~ /^[0-9a-f][0-9a-f]$/) {
+				d = hex2dec(c2)
+				if (d >= 65 && d <= 90) {
+					lc = sprintf("%02x", d + 32)
+					out = out "(" c2 "|" lc ")"
+				} else if (d >= 97 && d <= 122) {
+					uc = sprintf("%02x", d - 32)
+					out = out "(" uc "|" c2 ")"
+				} else {
+					out = out c2
+				}
+				i += 2
+			} else {
+				out = out c; i++
+			}
+		}
+	}
+	return out
+}
+function compile_subsig(raw,    do_icase, do_wide, ere) {
+	do_icase = 0; do_wide = 0
+	if (substr(raw, 1, 3) == "iw:" || substr(raw, 1, 3) == "wi:") {
+		do_icase = 1; do_wide = 1; raw = substr(raw, 4)
+	} else if (substr(raw, 1, 2) == "i:") {
+		do_icase = 1; raw = substr(raw, 3)
+	} else if (substr(raw, 1, 2) == "w:") {
+		do_wide = 1; raw = substr(raw, 3)
+	}
+	if (do_wide) raw = wide_interleave(raw)
+	ere = compile_wildcards(raw)
+	if (do_icase) ere = case_fold(ere)
+	return ere
+}
+function get_sid(ere) {
+	if (ere in sid_map) return sid_map[ere]
+	sid_map[ere] = next_sid
+	# Classify tier
+	if (length(ere) < 8) {
+		print next_sid >> uni_file
+	} else if (ere ~ /\[0-9a-f\]|\(.*\||\|/) {
+		printf "%d\t%s\n", next_sid, ere >> wc_file
+	} else {
+		printf "%d\t%s\n", next_sid, ere >> lit_file
+	}
+	next_sid++
+	return sid_map[ere]
+}
+BEGIN { next_sid = 0 }
+{
+	# Skip empty lines and comments
+	if ($0 == "" || /^[[:space:]]*$/ || /^[[:space:]]*#/) next
+	line = $0
+	# Split on last colon: signame = after last :, sigs_field = before it
+	n = split(line, flds, ":")
+	if (n < 2) {
+		print "{csig} WARNING: malformed csig line, skipping: " substr(line, 1, 60) > "/dev/stderr"
+		next
+	}
+	signame = flds[n]
+	sigs_field = flds[1]
+	for (i = 2; i < n; i++) sigs_field = sigs_field ":" flds[i]
+	if (sigs_field == "" || signame == "") {
+		print "{csig} WARNING: malformed csig line, skipping: " substr(line, 1, 60) > "/dev/stderr"
+		next
+	}
+	# Split sigs_field on top-level || (respect paren depth)
+	delete subsigs; nsubs = 0; paren = 0; cur = ""
+	slen = length(sigs_field)
+	for (i = 1; i <= slen; i++) {
+		ch = substr(sigs_field, i, 1)
+		if (ch == "(") { paren++; cur = cur ch }
+		else if (ch == ")") { paren--; cur = cur ch }
+		else if (ch == "|" && i < slen && substr(sigs_field, i+1, 1) == "|" && paren == 0) {
+			if (cur != "") { nsubs++; subsigs[nsubs] = cur }
+			cur = ""; i++
+		} else {
+			cur = cur ch
+		}
+	}
+	if (cur != "") { nsubs++; subsigs[nsubs] = cur }
+	if (nsubs == 0) {
+		print "{csig} WARNING: no subsigs in csig line, skipping: " substr(line, 1, 60) > "/dev/stderr"
+		next
+	}
+	# Determine rule type
+	has_groups = 0; has_plain = 0
+	for (i = 1; i <= nsubs; i++) {
+		if (substr(subsigs[i], 1, 1) == "(") has_groups = 1
+		else has_plain = 1
+	}
+	if (nsubs == 1 && has_groups == 0) { rule_type = "single"; threshold = 1 }
+	else if (has_groups == 1) { rule_type = "group"; threshold = 0 }
+	else { rule_type = "and"; threshold = 0 }
+	# Check for ;N threshold suffix on signame
+	if (match(signame, /;[0-9]+$/)) {
+		threshold = substr(signame, RSTART+1) + 0
+		signame = substr(signame, 1, RSTART-1)
+		if (threshold == 0) {
+			print "{csig} WARNING: threshold=0 produces always-matching rule, skipping: " signame > "/dev/stderr"
+			next
+		}
+		if (nsubs > 1 && has_groups == 0) rule_type = "or"
+	}
+	# Compile each subsig
+	compile_ok = 1; batch_spec = ""
+	for (i = 1; i <= nsubs; i++) {
+		sub_raw = subsigs[i]
+		if (substr(sub_raw, 1, 1) == "(") {
+			# Grouped OR: strip leading (, find );N or )
+			grp_body = substr(sub_raw, 2)
+			grp_thresh = 1
+			if (match(grp_body, /\);[0-9]+$/)) {
+				grp_thresh = substr(grp_body, RSTART+2) + 0
+				grp_body = substr(grp_body, 1, RSTART-1)
+			} else {
+				sub(/\)$/, "", grp_body)
+			}
+			if (grp_thresh == 0) {
+				print "{csig} WARNING: group threshold=0 produces always-matching group, skipping rule: " signame > "/dev/stderr"
+				compile_ok = 0; break
+			}
+			# Split group on ||
+			delete grp_subs; gn = 0; gcur = ""
+			glen = length(grp_body)
+			for (gi = 1; gi <= glen; gi++) {
+				gc = substr(grp_body, gi, 1)
+				if (gc == "|" && gi < glen && substr(grp_body, gi+1, 1) == "|") {
+					if (gcur != "") { gn++; grp_subs[gn] = gcur }
+					gcur = ""; gi++
+				} else {
+					gcur = gcur gc
+				}
+			}
+			if (gcur != "") { gn++; grp_subs[gn] = gcur }
+			grp_sids = ""
+			for (gi = 1; gi <= gn; gi++) {
+				gere = compile_subsig(grp_subs[gi])
+				if (gere == "") {
+					print "{csig} WARNING: failed to compile group subsig, skipping rule: " signame > "/dev/stderr"
+					compile_ok = 0; break
+				}
+				gsid = get_sid(gere)
+				grp_sids = grp_sids (grp_sids == "" ? "" : "+") gsid
+			}
+			if (compile_ok == 0) break
+			batch_spec = batch_spec (batch_spec == "" ? "" : ",") "or:" grp_thresh ":" grp_sids
+		} else {
+			# Plain subsig
+			ere = compile_subsig(sub_raw)
+			if (ere == "") {
+				print "{csig} WARNING: failed to compile subsig, skipping rule: " signame > "/dev/stderr"
+				compile_ok = 0; break
+			}
+			sid = get_sid(ere)
+			batch_spec = batch_spec (batch_spec == "" ? "" : ",") sid
+		}
+	}
+	if (compile_ok == 0) next
+	# Prepend {CSIG} if not present
+	if (substr(signame, 1, 6) != "{CSIG}") signame = "{CSIG}" signame
+	# Write batch rule
+	printf "%s\t%s\t%s\t%s\n", signame, rule_type, threshold, batch_spec >> batch_file
+}' "$_csig_src" 2>"$_csig_awk_warnings"
+	# Route awk warnings through eout for event_log consistency
+	if [ -s "$_csig_awk_warnings" ]; then
+		local _warn_line
+		while IFS= read -r _warn_line; do
+			eout "$_warn_line" 1
+		done < "$_csig_awk_warnings"
+	fi
+	command rm -f "$_csig_awk_warnings"
 
-	while IFS= read -r _line; do
-		# Skip empty lines and comments
-		[ -z "$_line" ] && continue
-		case "$_line" in \#*) continue ;; esac
-
-		# csig.dat format: SIGS_FIELD:SIGNAME
-		# Split on LAST colon — sigs_field may contain i:/w:/iw: prefixes
-		# which add early colons. Sig names never contain colons.
-		_signame="${_line##*:}"
-		_sigs_field="${_line%:*}"
-		if [ -z "$_sigs_field" ] || [ -z "$_signame" ]; then
-			eout "{csig} WARNING: malformed csig line, skipping: ${_line:0:60}" 1
-			continue
-		fi
-
-		# Split SIGS_FIELD on top-level || only.
-		# Respects parenthesized groups: || inside (...) is NOT a separator.
-		local _subsigs _nsubs _paren_depth=0 _current=""
-		_subsigs=()
-		local _sf_len=${#_sigs_field} _sf_pos=0
-		while [ "$_sf_pos" -lt "$_sf_len" ]; do
-			local _sf_ch="${_sigs_field:_sf_pos:1}"
-			local _sf_ch2="${_sigs_field:_sf_pos:2}"
-			if [ "$_sf_ch" == "(" ]; then
-				_paren_depth=$((_paren_depth + 1))
-				_current="${_current}${_sf_ch}"
-				_sf_pos=$((_sf_pos + 1))
-			elif [ "$_sf_ch" == ")" ]; then
-				_paren_depth=$((_paren_depth - 1))
-				_current="${_current}${_sf_ch}"
-				_sf_pos=$((_sf_pos + 1))
-			elif [ "$_sf_ch2" == "||" ] && [ "$_paren_depth" -eq 0 ]; then
-				[ -n "$_current" ] && _subsigs+=("$_current")
-				_current=""
-				_sf_pos=$((_sf_pos + 2))
-			else
-				_current="${_current}${_sf_ch}"
-				_sf_pos=$((_sf_pos + 1))
-			fi
-		done
-		[ -n "$_current" ] && _subsigs+=("$_current")
-		_nsubs=${#_subsigs[@]}
-
-		if [ "$_nsubs" -eq 0 ]; then
-			eout "{csig} WARNING: no subsigs in csig line, skipping: ${_line:0:60}" 1
-			continue
-		fi
-
-		# Determine rule type and threshold
-		# Check for OR groups: subsig starting with ( is a grouped OR
-		local _has_groups=0 _has_plain=0 _i
-		for (( _i=0; _i<_nsubs; _i++ )); do
-			case "${_subsigs[$_i]}" in
-				"("*) _has_groups=1 ;;
-				*) _has_plain=1 ;;
-			esac
-		done
-
-		if [ "$_nsubs" -eq 1 ] && [ "$_has_groups" -eq 0 ]; then
-			_rule_type="single"
-			_threshold=1
-		elif [ "$_has_groups" -eq 1 ]; then
-			_rule_type="group"
-			_threshold=0  # AND across top-level elements
-		else
-			# Check for threshold annotation: first subsig may be N/M format
-			# If all subsigs are plain, it's AND (all must match)
-			_rule_type="and"
-			_threshold=0
-		fi
-
-		# Check for threshold prefix on signame: {CSIG}name or threshold:N
-		# Threshold encoded in signame as SIGNAME;N (semicolon-separated)
-		local _thresh_re=';([0-9]+)$'
-		if [[ "$_signame" =~ $_thresh_re ]]; then
-			_threshold="${BASH_REMATCH[1]}"
-			_signame="${_signame%;*}"
-			if [ "$_threshold" -eq 0 ]; then
-				eout "{csig} WARNING: threshold=0 produces always-matching rule, skipping: ${_signame}" 1
-				continue
-			fi
-			if [ "$_nsubs" -gt 1 ] && [ "$_has_groups" -eq 0 ]; then
-				_rule_type="or"
-			fi
-		fi
-
-		# Compile each subsig
-		local _compile_ok=1
-		local _batch_rule_spec=""
-		for (( _i=0; _i<_nsubs; _i++ )); do
-			local _sub="${_subsigs[$_i]}"
-
-			# Handle grouped OR: (subsig1||subsig2||...);threshold
-			case "$_sub" in
-			"("*)
-				# Parse group: strip parens, extract threshold
-				local _grp_body="${_sub#\(}"
-				local _grp_thresh=1
-				# Check for );N suffix
-				local _grp_thresh_re='\);([0-9]+)$'
-				if [[ "$_grp_body" =~ $_grp_thresh_re ]]; then
-					_grp_thresh="${BASH_REMATCH[1]}"
-					_grp_body="${_grp_body%);*}"
-				else
-					_grp_body="${_grp_body%)}"
-				fi
-				# Reject group threshold=0 -- matches everything (same as outer guard)
-				if [ "$_grp_thresh" -eq 0 ]; then
-					eout "{csig} WARNING: group threshold=0 produces always-matching group, skipping rule: ${_signame}" 1
-					_compile_ok=0
-					break
-				fi
-
-				# Split group subsigs on ||
-				local _grp_subs _grp_batch_sids=""
-				_grp_subs=()
-				while IFS= read -r _gsub; do
-					[ -n "$_gsub" ] && _grp_subs+=("$_gsub")
-				done < <(echo "$_grp_body" | awk -F'\\|\\|' '{for(i=1;i<=NF;i++) print $i}')
-
-				local _gi
-				for (( _gi=0; _gi<${#_grp_subs[@]}; _gi++ )); do
-					local _gere
-					_gere=$(_csig_compile_subsig "${_grp_subs[$_gi]}")
-					if [ -z "$_gere" ]; then
-						eout "{csig} WARNING: failed to compile group subsig, skipping rule: ${_signame}" 1
-						_compile_ok=0
-						break 2
-					fi
-					local _result_sid
-					_csig_dedup_subsig "$_gere"
-					_grp_batch_sids="${_grp_batch_sids:+${_grp_batch_sids}+}${_result_sid}"
-				done
-
-				# Batch format: or:THRESHOLD:SID1+SID2+...
-				_batch_rule_spec="${_batch_rule_spec:+${_batch_rule_spec},}or:${_grp_thresh}:${_grp_batch_sids}"
-				;;
-			*)
-				# Plain subsig
-				local _ere
-				_ere=$(_csig_compile_subsig "$_sub")
-				if [ -z "$_ere" ]; then
-					eout "{csig} WARNING: failed to compile subsig, skipping rule: ${_signame}" 1
-					_compile_ok=0
-					break
-				fi
-				local _result_sid
-				_csig_dedup_subsig "$_ere"
-				_batch_rule_spec="${_batch_rule_spec:+${_batch_rule_spec},}${_result_sid}"
-				;;
-			esac
-		done
-
-		[ "$_compile_ok" -eq 0 ] && continue
-
-		# Prepend {CSIG} to signame if not already present
-		case "$_signame" in
-			"{CSIG}"*) ;;
-			*) _signame="{CSIG}${_signame}" ;;
-		esac
-
-		# Write batch-format rule: SIGNAME\tTYPE\tTHRESHOLD\tSPEC
-		printf '%s\t%s\t%s\t%s\n' \
-			"$_signame" "$_rule_type" "$_threshold" "$_batch_rule_spec" \
-			>> "$runtime_csig_batch_compiled"
-
-		_compiled_count=$((_compiled_count + 1))
-	done < "$_csig_src"
-
-	runtime_csig_count=$_compiled_count
+	runtime_csig_count=$($wc -l < "$runtime_csig_batch_compiled" 2>/dev/null || echo 0)  # safe: file absent when no csig rules compiled; zero is valid
 }
 
 _hex_lookup_name() {
@@ -574,6 +417,88 @@ _hex_lookup_name() {
 	# Uses exact field match (not substring) via awk.
 	local _pattern="$1" _sigmap="$2"
 	awk -F'\t' -v pat="$_pattern" '$1 == pat { print $2; exit }' "$_sigmap"
+}
+
+_hex_compile_wildcards_awk() {
+	# Compile HEX wildcard patterns to ERE via single awk pass.
+	# Single awk pass replaces per-pattern bash+sed fork loop.
+	# Input: $_hex_wc_tmp (tab: PATTERN\tSIGNAME)
+	# Output: $runtime_hex_regex (tab: ORIG_PATTERN\tERE), $runtime_hex_literal (fallback)
+	[ -s "$_hex_wc_tmp" ] || return 0
+	awk -F'\t' -v regfile="$runtime_hex_regex" \
+		-v litfile="$runtime_hex_literal" '
+function compile_wildcards(pat,    ere, i, c, c2, lo, hi, n, gap, pre, post, rep, parts) {
+	ere = pat
+	# Stage 1: ?? → [0-9a-f]{2} (must precede nibble walk)
+	gsub(/\?\?/, "[0-9a-f]{2}", ere)
+	# Stage 2: Nibble wildcards via character walk
+	#   ?x (high nibble wild) → [0-9a-f]x
+	#   x? (low nibble wild)  → x[0-9a-f]
+	n = length(ere)
+	pat = ""
+	for (i = 1; i <= n; i++) {
+		c = substr(ere, i, 1)
+		if (c == "[") {
+			# Skip entire character class [...]
+			while (i <= n && substr(ere, i, 1) != "]") {
+				pat = pat substr(ere, i, 1)
+				i++
+			}
+			if (i <= n) pat = pat substr(ere, i, 1)
+		} else if (c == "(") {
+			# Skip entire alternation group (...)
+			while (i <= n && substr(ere, i, 1) != ")") {
+				pat = pat substr(ere, i, 1)
+				i++
+			}
+			if (i <= n) pat = pat substr(ere, i, 1)
+		} else if (c == "?" && i < n) {
+			c2 = substr(ere, i+1, 1)
+			if (c2 ~ /[0-9a-f]/) {
+				pat = pat "[0-9a-f]" c2
+				i++
+			} else {
+				pat = pat c
+			}
+		} else if (c ~ /[0-9a-f]/ && i < n && substr(ere, i+1, 1) == "?") {
+			# Peek ahead: only x? if next-next is NOT hex (avoid consuming x from x?x pattern)
+			if (i+1 < n && substr(ere, i+2, 1) ~ /[0-9a-f]/) {
+				pat = pat c
+			} else {
+				pat = pat c "[0-9a-f]"
+				i++
+			}
+		} else {
+			pat = pat c
+		}
+	}
+	ere = pat
+	# Stage 3: * → [0-9a-f]*
+	gsub(/\*/, "[0-9a-f]*", ere)
+	# Stage 4: {N-M} → [0-9a-f]{2N,2M} bounded gap
+	while (match(ere, /\{[0-9]+-[0-9]+\}/)) {
+		gap = substr(ere, RSTART+1, RLENGTH-2)
+		split(gap, parts, "-")
+		lo = parts[1] * 2
+		hi = parts[2] * 2
+		pre = substr(ere, 1, RSTART-1)
+		post = substr(ere, RSTART+RLENGTH)
+		rep = "[0-9a-f]{" lo "," hi "}"
+		ere = pre rep post
+	}
+	return ere
+}
+{
+	orig = $1
+	ere = compile_wildcards(orig)
+	# Re-check: if compiled ERE still has no wildcard metacharacters,
+	# route to literal file (Phase 5a regex was broader than actual)
+	if (ere ~ /\[0-9a-f\]|\([^)]*\|[^)]*\)|\|/) {
+		print orig "\t" ere >> regfile
+	} else {
+		print orig >> litfile
+	}
+}' "$_hex_wc_tmp"
 }
 
 gensigs() {
@@ -721,7 +646,7 @@ gensigs() {
 	runtime_hex_sigmap=$(mktemp "$tmpdir/.runtime.hex_sigmap.XXXXXX")
 	# Phase 1: Single awk pass — split, build sigmap, classify literal vs wildcard.
 	# Wildcard detection: ??, (alt|alt), *, nibble ?x/x?, {N-M} bounded gap.
-	# Matches the same regex as _hex_compile_pattern() line 3755.
+	# Matches the same wildcard detection regex as _hex_compile_wildcards_awk().
 	local _hex_wc_tmp
 	_hex_wc_tmp=$(mktemp "$tmpdir/.hex_wc_tmp.XXXXXX")
 	awk -F: -v sigmap="$runtime_hex_sigmap" \
@@ -741,21 +666,8 @@ gensigs() {
 		else
 			print pat >> litfile
 	}' "$runtime_hexstrings"
-	# Phase 2: Compile wildcards via existing _hex_compile_pattern() (bash).
-	# Only ~51 patterns (~2% of total) — costs ~0.1s instead of ~5s.
-	local _hex_pat _hex_name _ere
-	if [ -s "$_hex_wc_tmp" ]; then
-		while IFS=$'\t' read -r _hex_pat _hex_name; do
-			if _ere=$(_hex_compile_pattern "$_hex_pat"); then
-				printf '%s\t%s\n' "$_hex_pat" "$_ere" >> "$runtime_hex_regex"
-			else
-				# Classified as wildcard by awk but _hex_compile_pattern says literal
-				# (edge case: awk regex is slightly broader than bash regex).
-				# Route to literal file — correct behavior.
-				echo "$_hex_pat" >> "$runtime_hex_literal"
-			fi
-		done < "$_hex_wc_tmp"
-	fi
+	# Phase 2: Compile wildcards to ERE (single awk pass, replaces per-pattern bash+sed loop).
+	_hex_compile_wildcards_awk
 	rm -f "$_hex_wc_tmp"
 
 	# Build compound signature (csig) runtime files

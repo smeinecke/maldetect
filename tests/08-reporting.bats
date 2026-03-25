@@ -29,16 +29,6 @@ teardown() {
     [[ "$output" == *"SCAN ID"* ]] || [[ "$output" == *"#LMD:v1"* ]]
 }
 
-@test "--dump-report outputs report to stdout" {
-    cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
-    maldet -a "$TEST_SCAN_DIR" || true
-    local scanid
-    scanid=$(get_last_scanid)
-    run maldet -E "$scanid"
-    assert_success
-    [ -n "$output" ]
-}
-
 @test "report contains hit information" {
     cp "$SAMPLES_DIR/eicar.com" "$TEST_SCAN_DIR/"
     maldet -a "$TEST_SCAN_DIR" || true

@@ -518,3 +518,23 @@ _source_lmd_stack() {
     run grep "test.csig.and.regression.1" "$hitsfile"
     assert_success
 }
+
+# --- Test 34: Combined iw: modifier (case-insensitive + wide) ---
+@test "csig: combined iw: modifier matching" {
+    # "Hi" in hex: 48 69 → case-folded: (48|68)(69|49)
+    # Wide interleave adds 00 between bytes: (48|68)00(69|49)
+    # Remove trailing 00: (48|68)00(69|49)
+    # Test file must contain the UTF-16LE representation of "Hi" (any case)
+    local test_file="$TEST_SCAN_DIR/test-iw.bin"
+    # Write "hi" in UTF-16LE: 68 00 69 00 (lowercase)
+    printf '\x68\x00\x69\x00' > "$test_file"
+    # Pad to exceed scan_min_filesize (24 bytes)
+    dd if=/dev/zero bs=1 count=24 >> "$test_file" 2>/dev/null
+    # CSIG with iw: prefix — matches "Hi" case-insensitively in UTF-16LE
+    # Note: scan_csig=1 is the default — matches convention of tests 1-33
+    # in this file which all rely on the default
+    echo "iw:4869:{CSIG}test.csig.iw.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+}

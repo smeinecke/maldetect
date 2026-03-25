@@ -1,244 +1,138 @@
-v2.0.1 | Mar 24 2026:
-[Fix] purge() dotfile glob: replace * glob with find -delete to catch dotfiles in tmp/quarantine/sess
-[Fix] Quarantine warning in report shows correct scan ID instead of wrong datestamp.PID
-[Fix] Temp leak: cleanup .alert_html.* after email dispatch in _genalert_scan and view_report
-[Fix] -q silent success: batch quarantine/hit summary now prints to stdout
-[Fix] Sentinel leak: add clean.$$ and suspend.users.$$ to _scan_cleanup() rm list
-[Fix] Restore orphan: remove .info metadata after successful quarantine restore
-[New] _build_co_allowed_pattern() shared config allowlist; _apply_cli_co() in-memory parser
-[Fix] -co/--config-option now position-independent — works before, after, or between flags
-[Change] Eliminate tmpfile and sed dependency from -co code path
-[New] 13 tests for -co position-independence, behavioral parity, and edge cases
-[New] Audit log: purge_completed event with user identity before log truncation
-[New] Audit log: update_started/completed/failed events for sigup and lmdup
-[New] Audit log: per-channel alert_failed events for email, Slack, Telegram, Discord
-[New] Audit log: hookscan source=hook metadata on scan events + rate limit audit
-
-v2.0.1 | Mar 23 2026:
-[New] Hookscan: enforce rate limit (hookscan_user_rate_limit) for non-root generic mode
-[New] Hookscan: enforce signature masking (hookscan_user_show_signames) for non-root generic mode
-[New] README restructured to rfxn documentation convention (level-2)
-[New] SVG banners (dark/light) with scan beam glyph in assets/
-[New] SECURITY.md and CONTRIBUTING.md companion files
-[New] What's New, Integration, and Exit Codes sections in README
-[Change] Badge row updated to flat-square style with centered layout
-
-v2.0.1 | Mar 10 2026:
+v2.0.1 | Mar 25 2026:
 
   -- New Features --
 
-[New] Monitor mode redesign: foreground supervisor replaces double-fork orphan model;
-      -b/--background daemonizes supervisor; digest interval timer with hit escalation
-      threshold; additive path composition via monitor_paths_extra; service files use
-      Type=simple
+[New] Monitor mode: supervisor model replaces double-fork; 12 pre-existing defects resolved
 [New] Config: digest_interval, digest_escalate_hits, monitor_paths_extra for monitor mode
 [New] TSV canonical session format: 11-field hit records replace plaintext session files;
-      scan, alert, monitor, and render pipelines migrated; session_legacy_compat config
-      (auto/0/1) for backward compatibility with old sessions and report renderers
+      session_legacy_compat config (auto/0/1) for backward compatibility
 [New] JSON report output: --json-report [SCANID|list|newest] renders TSV sessions as
       JSON (v1.0 schema); --format text|json|html and --mailto ADDRESS
-      position-independent report flags; graceful degradation for legacy sessions
 [New] Compound signature (csig) scanning: multi-pattern boolean logic (AND/OR/threshold),
       case-insensitive matching (i:), wide UTF-16LE matching (w:), bounded gap wildcards
-      ({N-M}); batch parallel workers; csig.dat and custom.csig.dat; prefix pre-screening
-      optimization; scan_csig config var
+      ({N-M}); csig.dat and custom.csig.dat; scan_csig config var
 [New] SHA-256 hash-based scanning: CPU hardware acceleration auto-detection (SHA-NI on
       x86, SHA2 on ARM); scan_hashtype config (auto/sha256/md5/both); sha256v2.dat
       signature file; ClamAV .hsb integration with version gate (>= 0.97);
       custom.sha256.dat for user-defined sigs
-[New] Native batch scan engine: 43x faster end-to-end (1,217s to 28s on ~10,000 files);
-      batch grep -F Aho-Corasick HEX matching with parallel workers; merged HEX+CSIG
-      single worker pass; Perl dependency removed; ClamAV hex wildcard support
-      (??, (aa|bb), *, nibble); scan_workers controls worker count (default: auto)
-[New] Batch hit processing: unified bulk operations replace per-hit record_hit()+
-      quarantine() fork loops across all scan engines; bulk stat+md5sum via xargs;
-      batched chattr/chmod/chown for quarantine; ~12-15 fewer subprocess forks per hit
+[New] Native batch scan engine: 43x faster HEX+CSIG; parallel grep workers; Perl dependency removed
+[New] Batch hit processing: unified bulk operations replace per-hit fork loops across
+      all scan engines; batched chattr/chmod/chown for quarantine
 [New] Native YARA scanning: scan_yara=1 enables YARA as independent scan stage with
       yara or yr (YARA-X) binary; custom.yara and custom.yara.d/ drop-in directory;
-      scan_yara_scope, compiled rules via yarac, --scan-list batch scanning for YARA
-      >= 4.0; hookscan passes scan_yara; issue #392, #277, #239
+      compiled rules via yarac, --scan-list batch scanning; issue #392, #277, #239
 [New] Email alerts reimagined: HTML+text dual-format with template engine ({{TOKEN}}
-      placeholders); rfxn design language (teal brand bar, card-based threat entries);
-      SMTP relay support (smtp_relay, smtp_from, smtp_user, smtp_pass); email_format
-      config (text/html/both); Slack Block Kit, Telegram MarkdownV2, Discord embed
-      templates; on-demand HTML rendering from session data
+      placeholders); SMTP relay support (smtp_relay, smtp_from, smtp_user, smtp_pass);
+      email_format config (text/html/both); Slack Block Kit, Telegram MarkdownV2,
+      Discord embed templates; on-demand HTML rendering from session data
 [New] Discord alerting: discord_alert and discord_webhook_url config; scan reports
       uploaded via Discord webhook multipart upload
-[New] Shared library integrations: alert_lib (all alerting primitives), elog_lib
-      (structured event logging with audit trail in /var/log/maldet/audit.log),
-      tlog_lib (incremental log tracking, replaces 9 subprocess forks), pkg_lib
-      (packaging primitives for install.sh/uninstall.sh; RPM/DEB infrastructure)
+[New] Shared library integrations: alert_lib, elog_lib (structured event logging with
+      audit trail), tlog_lib (incremental log tracking), pkg_lib (packaging primitives)
 [New] ClamAV signature validation gate: clamscan -d validates sig files before
-      deployment to ClamAV data directories; stage-validate-deploy pattern;
-      sigup() SIGUSR2 reload gated on validation success; issue #467
+      deployment; sigup() SIGUSR2 reload gated on validation success; issue #467
 [New] sigup_interval: independent 6-hourly signature update cron job via
-      /etc/cron.d/maldet-sigup; --cron-sigup handler with flock serialization and
-      0-120s random sleep; configurable interval (default 6h, 0 to disable)
+      /etc/cron.d/maldet-sigup; --cron-sigup handler; configurable interval (0 to disable)
 [New] cron.watchdog: weekly watchdog script for independent fallback signature updates
-      when primary cron.daily is broken or stale
 [New] cron.daily: explicit cPanel addon/subdomain document root detection via
       /etc/userdatadomains; Bitrix panel detection; issue #268, #381
 [New] -v/--version flag displays version information and exits 0
 [New] scan_clamscan and scan_yara support 'auto' mode for runtime binary detection
-[Change] hookscan.sh rewrite: unified hook scanning API with modsec/ftp/proftpd/exim/generic
-      mode dispatch; inline config parser with allowlist validation; timeout protection via
-      timeout --kill-after; filename validation (metachar, traversal, readlink canonicalization);
-      usermode path restriction gated on UID; conf.maldet.hookscan.default reference config
-[New] Hookscan: generic mode --list FILE and --stdin for batch file scanning; 7-layer
-      validation pipeline (type, size, per-line allowlist, readlink, existence, homedir);
-      per-file CLEAN:/INFECTED:/ERROR: output with worst-result-wins exit code
-[Change] Hook scans write to rolling hook.hits.log instead of creating session files;
-      genalert suppressed for hook scans (no per-scan email/Slack/Telegram/Discord alerts)
-[New] Hook escalation: _hook_escalate_check() fires immediate alert when hook hit count
-      reaches hookscan_escalate_hits threshold within a 1-hour rolling window
-[New] Unified digest: _genalert_digest() reads from 5 tlog-cursored sources (4 monitor +
-      1 hook); monitor preamble conditional (digest works without monitor running);
-      hook section template tokens (HOOK_SECTION_TEXT/HTML); cron_digest_hook config
-[New] --digest CLI for on-demand digest alert fire (monitor + hook sources)
-[New] --report hooks: view hook scan activity log with --last DURATION (Nh/Nd/Nm) and
-      --mode MODE (modsec/ftp/proftpd/exim/generic) filters
+[New] Hook scanning API: modsec/ftp/proftpd/exim/generic mode dispatch; --list/--stdin batch; rate limit; sig masking
+[New] Hook escalation: immediate alert on hit threshold; deduplicated with digest
+[New] Hook digest and reporting: --digest on-demand alerts; --report hooks with time/mode filters
 [New] --test-alert {scan|digest} {email|slack|telegram|discord}: send test alert with
-      synthetic data through the real rendering pipeline; channel isolation;
-      [TEST] subject prefix; root-only gate
-[Change] Docs: maldet.1 man page updated with HOOK SCANNING, TEST ALERTS, DIGEST ALERTS
-      sections; README §10 rewritten as Hook Scanning & Service Integration;
-      install.sh installs conf.maldet.hookscan.default
-
-  -- Bug Fixes --
-
-[Fix] Scan: extract hitname from session TSV for hook output ($hitname empty in batch
-      pipeline and when quarantine_hits=0)
-[Fix] clamav_linksigs: set 644 perms and match ClamAV dir ownership on deployed
-      sig files so clamd can read rfxn.*/lmd.user.* databases
-[Fix] --report: recognize "latest" as alias for "newest" to resolve most recent scan
-[Fix] -e list: strip timezone offset from TSV session timestamps for consistent column
-      alignment with legacy plaintext sessions
-[Fix] get_remote_file: track temp files (.tmpf_get.*) and clean up via _grf_cleanup()
-      at end of import_user_sigs(), import_conf(), lmdup(), sigup()
-[Fix] sigup: write downloaded version to maldet.sigs.ver after sigpack install as guard
-      against CDN version endpoint desync causing repeated full downloads
-[Fix] Scan engine: isolate worker temp files using parent PID namespace to prevent
-      concurrent scans from deleting each other's buffers during _scan_cleanup
-[Fix] scan(): exit 1 when all provided scan paths do not exist; empty file list now
-      exits 1 only when zero paths resolved to filesystem entries
-[Fix] _hash_batch_worker: handle md5sum/sha256sum backslash-escaped output for filenames
-      containing backslash or newline characters
-[Fix] _hex_csig_batch_worker: preload SID and hex sigmap into local arrays for O(1)
-      lookups; eliminates up to 40,000 grep forks and per-hit awk forks per scan cycle
-[Fix] scan_strlen: add FreeBSD guard; wc -L (GNU extension) not available on FreeBSD
-[Fix] Monitor mode: 12 defects fixed (graceful shutdown, crash recovery, session
-      rotation, inotifywait exclude array, event filter path truncation, double
-      ClamAV scan, batch filter, PID guard, ERE escape, kernel check, ClamAV cache,
-      reload order); issue #454, #447, #459
-[Fix] Alerting: Slack migrated from deprecated files.upload API to
-      files.getUploadURLExternal + files.completeUploadExternal; Telegram /bot prefix;
-      token security via curl -K; panel alert signature names and path handling;
-      genalert() state isolation; issue #387, #458, #461, #426
-[Fix] Config security: _safe_source_conf() allowlist (79 variables) replaces blocklist;
-      blocks PATH/LD_PRELOAD/IFS overrides from remote config; -co CLI flag uses same
-      parser; rejects metacharacters, command substitution, and pipes
-[Fix] Config import: remote config RCE prevention; config source order corrected to
-      match documented loading order; conf.maldet permissions preserved at 640 after
-      upgrade; sigup_interval re-evaluated after _import_config() on upgrade
-[Fix] ClamAV: empty lmd.user.ndb/hdb no longer deployed to ClamAV data dirs;
-      gensigs() linksigs ordering corrected; temp file used as scan target for
-      older ClamAV (exits 2 on device files); portable command rm/cp alias bypass
-[Fix] view_report(): on-demand text rendering from TSV; "newest" and empty scan ID
-      resolve to most recent session; list mode 6→1 file reads per session; sendmail
-      path no longer prepends SUBJECT: header into session files; issue #336
-[Fix] Security hardening: lmdup() validates upstream version string against semver
-      to prevent directory traversal; hookscan.sh validates ModSecurity filenames;
-      --user flag validates username against path traversal; JSON injection via
-      _json_escape(); email subject CR/LF stripped to prevent header injection
-[Fix] File permissions hardened: conf.maldet 0644 → 0640; sigdir, logdir, tmpdir,
-      and audit log directory 755 → 750; custom sig files restricted to 640/750
-      when pubscan disabled
-[Fix] Quarantine system: TOCTOU mv exit code check; inode naming replaces $RANDOM;
-      batch quarantine signature name; colon truncation in .info/quarantine.hist/
-      session.hits paths; batch dedup guard; issue #399
-[Fix] sigignore(): permanently deleted from on-disk sig files on every scan; moved
-      ignore filtering to runtime copies in gensigs(); signatures no longer
-      irrecoverably lost between signature updates
-[Fix] CLI robustness: 19 bare exit statements given explicit codes; -c, -x, -i, -q,
-      -n, -s, --web-proxy reject missing/empty arguments; -a validates scan path
-      existence before dispatch; issue #366
-[Fix] install.sh: man page compression on fresh install; backup robustness; upgrade
-      no longer kills inotify monitoring; Slackware init per rc.NAME convention;
-      MONITOR_MODE migration ordering; preserve hookscan config and pub/ state;
-      issue #414
-[Fix] FreeBSD: detection via uname -s replacing broken $OSTYPE check; id -u (POSIX)
-      replaces id --user; restore() touch -t for mtime restoration; /dev/fd avoidance
-      in _batch_record_hits(); portable command cp/mv/rm throughout
-[Fix] clamselector(): logs warning on clamd test failure instead of silently switching;
-      no longer overwrites user scan_max_filesize; remove invalid --fdpass from remote
-      clamd TCP path; issue #452, #410
-[Fix] cron.daily: flock lock leak to backgrounded scans; lockfile prevents overlapping
-      runs; dead code in update failure logging; config errors propagate to cron;
-      issue #373
-[Fix] find/ignore: ignore_file_ext, --exclude-regex, --include-regex, ignore_paths
-      converted to bash arrays for correct find argument passing; scan_ignore_user/
-      group handles non-existent user/group; find_recentopts escaping fixed;
-      issue #446, #438, #450, #72, #335, #440
-[Fix] gensigs(): ClamAV MD5 merge format corrected for custom user signatures;
-      temp file leak on repeated calls; _count_signatures() counts from on-disk
-      files instead of runtime variables (always reported 0 CSIG/SHA-256 in sigup)
-[Fix] Alert rendering: hit type regex handles {MD5}/{CSIG}/{SHA256} prefixes; empty
-      quarpath consecutive-tab field shift in text reports; JSON injection in
-      Slack/Discord templates; empty SUMMARY_* tokens in single-hit messaging
-[Fix] tlog trim cursor unit mismatch: purge() and monitor_cycle() subtracted byte
-      count from line-count cursor; issue #227; replace ed dependency for log
-      trimming, preserving file inode; issue #308
-[Fix] Miscellaneous portability: mktemp replaces $RANDOM/$$; command -v replaces
-      which; grep -E replaces egrep; POSIX ':' chown separator; sed -E for portability;
-      quote critical variable expansions; hardcoded binary paths replaced with
-      command -v discovered variables
-[Fix] restore() and restore_hitlist(): return exit 1 on all error paths; automated
-      recovery scripts checking $? previously saw false success on invalid scan ID
-      or nonexistent file
-[Fix] YARA rules no longer counted as active when no engine available (YARA(no engine))
-[Fix] ClamAV signature artifacts cleaned from data dirs when ClamAV disabled
+      synthetic data through the real rendering pipeline; channel isolation; root-only gate
+[New] Audit log: 7 event types (purge, update, alert_failed, hookscan source/rate metadata)
 
   -- Changes --
 
-[Change] Library decomposition: functions monolith (6,086 lines, 107 functions)
-         split into 11 sub-libraries under files/internals/ with lmd.lib.sh sourcing
-         hub; maldet source chain simplified from 9 statements to 2; functions
-         retained as backward-compat shim
-[Change] Config import: _import_config() rewritten with pkg_config_merge() AWK merge;
-         importconf heredoc template deleted (~440 lines); 17 compat variable
-         migrations + 3 special-case migrations preserved
-[Change] Scan engine: HEX+CSIG merged into single worker pass (~17x faster CSIG via
-         set-based rule evaluation); scan stage reorder (strlen runs last, reducing
-         wasted work on FP-prone stage); bulk awk HEX classifier (~5s to <0.3s
-         compilation)
-[Change] Performance: ~500,000 fork/exec operations eliminated by replacing external
-         command pipelines with Bash builtins across scan, quarantine, monitor, and
-         alerting paths
+[Change] Hook scans write to rolling hook.hits.log instead of creating session files;
+         genalert suppressed for hook scans
 [Change] HTML email rendered on-demand at send time from current templates; persistent
-         .html session files no longer stored; responsive 700px layout with Outlook
-         compatibility; clean scans show "No Threats Detected" celebration block
+         .html session files no longer stored; responsive layout with Outlook compatibility
 [Change] CLI: modifier flags (-x, -i, -hscan, -qd, --format, --mailto) are now
-         position-independent; -qd with non-existent directory exits 1 instead of
-         silent ignore; -qd override preserved when combined with -U/--user
-[Change] Documentation: man page rewritten following man-pages(7) conventions; README
-         expanded with 28 missing config variables, Discord alerting, YARA batch
-         scanning, hookscan; --help rewritten with categorized sections and complete
-         option coverage
+         position-independent; -qd with non-existent directory exits 1
+[Change] Documentation: man page, README, and usage rewritten with complete option/config coverage
 [Change] Rename sig_import_*_url config variables (from import_custsigs_*_url) for
-         sig_* namespace consistency; compat.conf migration maps old names; install.sh
-         migrates on upgrade
+         sig_* namespace consistency; compat.conf migration maps old names
 [Change] scan_workers default changed from "0" to "auto"; "0" silently accepted as
          auto for backward compat
 [Change] Update verification prefers SHA-256 over MD5; graceful MD5 fallback when
-         sha256sum absent; _verify_download() helper eliminates inline duplication
+         sha256sum absent
 [Change] maldet.service: EnvironmentFile changed from conf.maldet to
-         /etc/sysconfig/maldet or /etc/default/maldet; ExecStart uses
-         ${MONITOR_MODE:-users}; init script uses -b daemonization
+         /etc/sysconfig/maldet or /etc/default/maldet; init script uses -b daemonization
 [Change] -E/--dump-report suppressed from help; case handler retained for backward compat
 [Change] inotify_verbose per-file ClamAV logging deprecated; batch engine log
          messages supersede
 [Change] Vendored libraries updated: tlog_lib v2.0.4, elog_lib v1.0.4, alert_lib
          v1.0.5, pkg_lib v1.0.5; batsman submodule v1.2.2
-[Change] Signature count output: deduplicated MD5/SHA hash count, comma formatting
-[Change] _scan_progress(): plain newline-terminated output in non-TTY contexts
-         (cron, pipe, docker exec); ANSI escape sequences gated behind TTY check
+[Change] Scan engine: HEX+CSIG merged into single worker pass; scan stage reorder
+         (strlen runs last); bulk awk HEX classifier
+[Change] gensigs: awk compiler replaces bash+sed wildcard/csig loops; dead helpers removed
+[Change] _scan_progress(): plain newline-terminated output in non-TTY contexts;
+         ANSI escape sequences gated behind TTY check
+
+  -- Bug Fixes --
+
+[Fix] install.sh: detect supervisor and legacy monitor; graceful stop+restart on upgrade
+[Fix] -co/--config-option now position-independent; in-memory parser replaces tmpfile+sed
+[Fix] Tests: compat source-chain check, clean/YARA regex-based ignore_sigs for CDN sig resilience
+[Fix] Docs: man page, README, usage -- add missing config vars, CLI aliases, --cron-sigup, scan_yara auto
+[Fix] purge() dotfile glob: replace * glob with find -delete to catch dotfiles in tmp/quarantine/sess
+[Fix] Quarantine warning in report shows correct scan ID instead of wrong datestamp.PID
+[Fix] Temp leak: cleanup .alert_html.* after email dispatch
+[Fix] -q silent success: batch quarantine/hit summary now prints to stdout
+[Fix] Sentinel leak: add clean.$$ and suspend.users.$$ to _scan_cleanup() rm list
+[Fix] Restore orphan: remove .info metadata after successful quarantine restore
+[Fix] Scan: extract hitname from session TSV for hook output
+[Fix] ClamAV: sig deployment permissions 644, empty sig cleanup, linksigs ordering, version-gated .hsb
+[Fix] --report: recognize "latest" as alias for "newest"
+[Fix] -e list: strip timezone offset from TSV session timestamps for consistent alignment
+[Fix] get_remote_file: track temp files (.tmpf_get.*) and clean up at end of remote operations
+[Fix] sigup: write downloaded version to maldet.sigs.ver to prevent CDN desync repeated downloads
+[Fix] Scan engine: isolate worker temp files using parent PID namespace to prevent
+      concurrent scan conflicts
+[Fix] scan(): exit 1 when all provided scan paths do not exist
+[Fix] _hash_batch_worker: handle md5sum/sha256sum backslash-escaped output
+[Fix] scan_strlen: add FreeBSD guard; wc -L (GNU extension) not available on FreeBSD
+[Fix] Monitor mode: 12 defects fixed (graceful shutdown, crash recovery, session
+      rotation, event filter, PID guard, ClamAV cache); issue #454, #447, #459
+[Fix] Alerting: Slack migrated from deprecated files.upload API; Telegram /bot prefix;
+      token security via curl -K; genalert() state isolation; issue #387, #458, #461, #426
+[Fix] Security: _safe_source_conf() allowlist (79 vars); conf.maldet 0640; dirs 750; remote config RCE prevention
+[Fix] view_report(): on-demand text rendering from TSV; "newest" and empty scan ID
+      resolve to most recent session; issue #336
+[Fix] Security hardening: lmdup() semver validation prevents directory traversal;
+      hookscan.sh validates ModSecurity filenames; --user validates against path traversal;
+      JSON injection via _json_escape(); email header injection prevention
+[Fix] Quarantine system: TOCTOU mv exit code check; inode naming replaces $RANDOM;
+      batch quarantine signature name; colon truncation; issue #399
+[Fix] sigignore(): moved to runtime copies in gensigs(); signatures no longer
+      irrecoverably lost between signature updates
+[Fix] CLI robustness: 19 bare exit statements given explicit codes; -c, -x, -i, -q,
+      -n, -s, --web-proxy reject missing/empty arguments; issue #366
+[Fix] install.sh: man page compression on fresh install; backup robustness; upgrade
+      no longer kills inotify monitoring; Slackware init per rc.NAME convention;
+      preserve hookscan config and pub/ state; issue #414
+[Fix] FreeBSD: detection via uname -s; id -u (POSIX); restore() touch -t for mtime;
+      portable command cp/mv/rm throughout
+[Fix] clamselector(): logs warning on clamd test failure instead of silently switching;
+      no longer overwrites user scan_max_filesize; issue #452, #410
+[Fix] cron.daily: flock lock leak to backgrounded scans; lockfile prevents overlapping
+      runs; config errors propagate to cron; issue #373
+[Fix] find/ignore: ignore_file_ext, --exclude-regex, --include-regex, ignore_paths
+      converted to bash arrays; scan_ignore_user/group handles non-existent entries;
+      issue #446, #438, #450, #72, #335, #440
+[Fix] gensigs(): ClamAV MD5 merge format corrected for custom user signatures;
+      _count_signatures() counts from on-disk files instead of runtime variables
+[Fix] Alert rendering: hit type regex handles {MD5}/{CSIG}/{SHA256} prefixes; empty
+      quarpath field shift in text reports; empty SUMMARY_* tokens in single-hit messaging
+[Fix] tlog trim cursor unit mismatch: purge() and monitor_cycle() subtracted byte
+      count from line-count cursor; issue #227; replace ed dependency; issue #308
+[Fix] Miscellaneous portability: mktemp replaces $RANDOM/$$; command -v replaces
+      which; grep -E replaces egrep; POSIX ':' chown separator; hardcoded binary
+      paths replaced with command -v discovered variables
+[Fix] restore() and restore_hitlist(): return exit 1 on all error paths
+[Fix] YARA rules no longer counted as active when no engine available (YARA(no engine))
+[Fix] ClamAV signature artifacts cleaned from data dirs when ClamAV disabled

@@ -512,8 +512,8 @@ purge() {
 	fi
 	$find "$tmpdir" -maxdepth 1 -type f -delete 2>/dev/null  # dotfiles missed by glob *
 	$find "$tmpdir" -maxdepth 1 -mindepth 1 -type d -exec rm -rf {} + 2>/dev/null  # subdirs
-	$find "$quardir" -maxdepth 1 -type f -delete 2>/dev/null
-	$find "$sessdir" -maxdepth 1 -type f -delete 2>/dev/null
+	$find "$quardir" -maxdepth 1 -type f -delete 2>/dev/null  # safe: empty dir or already-removed files
+	$find "$sessdir" -maxdepth 1 -type f -delete 2>/dev/null  # safe: empty dir or already-removed files
 	eout "{glob} logs and quarantine data cleared by user request (-p)" 1
 }
 
