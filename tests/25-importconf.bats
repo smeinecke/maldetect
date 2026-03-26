@@ -22,19 +22,18 @@ teardown() {
     rm -f "$_BATS_OLD_CONF" "$_BATS_MERGED"
 }
 
-# Source pkg_lib and extract actual _compat_migrate / _import_config from install.sh.
-# CH-3-002: uses awk to extract real function bodies — NOT a copy-paste re-implementation.
+# Source pkg_lib and extract _compat_migrate from importconf.
+# CH-3-002: uses awk to extract real function body — NOT a copy-paste re-implementation.
 _load_install_functions() {
     set +eu
     # shellcheck disable=SC1091
     source "$LMD_INSTALL/internals/pkg_lib.sh"
-    # Extract function definitions from install.sh without executing top-level code
+    # Extract _compat_migrate from importconf without executing top-level code
     eval "$(awk '
         /^_compat_migrate\(\) \{/ { capture=1 }
-        /^_import_config\(\) \{/ { capture=1 }
         capture { print }
         capture && /^\}$/ { capture=0 }
-    ' /opt/lmd-src/install.sh)"
+    ' "$LMD_INSTALL/internals/importconf")"
     set -eu
 }
 
@@ -194,6 +193,6 @@ _run_compat_migrate() {
 
 # --- Structural validation ---
 
-@test "importconf file removed from install path" {
-    [ ! -f "$LMD_INSTALL/internals/importconf" ]
+@test "importconf file exists at install path" {
+    [ -f "$LMD_INSTALL/internals/importconf" ]
 }

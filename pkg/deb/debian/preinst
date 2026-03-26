@@ -8,7 +8,7 @@
 #   maldet           — package name
 #   /usr/local/maldetect   — legacy install path (e.g., /usr/local/bfd)
 #   maldet       — binary name (e.g., bfd)
-#   @@PKG_PREINST_EXTRA@@  — project-specific pre-install commands (optional)
+#
 #
 set -e
 
@@ -57,7 +57,7 @@ case "$1" in
             # Remove old install — package will lay down new files
             rm -rf "$LEGACY_PATH"
         fi
-@@PKG_PREINST_EXTRA@@
+        # (no extra pre-install commands)
         ;;
 esac
 

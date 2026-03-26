@@ -15,9 +15,9 @@
 #   /usr/local/sbin/maldet      — legacy binary path
 #   /usr/local/maldetect    — legacy install path
 #   1         — man page section
-#   @@PKG_TEST_FHS_FILES@@  — check_file calls for FHS file layout
-#   @@PKG_TEST_SYMLINKS@@   — check_link calls for symlink farm
-#   @@PKG_TEST_EXTRA@@      — project-specific verification tests (optional)
+#   (FHS files)   — 17 check_file calls for FHS file layout
+#   (Symlinks)    — 9 check_link calls for symlink farm
+#   (Extra tests) — permissions, custom sigs, legacy path, importconf
 #
 set -euo pipefail
 
@@ -85,12 +85,37 @@ echo ""
 # --- Test 1: FHS paths exist ---
 echo "--- Test 1: FHS file layout ---"
 check_file /usr/sbin/maldet "Executable"
-@@PKG_TEST_FHS_FILES@@
+check_file /usr/lib/maldet/internals/internals.conf "internals.conf"
+check_file /usr/lib/maldet/internals/lmd.lib.sh "lmd.lib.sh"
+check_file /usr/lib/maldet/internals/lmd_scan.sh "lmd_scan.sh"
+check_file /usr/lib/maldet/internals/.symlink-manifest "symlink manifest"
+check_file /usr/lib/maldet/hookscan.sh "hookscan.sh"
+check_file /usr/lib/maldet/importconf "importconf"
+check_file /usr/lib/maldet/modsec.sh "modsec.sh"
+check_file /etc/maldet/conf.maldet "conf.maldet"
+check_file /etc/maldet/ignore_paths "ignore_paths"
+check_file /etc/maldet/ignore_sigs "ignore_sigs"
+check_file /etc/maldet/monitor_paths "monitor_paths"
+check_file /var/lib/maldet/sigs "sigs dir"
+check_file /var/lib/maldet/quarantine "quarantine dir"
+check_file /var/lib/maldet/sess "sess dir"
+check_file /var/lib/maldet/tmp "tmp dir"
+check_file /var/lib/maldet/pub "pub dir"
+check_file /var/lib/maldet/clean "clean dir"
+check_file /var/log/maldet "log dir"
 echo ""
 
 # --- Test 2: Symlink farm ---
 echo "--- Test 2: Symlink farm ---"
-@@PKG_TEST_SYMLINKS@@
+check_link /usr/local/maldetect/maldet /usr/sbin/maldet "Symlink: maldet binary"
+check_link /usr/local/maldetect/conf.maldet /etc/maldet/conf.maldet "Symlink: conf.maldet"
+check_link /usr/local/maldetect/internals/lmd.lib.sh /usr/lib/maldet/internals/lmd.lib.sh "Symlink: lmd.lib.sh"
+check_link /usr/local/maldetect/internals/internals.conf /usr/lib/maldet/internals/internals.conf "Symlink: internals.conf"
+check_link /usr/local/maldetect/sigs /var/lib/maldet/sigs "Symlink: sigs"
+check_link /usr/local/maldetect/quarantine /var/lib/maldet/quarantine "Symlink: quarantine"
+check_link /usr/local/maldetect/logs /var/log/maldet "Symlink: logs"
+check_link /usr/local/maldetect/cron /usr/lib/maldet/cron "Symlink: cron"
+check_link /usr/local/sbin/lmd /usr/sbin/maldet "Symlink: /usr/local/sbin/lmd"
 check_link /usr/local/sbin/maldet /usr/sbin/maldet "Symlink: /usr/local/sbin/maldet"
 echo ""
 
@@ -104,7 +129,44 @@ echo "--- Test 4: Man page ---"
 check_file /usr/share/man/man1/maldet.1* "Man page"
 echo ""
 
-@@PKG_TEST_EXTRA@@
+# --- Test 5: Config and state permissions ---
+echo "--- Test 5: Config and state permissions ---"
+check_perms /etc/maldet/conf.maldet 640 "conf.maldet perms"
+check_perms /var/lib/maldet/sigs 750 "sigs dir perms"
+check_perms /var/lib/maldet/quarantine 750 "quarantine dir perms"
+check_perms /var/log/maldet 750 "log dir perms"
+check_perms /usr/lib/maldet/importconf 755 "importconf perms"
+check_perms /usr/lib/maldet/internals/lmd.lib.sh 750 "lmd.lib.sh perms"
+echo ""
+
+# --- Test 6: Custom sig seed files ---
+echo "--- Test 6: Custom signature seed files ---"
+check_file /var/lib/maldet/sigs/custom.md5.dat "custom.md5.dat"
+check_file /var/lib/maldet/sigs/custom.sha256.dat "custom.sha256.dat"
+check_file /var/lib/maldet/sigs/custom.hex.dat "custom.hex.dat"
+check_file /var/lib/maldet/sigs/custom.csig.dat "custom.csig.dat"
+check_file /var/lib/maldet/sigs/custom.yara "custom.yara"
+check_file /var/lib/maldet/sigs/custom.yara.d "custom.yara.d dir"
+echo ""
+
+# --- Test 7: Legacy path execution ---
+echo "--- Test 7: Legacy path execution ---"
+ver_legacy=$(/usr/local/maldetect/maldet --version 2>&1 || true)
+if echo "$ver_legacy" | grep -q '2.0.1'; then
+    pass "maldet --version via /usr/local/maldetect/maldet works"
+else
+    fail "maldet --version via legacy path: $ver_legacy"
+fi
+echo ""
+
+# --- Test 8: importconf ---
+echo "--- Test 8: importconf ---"
+if [ -x /usr/lib/maldet/importconf ]; then
+    pass "importconf exists and is executable"
+else
+    fail "importconf missing or not executable"
+fi
+echo ""
 
 # --- Test: Execution ---
 echo "--- Test: maldet execution ---"

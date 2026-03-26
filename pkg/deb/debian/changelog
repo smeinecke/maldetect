@@ -4,11 +4,10 @@
 #   maldet                   — package name
 #   2.0.1                — version string
 #   R-fx Networks <proj@rfxn.com>             — maintainer in "Name <email>" format
-#   @@PKG_DEB_CHANGELOG_ENTRIES@@  — changelog body lines (2-space indented)
-#   @@PKG_DEB_CHANGELOG_DATE@@     — RFC 2822 date (e.g., "Thu, 06 Mar 2026 12:00:00 +0000")
+#
 #
 maldet (2.0.1-1) unstable; urgency=medium
 
-@@PKG_DEB_CHANGELOG_ENTRIES@@
+  * Initial package release for LMD 2.0.1
 
- -- R-fx Networks <proj@rfxn.com>  @@PKG_DEB_CHANGELOG_DATE@@
+ -- R-fx Networks <proj@rfxn.com>  Tue, 25 Mar 2026 12:00:00 +0000

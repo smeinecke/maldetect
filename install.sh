@@ -101,7 +101,7 @@ _install_cron_service() {
 	# Source installed conf.maldet to read sigup_interval — conf is already
 	# copied by _install_core() which runs before _install_cron_service().
 	# On upgrade, user's custom value is not yet imported (that happens in
-	# _import_config), so the default 6 is used. User changes to
+	# importconf), so the default 6 is used. User changes to
 	# sigup_interval take effect on next install.sh run.
 	local _sigup_interval
 	_sigup_interval=$(_read_conf_value "sigup_interval" "6")
@@ -196,104 +196,6 @@ _postinfo() {
 	pkg_item "Cron.daily" "/etc/cron.daily/maldet"
 }
 
-# --- Config import on upgrade ---
-
-# _compat_migrate old_conf merged_conf old_var new_var
-# Migrate a renamed config variable from old backup into merged output.
-# Only migrates if: old_var present and non-empty in old_conf,
-# AND new_var NOT present (or empty) in old_conf (user hasn't already migrated).
-# Mirrors compat.conf semantics: [ ! "$new_var" ] && [ "$old_var" ]
-_compat_migrate() {
-	local _old_conf="$1" _merged="$2" _old_var="$3" _new_var="$4"
-	local _val
-	# Skip if user's old config already has the new variable name with a non-empty value.
-	# pkg_config_get returns 0 with empty output for VAR=""; treat empty as
-	# "not set" to match compat.conf's [ ! "$new_var" ] semantics.
-	_val=$(pkg_config_get "$_old_conf" "$_new_var") && [[ -n "$_val" ]] && return 0
-	# Read old variable value; skip if absent from old config
-	_val=$(pkg_config_get "$_old_conf" "$_old_var") || return 0
-	# Guard: skip empty values to avoid overwriting real defaults
-	[[ -n "$_val" ]] || return 0
-	# Apply old value to new variable name in merged output
-	pkg_config_set "$_merged" "$_new_var" "$_val"
-}
-
-_import_config() {
-	local _old_conf="${bkpath:-}/conf.maldet"
-	[ -f "$_old_conf" ] || return 0
-
-	local _merge_tmp
-	_merge_tmp=$(mktemp "${PKG_TMPDIR:-/tmp}/lmd-conf-merge.XXXXXX")
-	trap 'rm -f "$_merge_tmp"' RETURN  # cleanup on any exit path
-
-	# AWK merge: old user values into new template structure
-	pkg_config_merge "$_old_conf" "files/conf.maldet" "$_merge_tmp" || {
-		pkg_warn "config merge failed, using new defaults"
-		return 0
-	}
-
-	# Standard compat migrations: renamed user-facing config variables.
-	# Only variables present in conf.maldet need install-time migration.
-	# Internal vars (sig paths, version URLs) handled at runtime by compat.conf.
-	_compat_migrate "$_old_conf" "$_merge_tmp" suppress_cleanhit email_ignore_clean
-	_compat_migrate "$_old_conf" "$_merge_tmp" quar_clean quarantine_clean
-	_compat_migrate "$_old_conf" "$_merge_tmp" quar_hits quarantine_hits
-	_compat_migrate "$_old_conf" "$_merge_tmp" quar_susp quarantine_suspend_user
-	_compat_migrate "$_old_conf" "$_merge_tmp" quar_susp_minuid quarantine_suspend_user_minuid
-	_compat_migrate "$_old_conf" "$_merge_tmp" maxdepth scan_max_depth
-	_compat_migrate "$_old_conf" "$_merge_tmp" minfilesize scan_min_filesize
-	_compat_migrate "$_old_conf" "$_merge_tmp" maxfilesize scan_max_filesize
-	_compat_migrate "$_old_conf" "$_merge_tmp" hexdepth scan_hexdepth
-	_compat_migrate "$_old_conf" "$_merge_tmp" clamav_scan scan_clamscan
-	_compat_migrate "$_old_conf" "$_merge_tmp" tmpdir_paths scan_tmpdir_paths
-	_compat_migrate "$_old_conf" "$_merge_tmp" public_scan scan_user_access
-	_compat_migrate "$_old_conf" "$_merge_tmp" pubuser_minuid scan_user_access_minuid
-	_compat_migrate "$_old_conf" "$_merge_tmp" scan_nice scan_cpunice
-	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_stime inotify_sleep
-	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_webdir inotify_docroot
-	_compat_migrate "$_old_conf" "$_merge_tmp" inotify_nice inotify_cpunice
-	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_md5_url sig_import_md5_url
-	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_hex_url sig_import_hex_url
-	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_yara_url sig_import_yara_url
-	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_sha256_url sig_import_sha256_url
-	_compat_migrate "$_old_conf" "$_merge_tmp" import_custsigs_csig_url sig_import_csig_url
-
-	# Special case: scan_hexfifo consolidation (v2.0.1)
-	# Old scan_hexfifo + scan_hexfifo_depth are consolidated into scan_hexdepth.
-	# First migrate the pre-1.5 intermediate names if present:
-	_compat_migrate "$_old_conf" "$_merge_tmp" hex_fifo_scan scan_hexfifo
-	_compat_migrate "$_old_conf" "$_merge_tmp" hex_fifo_depth scan_hexfifo_depth
-	# Then, if hexfifo was enabled, propagate its depth to scan_hexdepth:
-	local _hexfifo_val _hexfifo_depth
-	_hexfifo_val=$(pkg_config_get "$_old_conf" scan_hexfifo 2>/dev/null) || \
-		_hexfifo_val=$(pkg_config_get "$_old_conf" hex_fifo_scan 2>/dev/null) || \
-		_hexfifo_val=""  # safe: suppress "not found" when var absent from old config
-	if [[ "${_hexfifo_val:-0}" = "1" ]]; then
-		_hexfifo_depth=$(pkg_config_get "$_old_conf" scan_hexfifo_depth 2>/dev/null) || \
-			_hexfifo_depth=$(pkg_config_get "$_old_conf" hex_fifo_depth 2>/dev/null) || \
-			_hexfifo_depth=""  # safe: suppress "not found" when var absent from old config
-		if [[ -n "$_hexfifo_depth" ]]; then
-			pkg_config_set "$_merge_tmp" scan_hexdepth "$_hexfifo_depth"
-		fi
-	fi
-
-	# Special case: scan_hex_workers -> scan_workers (unconditional, v2.0.1)
-	# conf.maldet defaults scan_workers="0", so standard _compat_migrate would
-	# see new_var in merged output and skip. This override is unconditional:
-	# if old config had scan_hex_workers set, it always overrides scan_workers.
-	local _hex_workers
-	_hex_workers=$(pkg_config_get "$_old_conf" scan_hex_workers 2>/dev/null) || \
-		_hex_workers=""  # safe: suppress "not found" when var absent from old config
-	if [[ -n "$_hex_workers" ]]; then
-		pkg_config_set "$_merge_tmp" scan_workers "$_hex_workers"
-	fi
-
-	# Install merged config
-	command mv -f "$_merge_tmp" "$inspath/conf.maldet"
-	chmod 640 "$inspath/conf.maldet"  # restore restrictive perms — conf contains credentials
-	pkg_info "imported config options from ${_old_conf}"
-}
-
 # --- Restart monitor if it was running ---
 
 _restart_monitor() {
@@ -352,49 +254,10 @@ if [ -d "$inspath" ] && [ -d "files" ]; then
 
 	pkg_section "Installing files"
 	_install_core
-	# Restore user data from backup
-	# shellcheck disable=SC2086
-	cp -f "$bkpath"/ignore_* "$inspath/" >>/dev/null 2>&1  # safe: glob may match nothing
-	# shellcheck disable=SC2086
-	cp -f "$bkpath"/sess/* "$inspath/sess/" >>/dev/null 2>&1  # safe: dir may be empty
-	# shellcheck disable=SC2086
-	cp -f "$bkpath"/tmp/* "$inspath/tmp/" >>/dev/null 2>&1  # safe: dir may be empty
-	# shellcheck disable=SC2086
-	cp -f "$bkpath"/quarantine/* "$inspath/quarantine/" >>/dev/null 2>&1  # safe: dir may be empty
-	# shellcheck disable=SC2086
-	cp -f "$bkpath"/cron/* "$inspath/cron/" >>/dev/null 2>&1  # safe: dir may be empty
-	# shellcheck disable=SC2086
-	cp -f "$bkpath"/logs/* "$inspath/logs/" >>/dev/null 2>&1  # safe: dir may be empty
-	# shellcheck disable=SC2086
-	cp -f "$bkpath"/sigs/custom.* "$inspath/sigs/" >>/dev/null 2>&1  # safe: glob may match nothing
-	if [ -d "$bkpath/sigs/custom.yara.d" ]; then
-		cp -rf "$bkpath/sigs/custom.yara.d" "$inspath/sigs/" >>/dev/null 2>&1  # safe: copy yara rules
-	fi
-	cp -f "$bkpath/monitor_paths" "$inspath/" >>/dev/null 2>&1  # safe: file may not exist
-	cp -f "$bkpath/monitor_paths.extra" "$inspath/" >>/dev/null 2>&1  # safe: file may not exist
-	# shellcheck disable=SC2086
-	cp -pf "$bkpath"/clean/custom.* "$inspath/clean/" >>/dev/null 2>&1  # safe: glob may match nothing
-	cp -pf "$bkpath/conf.maldet.hookscan" "$inspath/" >>/dev/null 2>&1  # safe: file may not exist
-	if [ -d "$bkpath/pub" ]; then
-		cp -af "$bkpath/pub" "$inspath/" >>/dev/null 2>&1  # safe: preserve pub data
-	fi
-	if [ -d "$bkpath/internals/alert/custom.d" ]; then
-		cp -rf "$bkpath/internals/alert/custom.d" "$inspath/internals/alert/" >>/dev/null 2>&1  # safe: custom alert templates
-	fi
-	# Create empty monitor_paths.extra if not restored from backup
-	if [ ! -f "$inspath/monitor_paths.extra" ]; then
-		touch "$inspath/monitor_paths.extra"
-		chmod 640 "$inspath/monitor_paths.extra"
-	fi
-	# tlog cursor migration: inotify switching from line-count to byte-offset
-	rm -f "$inspath/tmp/inotify" 2>/dev/null  # safe: legacy cursor file
-	# Remove stale Perl hex scripts and FIFO (replaced by native grep engine)
-	rm -f "$inspath/internals/hexfifo.pl" "$inspath/internals/hexstring.pl" \
-		"$inspath/internals/hexfifo" 2>/dev/null  # safe: legacy files
 	_install_cron_service
 
 	pkg_section "Importing configuration"
-	_import_config
+	BK_LAST="$bkpath" DEST_PREFIX="$inspath" "$inspath/internals/importconf"
 
 	# Re-evaluate sigup_interval after config import (user may have set to 0)
 	_post_sigup_interval=$(_read_conf_value "sigup_interval" "6")

@@ -13,16 +13,6 @@
 #   /usr/local/sbin/maldet       — legacy binary path (e.g., /usr/local/sbin/bfd)
 #   1          — man page section (e.g., 1, 8)
 #   2002  — copyright start year (e.g., 1999, 2002)
-#   @@PKG_RPM_REQUIRES@@     — Requires: lines (one per line)
-#   @@PKG_RPM_WEAK_DEPS@@    — Recommends/Suggests lines (conditional on el8+)
-#   @@PKG_RPM_BUILD_SECTION@@     — %build section commands
-#   @@PKG_RPM_INSTALL_SECTION@@   — %install section commands
-#   @@PKG_RPM_PRE_SECTION@@       — %pre scriptlet body
-#   @@PKG_RPM_POST_SECTION@@      — %post scriptlet body
-#   @@PKG_RPM_PREUN_SECTION@@     — %preun scriptlet body
-#   @@PKG_RPM_POSTUN_SECTION@@    — %postun scriptlet body
-#   @@PKG_RPM_FILES_SECTION@@     — %files listing
-#   @@PKG_RPM_CHANGELOG@@         — %changelog entries
 #
 %define name    maldet
 %define version 2.0.1
@@ -40,8 +30,20 @@ URL:            https://github.com/rfxn/linux-malware-detect
 Source0:        %{name}-%{version}.tar.gz
 BuildArch:      noarch
 
-@@PKG_RPM_REQUIRES@@
-@@PKG_RPM_WEAK_DEPS@@
+Requires:       bash >= 4.1
+Requires:       coreutils
+Requires:       findutils
+Requires:       grep
+Requires:       gawk
+Requires:       file
+Requires:       procps-ng
+%if 0%{?rhel} >= 8 || 0%{?fedora}
+Recommends:     inotify-tools
+Recommends:     cronie
+Suggests:       clamav
+Suggests:       yara
+Suggests:       curl
+%endif
 
 %description
 Linux Malware Detect (LMD) is a malware scanner for Linux designed around the threats faced in shared hosted environments. It uses threat data from network edge intrusion detection systems to extract malware that is actively being used in attacks and generates signatures for detection. Features include MD5 hash, HEX pattern, statistical analysis, and YARA rule scanning, inotify real-time monitoring, ClamAV integration, quarantine/restore/clean operations, and multi-channel alerting (email, Slack, Telegram, Discord).
@@ -50,27 +52,398 @@ Linux Malware Detect (LMD) is a malware scanner for Linux designed around the th
 %setup -q -n %{name}-%{version}
 
 %build
-@@PKG_RPM_BUILD_SECTION@@
+# FHS path transforms — work on .pkg copies, keep originals clean
+cp files/internals/internals.conf files/internals/internals.conf.pkg
+sed -i \
+    -e 's|^inspath=.*|inspath=/usr/lib/maldet|' \
+    -e 's|^libpath=.*|libpath="/usr/lib/maldet/internals"|' \
+    -e 's|^logdir=.*|logdir="/var/log/maldet"|' \
+    -e 's|^confpath=.*|confpath="/etc/maldet"|' \
+    -e 's|^varlibpath=.*|varlibpath="/var/lib/maldet"|' \
+    files/internals/internals.conf.pkg
+
+cp files/internals/tlog files/internals/tlog.pkg
+sed -i 's|BASERUN="${BASERUN:-/tmp}"|BASERUN="${BASERUN:-/var/lib/maldet/tmp}"|' \
+    files/internals/tlog.pkg
+
+cp files/service/maldet.service files/service/maldet.service.pkg
+sed -i 's|/usr/local/maldetect/maldet|/usr/sbin/maldet|g' \
+    files/service/maldet.service.pkg
+
+cp files/service/maldet.sh files/service/maldet.sh.pkg
+sed -i "s|inspath='/usr/local/maldetect'|inspath='/usr/lib/maldet'|" \
+    files/service/maldet.sh.pkg
+
+cp files/service/maldet.sysconfig files/service/maldet.sysconfig.pkg
+sed -i 's|/usr/local/maldetect/monitor_paths|/etc/maldet/monitor_paths|g' \
+    files/service/maldet.sysconfig.pkg
+
+cp cron.daily cron.daily.pkg
+sed -i "s|inspath='/usr/local/maldetect'|inspath='/usr/lib/maldet'|" \
+    cron.daily.pkg
+
+cp cron.d.sigup cron.d.sigup.pkg
+sed -i 's|/usr/local/maldetect/maldet|/usr/sbin/maldet|g' \
+    cron.d.sigup.pkg
+
+cp cron.d.pub cron.d.pub.pkg
+sed -i 's|/usr/local/maldetect/maldet|/usr/sbin/maldet|g' \
+    cron.d.pub.pkg
+
+cp cron.watchdog cron.watchdog.pkg
+sed -i "s|inspath='/usr/local/maldetect'|inspath='/usr/lib/maldet'|" \
+    cron.watchdog.pkg
+
+# Compress man page
+cp files/maldet.1 files/maldet.1.pkg
+gzip -9 files/maldet.1.pkg
 
 %install
 rm -rf %{buildroot}
-@@PKG_RPM_INSTALL_SECTION@@
+# --- Directories ---
+mkdir -p %{buildroot}/usr/sbin
+mkdir -p %{buildroot}/usr/lib/maldet/internals/alert/custom.d
+mkdir -p %{buildroot}/usr/lib/maldet/cron
+mkdir -p %{buildroot}/etc/maldet
+mkdir -p %{buildroot}/var/lib/maldet/{sigs,quarantine,sess,tmp,pub,clean}
+mkdir -p %{buildroot}/var/lib/maldet/sigs/custom.yara.d
+mkdir -p %{buildroot}/var/log/maldet
+mkdir -p %{buildroot}/usr/share/man/man1
+mkdir -p %{buildroot}/usr/share/doc/maldet
+
+# --- Binaries ---
+install -m 755 files/maldet %{buildroot}/usr/sbin/maldet
+install -m 755 files/hookscan.sh %{buildroot}/usr/lib/maldet/hookscan.sh
+install -m 755 files/internals/importconf %{buildroot}/usr/lib/maldet/importconf
+install -m 755 files/modsec.sh %{buildroot}/usr/lib/maldet/modsec.sh
+
+# --- Libraries (sed-transformed where applicable) ---
+install -m 640 files/internals/internals.conf.pkg %{buildroot}/usr/lib/maldet/internals/internals.conf
+install -m 750 files/internals/lmd.lib.sh %{buildroot}/usr/lib/maldet/internals/lmd.lib.sh
+install -m 750 files/internals/lmd_config.sh %{buildroot}/usr/lib/maldet/internals/lmd_config.sh
+install -m 750 files/internals/lmd_init.sh %{buildroot}/usr/lib/maldet/internals/lmd_init.sh
+install -m 750 files/internals/lmd_clamav.sh %{buildroot}/usr/lib/maldet/internals/lmd_clamav.sh
+install -m 750 files/internals/lmd_sigs.sh %{buildroot}/usr/lib/maldet/internals/lmd_sigs.sh
+install -m 750 files/internals/lmd_engine.sh %{buildroot}/usr/lib/maldet/internals/lmd_engine.sh
+install -m 750 files/internals/lmd_yara.sh %{buildroot}/usr/lib/maldet/internals/lmd_yara.sh
+install -m 750 files/internals/lmd_quarantine.sh %{buildroot}/usr/lib/maldet/internals/lmd_quarantine.sh
+install -m 750 files/internals/lmd_session.sh %{buildroot}/usr/lib/maldet/internals/lmd_session.sh
+install -m 750 files/internals/lmd_scan.sh %{buildroot}/usr/lib/maldet/internals/lmd_scan.sh
+install -m 750 files/internals/lmd_monitor.sh %{buildroot}/usr/lib/maldet/internals/lmd_monitor.sh
+install -m 750 files/internals/lmd_update.sh %{buildroot}/usr/lib/maldet/internals/lmd_update.sh
+install -m 750 files/internals/lmd_alert.sh %{buildroot}/usr/lib/maldet/internals/lmd_alert.sh
+install -m 640 files/internals/compat.conf %{buildroot}/usr/lib/maldet/internals/compat.conf
+install -m 750 files/internals/tlog_lib.sh %{buildroot}/usr/lib/maldet/internals/tlog_lib.sh
+install -m 750 files/internals/elog_lib.sh %{buildroot}/usr/lib/maldet/internals/elog_lib.sh
+install -m 750 files/internals/alert_lib.sh %{buildroot}/usr/lib/maldet/internals/alert_lib.sh
+install -m 750 files/internals/pkg_lib.sh %{buildroot}/usr/lib/maldet/internals/pkg_lib.sh
+install -m 755 files/internals/tlog.pkg %{buildroot}/usr/lib/maldet/internals/tlog
+
+# --- Alert templates ---
+for tpl in files/internals/alert/*.tpl; do
+    install -m 640 "$tpl" %{buildroot}/usr/lib/maldet/internals/alert/
+done
+
+# --- Cron config ---
+install -m 640 files/cron/conf.maldet.cron %{buildroot}/usr/lib/maldet/cron/conf.maldet.cron
+install -m 640 files/cron/custom.cron %{buildroot}/usr/lib/maldet/cron/custom.cron
+
+# --- Config files ---
+install -m 640 files/conf.maldet %{buildroot}/etc/maldet/conf.maldet
+install -m 640 files/conf.maldet.hookscan.default %{buildroot}/etc/maldet/conf.maldet.hookscan.default
+install -m 640 files/ignore_paths %{buildroot}/etc/maldet/ignore_paths
+install -m 640 files/ignore_file_ext %{buildroot}/etc/maldet/ignore_file_ext
+install -m 640 files/ignore_sigs %{buildroot}/etc/maldet/ignore_sigs
+install -m 640 files/ignore_inotify %{buildroot}/etc/maldet/ignore_inotify
+install -m 640 files/monitor_paths %{buildroot}/etc/maldet/monitor_paths
+touch %{buildroot}/etc/maldet/monitor_paths.extra
+chmod 640 %{buildroot}/etc/maldet/monitor_paths.extra
+
+# --- Clean rules ---
+for cr in files/clean/*; do
+    install -m 750 "$cr" %{buildroot}/var/lib/maldet/clean/
+done
+
+# --- Service files ---
+mkdir -p %{buildroot}/usr/lib/systemd/system
+install -m 644 files/service/maldet.service.pkg %{buildroot}/usr/lib/systemd/system/maldet.service
+%if 0%{?rhel} == 7
+mkdir -p %{buildroot}/etc/init.d
+install -m 755 files/service/maldet.sh.pkg %{buildroot}/etc/init.d/maldet
+%endif
+mkdir -p %{buildroot}/etc/sysconfig
+install -m 640 files/service/maldet.sysconfig.pkg %{buildroot}/etc/sysconfig/maldet
+
+# --- Cron jobs ---
+mkdir -p %{buildroot}/etc/cron.daily
+install -m 755 cron.daily.pkg %{buildroot}/etc/cron.daily/maldet
+mkdir -p %{buildroot}/etc/cron.d
+install -m 644 cron.d.sigup.pkg %{buildroot}/etc/cron.d/maldet-sigup
+install -m 644 cron.d.pub.pkg %{buildroot}/etc/cron.d/maldet_pub
+mkdir -p %{buildroot}/etc/cron.weekly
+install -m 755 cron.watchdog.pkg %{buildroot}/etc/cron.weekly/maldet-watchdog
+
+# --- Man page ---
+install -m 644 files/maldet.1.pkg.gz %{buildroot}/usr/share/man/man1/maldet.1.gz
+
+# --- Documentation ---
+install -m 644 README %{buildroot}/usr/share/doc/maldet/README
+install -m 644 CHANGELOG %{buildroot}/usr/share/doc/maldet/CHANGELOG
+# COPYING.GPL handled by %license directive in %files — not installed here
+
+# --- Symlink manifest for runtime verification ---
+install -m 640 pkg/symlink-manifest %{buildroot}/usr/lib/maldet/internals/.symlink-manifest
+
+# --- Symlink farm: /usr/local/maldetect/ ---
+mkdir -p %{buildroot}/usr/local/maldetect/internals
+ln -sf /usr/sbin/maldet %{buildroot}/usr/local/maldetect/maldet
+ln -sf /etc/maldet/conf.maldet %{buildroot}/usr/local/maldetect/conf.maldet
+ln -sf /etc/maldet/conf.maldet.hookscan.default %{buildroot}/usr/local/maldetect/conf.maldet.hookscan.default
+ln -sf /usr/lib/maldet/hookscan.sh %{buildroot}/usr/local/maldetect/hookscan.sh
+ln -sf /usr/lib/maldet/modsec.sh %{buildroot}/usr/local/maldetect/modsec.sh
+ln -sf /usr/lib/maldet/importconf %{buildroot}/usr/local/maldetect/importconf
+ln -sf /etc/maldet/ignore_paths %{buildroot}/usr/local/maldetect/ignore_paths
+ln -sf /etc/maldet/ignore_file_ext %{buildroot}/usr/local/maldetect/ignore_file_ext
+ln -sf /etc/maldet/ignore_sigs %{buildroot}/usr/local/maldetect/ignore_sigs
+ln -sf /etc/maldet/ignore_inotify %{buildroot}/usr/local/maldetect/ignore_inotify
+ln -sf /etc/maldet/monitor_paths %{buildroot}/usr/local/maldetect/monitor_paths
+ln -sf /etc/maldet/monitor_paths.extra %{buildroot}/usr/local/maldetect/monitor_paths.extra
+ln -sf /var/lib/maldet/sigs %{buildroot}/usr/local/maldetect/sigs
+ln -sf /var/lib/maldet/quarantine %{buildroot}/usr/local/maldetect/quarantine
+ln -sf /var/lib/maldet/sess %{buildroot}/usr/local/maldetect/sess
+ln -sf /var/lib/maldet/tmp %{buildroot}/usr/local/maldetect/tmp
+ln -sf /var/lib/maldet/pub %{buildroot}/usr/local/maldetect/pub
+ln -sf /var/lib/maldet/clean %{buildroot}/usr/local/maldetect/clean
+ln -sf /var/log/maldet %{buildroot}/usr/local/maldetect/logs
+ln -sf /usr/lib/maldet/cron %{buildroot}/usr/local/maldetect/cron
+ln -sf /usr/lib/maldet/internals/internals.conf %{buildroot}/usr/local/maldetect/internals/internals.conf
+ln -sf /usr/lib/maldet/internals/lmd.lib.sh %{buildroot}/usr/local/maldetect/internals/lmd.lib.sh
+ln -sf /usr/lib/maldet/internals/lmd_config.sh %{buildroot}/usr/local/maldetect/internals/lmd_config.sh
+ln -sf /usr/lib/maldet/internals/lmd_init.sh %{buildroot}/usr/local/maldetect/internals/lmd_init.sh
+ln -sf /usr/lib/maldet/internals/lmd_clamav.sh %{buildroot}/usr/local/maldetect/internals/lmd_clamav.sh
+ln -sf /usr/lib/maldet/internals/lmd_sigs.sh %{buildroot}/usr/local/maldetect/internals/lmd_sigs.sh
+ln -sf /usr/lib/maldet/internals/lmd_engine.sh %{buildroot}/usr/local/maldetect/internals/lmd_engine.sh
+ln -sf /usr/lib/maldet/internals/lmd_yara.sh %{buildroot}/usr/local/maldetect/internals/lmd_yara.sh
+ln -sf /usr/lib/maldet/internals/lmd_quarantine.sh %{buildroot}/usr/local/maldetect/internals/lmd_quarantine.sh
+ln -sf /usr/lib/maldet/internals/lmd_session.sh %{buildroot}/usr/local/maldetect/internals/lmd_session.sh
+ln -sf /usr/lib/maldet/internals/lmd_scan.sh %{buildroot}/usr/local/maldetect/internals/lmd_scan.sh
+ln -sf /usr/lib/maldet/internals/lmd_monitor.sh %{buildroot}/usr/local/maldetect/internals/lmd_monitor.sh
+ln -sf /usr/lib/maldet/internals/lmd_update.sh %{buildroot}/usr/local/maldetect/internals/lmd_update.sh
+ln -sf /usr/lib/maldet/internals/lmd_alert.sh %{buildroot}/usr/local/maldetect/internals/lmd_alert.sh
+ln -sf /usr/lib/maldet/internals/compat.conf %{buildroot}/usr/local/maldetect/internals/compat.conf
+ln -sf /usr/lib/maldet/internals/tlog_lib.sh %{buildroot}/usr/local/maldetect/internals/tlog_lib.sh
+ln -sf /usr/lib/maldet/internals/elog_lib.sh %{buildroot}/usr/local/maldetect/internals/elog_lib.sh
+ln -sf /usr/lib/maldet/internals/alert_lib.sh %{buildroot}/usr/local/maldetect/internals/alert_lib.sh
+ln -sf /usr/lib/maldet/internals/pkg_lib.sh %{buildroot}/usr/local/maldetect/internals/pkg_lib.sh
+ln -sf /usr/lib/maldet/internals/tlog %{buildroot}/usr/local/maldetect/internals/tlog
+ln -sf /usr/lib/maldet/internals/alert %{buildroot}/usr/local/maldetect/internals/alert
+mkdir -p %{buildroot}/usr/local/sbin
+ln -sf /usr/sbin/maldet %{buildroot}/usr/local/sbin/maldet
+ln -sf /usr/sbin/maldet %{buildroot}/usr/local/sbin/lmd
 
 %pre
-@@PKG_RPM_PRE_SECTION@@
+LEGACY_PATH="/usr/local/maldetect"
+if [ -f "$LEGACY_PATH/maldet" ] && [ ! -L "$LEGACY_PATH/internals" ] && [ ! -L "$LEGACY_PATH/maldet" ]; then
+    _bkdir="${LEGACY_PATH}.bk.$(date +%%Y%%m%%d-%%s)"
+    echo "Backing up existing install.sh installation to $_bkdir"
+    cp -a "$LEGACY_PATH" "$_bkdir"
+    rm -f "${LEGACY_PATH}.bk.last"
+    ln -s "$_bkdir" "${LEGACY_PATH}.bk.last"
+    if [ -d "$LEGACY_PATH/tmp" ]; then
+        mkdir -p /var/lib/maldet/tmp
+        cp -a "$LEGACY_PATH"/tmp/* /var/lib/maldet/tmp/ 2>/dev/null || true
+    fi
+    for _initdir in /etc/rc.d/init.d /etc/init.d; do
+        if [ -f "$_initdir/maldet" ]; then
+            "$_initdir/maldet" stop 2>/dev/null || true
+            if command -v chkconfig >/dev/null 2>&1; then
+                chkconfig --del maldet 2>/dev/null || true
+            fi
+        fi
+    done
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop maldet.service 2>/dev/null || true
+    fi
+    rm -rf "$LEGACY_PATH"
+fi
 
 %post
-@@PKG_RPM_POST_SECTION@@
+# Run importconf only on initial install ($1=1), not pkg-to-pkg upgrade ($1=2).
+# This is the install.sh-to-package migration path — .bk.last is created by %pre.
+LEGACY_PATH="/usr/local/maldetect"
+if [ "$1" -eq 1 ] && [ -d "${LEGACY_PATH}.bk.last" ]; then
+    if [ -x /usr/lib/maldet/importconf ]; then
+        INSTALL_PATH="$LEGACY_PATH" /usr/lib/maldet/importconf || true
+    fi
+fi
+
+# Seed empty custom files if absent (fresh install)
+for _f in custom.md5.dat custom.sha256.dat custom.hex.dat custom.csig.dat custom.yara; do
+    [ -f "/var/lib/maldet/sigs/$_f" ] || touch "/var/lib/maldet/sigs/$_f"
+done
+[ -d "/var/lib/maldet/sigs/custom.yara.d" ] || mkdir -p "/var/lib/maldet/sigs/custom.yara.d"
+
+# systemd daemon-reload
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+fi
 
 %preun
-@@PKG_RPM_PREUN_SECTION@@
+if [ "$1" -eq 0 ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop maldet.service 2>/dev/null || true
+        systemctl disable maldet.service 2>/dev/null || true
+    fi
+    for _initdir in /etc/rc.d/init.d /etc/init.d; do
+        if [ -f "$_initdir/maldet" ]; then
+            "$_initdir/maldet" stop 2>/dev/null || true
+            if command -v chkconfig >/dev/null 2>&1; then
+                chkconfig --del maldet 2>/dev/null || true
+            fi
+        fi
+    done
+fi
 
 %postun
-@@PKG_RPM_POSTUN_SECTION@@
+if [ "$1" -eq 0 ]; then
+    rm -rf /usr/local/maldetect 2>/dev/null || true
+    rm -f /usr/local/sbin/maldet 2>/dev/null || true
+    rm -f /usr/local/sbin/lmd 2>/dev/null || true
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+    fi
+fi
 
 %files
 %license COPYING.GPL
-@@PKG_RPM_FILES_SECTION@@
+# Binary
+%attr(755,root,root) /usr/sbin/maldet
+
+# Libraries
+%dir %attr(750,root,root) /usr/lib/maldet
+%attr(755,root,root) /usr/lib/maldet/hookscan.sh
+%attr(755,root,root) /usr/lib/maldet/importconf
+%attr(755,root,root) /usr/lib/maldet/modsec.sh
+%dir %attr(750,root,root) /usr/lib/maldet/internals
+%attr(640,root,root) /usr/lib/maldet/internals/internals.conf
+%attr(750,root,root) /usr/lib/maldet/internals/lmd.lib.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_config.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_init.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_clamav.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_sigs.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_engine.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_yara.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_quarantine.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_session.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_scan.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_monitor.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_update.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_alert.sh
+%attr(640,root,root) /usr/lib/maldet/internals/compat.conf
+%attr(750,root,root) /usr/lib/maldet/internals/tlog_lib.sh
+%attr(750,root,root) /usr/lib/maldet/internals/elog_lib.sh
+%attr(750,root,root) /usr/lib/maldet/internals/alert_lib.sh
+%attr(750,root,root) /usr/lib/maldet/internals/pkg_lib.sh
+%attr(755,root,root) /usr/lib/maldet/internals/tlog
+%attr(640,root,root) /usr/lib/maldet/internals/.symlink-manifest
+%dir %attr(750,root,root) /usr/lib/maldet/internals/alert
+%attr(640,root,root) /usr/lib/maldet/internals/alert/*.tpl
+%dir %attr(750,root,root) /usr/lib/maldet/internals/alert/custom.d
+%dir %attr(750,root,root) /usr/lib/maldet/cron
+%config(noreplace) %attr(640,root,root) /usr/lib/maldet/cron/conf.maldet.cron
+%config(noreplace) %attr(640,root,root) /usr/lib/maldet/cron/custom.cron
+
+# Config
+%dir %attr(750,root,root) /etc/maldet
+%config(noreplace) %attr(640,root,root) /etc/maldet/conf.maldet
+%attr(640,root,root) /etc/maldet/conf.maldet.hookscan.default
+%config(noreplace) %attr(640,root,root) /etc/maldet/ignore_paths
+%config(noreplace) %attr(640,root,root) /etc/maldet/ignore_file_ext
+%config(noreplace) %attr(640,root,root) /etc/maldet/ignore_sigs
+%config(noreplace) %attr(640,root,root) /etc/maldet/ignore_inotify
+%config(noreplace) %attr(640,root,root) /etc/maldet/monitor_paths
+%config(noreplace) %attr(640,root,root) /etc/maldet/monitor_paths.extra
+
+# State directories (contents not owned — user data)
+%dir %attr(750,root,root) /var/lib/maldet
+%dir %attr(750,root,root) /var/lib/maldet/sigs
+%dir %attr(750,root,root) /var/lib/maldet/sigs/custom.yara.d
+%dir %attr(750,root,root) /var/lib/maldet/quarantine
+%dir %attr(750,root,root) /var/lib/maldet/sess
+%dir %attr(750,root,root) /var/lib/maldet/tmp
+%dir %attr(750,root,root) /var/lib/maldet/pub
+%dir %attr(750,root,root) /var/lib/maldet/clean
+%attr(750,root,root) /var/lib/maldet/clean/*
+%dir %attr(750,root,root) /var/log/maldet
+
+# Service
+/usr/lib/systemd/system/maldet.service
+%if 0%{?rhel} == 7
+%attr(755,root,root) /etc/init.d/maldet
+%endif
+%config(noreplace) %attr(640,root,root) /etc/sysconfig/maldet
+
+# Cron
+%attr(755,root,root) /etc/cron.daily/maldet
+%config(noreplace) %attr(644,root,root) /etc/cron.d/maldet-sigup
+%attr(644,root,root) /etc/cron.d/maldet_pub
+%attr(755,root,root) /etc/cron.weekly/maldet-watchdog
+
+# Docs
+%doc /usr/share/doc/maldet/README
+%doc /usr/share/doc/maldet/CHANGELOG
+
+# Man page
+/usr/share/man/man1/maldet.1.gz
+
+# Symlink farm
+%dir /usr/local/maldetect
+/usr/local/maldetect/maldet
+/usr/local/maldetect/conf.maldet
+/usr/local/maldetect/conf.maldet.hookscan.default
+/usr/local/maldetect/hookscan.sh
+/usr/local/maldetect/modsec.sh
+/usr/local/maldetect/importconf
+/usr/local/maldetect/ignore_paths
+/usr/local/maldetect/ignore_file_ext
+/usr/local/maldetect/ignore_sigs
+/usr/local/maldetect/ignore_inotify
+/usr/local/maldetect/monitor_paths
+/usr/local/maldetect/monitor_paths.extra
+/usr/local/maldetect/sigs
+/usr/local/maldetect/quarantine
+/usr/local/maldetect/sess
+/usr/local/maldetect/tmp
+/usr/local/maldetect/pub
+/usr/local/maldetect/clean
+/usr/local/maldetect/logs
+/usr/local/maldetect/cron
+%dir /usr/local/maldetect/internals
+/usr/local/maldetect/internals/internals.conf
+/usr/local/maldetect/internals/lmd.lib.sh
+/usr/local/maldetect/internals/lmd_config.sh
+/usr/local/maldetect/internals/lmd_init.sh
+/usr/local/maldetect/internals/lmd_clamav.sh
+/usr/local/maldetect/internals/lmd_sigs.sh
+/usr/local/maldetect/internals/lmd_engine.sh
+/usr/local/maldetect/internals/lmd_yara.sh
+/usr/local/maldetect/internals/lmd_quarantine.sh
+/usr/local/maldetect/internals/lmd_session.sh
+/usr/local/maldetect/internals/lmd_scan.sh
+/usr/local/maldetect/internals/lmd_monitor.sh
+/usr/local/maldetect/internals/lmd_update.sh
+/usr/local/maldetect/internals/lmd_alert.sh
+/usr/local/maldetect/internals/compat.conf
+/usr/local/maldetect/internals/tlog_lib.sh
+/usr/local/maldetect/internals/elog_lib.sh
+/usr/local/maldetect/internals/alert_lib.sh
+/usr/local/maldetect/internals/pkg_lib.sh
+/usr/local/maldetect/internals/tlog
+/usr/local/maldetect/internals/alert
+/usr/local/sbin/maldet
+/usr/local/sbin/lmd
 
 %changelog
-@@PKG_RPM_CHANGELOG@@
+* Tue Mar 25 2026 R-fx Networks <proj@rfxn.com> - 2.0.1-1
+- Initial RPM packaging for LMD 2.0.1
+- FHS-compliant layout with backward-compatible symlink farm

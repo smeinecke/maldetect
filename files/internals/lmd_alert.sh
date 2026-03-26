@@ -144,6 +144,12 @@ _lmd_set_global_vars() {
 	export TOTAL_HITS="${tot_hits:-0}"
 	export TOTAL_CLEANED="${tot_cl:-0}"
 
+	# Quarantine annotation — "(quarantine disabled)" when quarantine_hits=0, empty otherwise
+	export SUMMARY_QUARANTINE_ANNOTATION=""
+	if [ "${quarantine_hits:-0}" = "0" ]; then
+		SUMMARY_QUARANTINE_ANNOTATION=" (quarantine disabled)"
+	fi
+
 	# Conditional: quarantine warning
 	export QUARANTINE_WARNING_TEXT=""
 	export QUARANTINE_WARNING_HTML=""
@@ -833,15 +839,6 @@ _lmd_render() {
 	_alert_tpl_resolve "$template_dir" "${alert_type}.${format}.entry.tpl"
 	_lmd_render_entries "$_ALERT_TPL_RESOLVED" "$manifest_file" "$total"
 
-	# Text format: render summary at bottom for multi-hit reports
-	# HTML format: summary content is already in the header, skip
-	if [ "$total" -gt 1 ] && [ "$format" != "html" ]; then
-		_alert_tpl_resolve "$template_dir" "${alert_type}.${format}.summary.tpl"
-		if [ -f "$_ALERT_TPL_RESOLVED" ]; then
-			_alert_tpl_render "$_ALERT_TPL_RESOLVED"
-		fi
-	fi
-
 	_alert_tpl_resolve "$template_dir" "${alert_type}.${format}.footer.tpl"
 	_alert_tpl_render "$_ALERT_TPL_RESOLVED"
 }
@@ -1113,6 +1110,7 @@ _genalert_panel() {
 			awk '/FILE HIT LIST:/{flag=1;next}/^=======/{flag=0}flag' "$_file" > "$_panel_src"
 		fi
 		# Sort malware hits and map to system user owner
+		# Intermediate format: owner\tsig\tfilepath\tquarpath (tab-delimited to preserve quarantine paths)
 		# Loop vars intentionally non-local: behavioral parity with original genalert() — scoping cleanup deferred
 		if [ -n "$_panel_src" ] && [ -f "$_panel_src" ] && _session_is_tsv "$_panel_src" 2>/dev/null; then
 			# TSV: read sig and filepath directly from tab-delimited fields
@@ -1131,7 +1129,7 @@ _genalert_panel() {
 				else
 					continue
 				fi
-				echo "$file_owner : $_p_sig : $_p_fp" >> "$tmpdir/.panel_alert.hits"
+				printf '%s\t%s\t%s\t%s\n' "$file_owner" "$_p_sig" "$_p_fp" "${_p_qp:--}" >> "$tmpdir/.panel_alert.hits"
 			done < "$_panel_src"
 		elif [ -n "$_panel_src" ] && [ -f "$_panel_src" ]; then
 			# Legacy: regex parsing of "sig : path" / "sig : path => quarpath"
@@ -1160,7 +1158,7 @@ _genalert_panel() {
 				else
 					continue
 				fi
-				echo "$file_owner : $hit_sig : $hit_file" >> "$tmpdir/.panel_alert.hits"
+				printf '%s\t%s\t%s\t%s\n' "$file_owner" "$hit_sig" "$hit_file" "${quarantined_file:--}" >> "$tmpdir/.panel_alert.hits"
 			done < "$_panel_src"
 		fi
 		# Clean up fallback temp if used
@@ -1182,13 +1180,18 @@ _genalert_panel() {
 			done < "$sessdir/clean.$$"
 		fi
 		eout "{panel} Detected control panel $control_panel. Will send alerts to control panel account contacts." 1
-		user_list=$(awk '{print $1}' "$tmpdir/.panel_alert.hits" | sort | uniq)
+		user_list=$(awk -F'\t' '{print $1}' "$tmpdir/.panel_alert.hits" | sort | uniq)
 		if [ -n "$user_list" ]; then
 			for sys_user in $user_list; do
 				contact_emails=""
 				get_panel_contacts "$control_panel" "$sys_user"
 
-				grep "^$sys_user " "$tmpdir/.panel_alert.hits" | awk -F' : ' '{print $2" : "$3}' > "$tmpdir/.${sys_user}.hits"
+				# Extract per-user hits in legacy format (sig : filepath [=> quarpath])
+				# _lmd_parse_hitlist parses this to 6-field manifest with quarantine data
+				awk -F'\t' -v user="$sys_user" '$1 == user {
+					if ($4 != "" && $4 != "-") printf "%s : %s => %s\n", $2, $3, $4
+					else printf "%s : %s\n", $2, $3
+				}' "$tmpdir/.panel_alert.hits" > "$tmpdir/.${sys_user}.hits"
 				user_tot_hits=$($wc -l < "$tmpdir/.${sys_user}.hits")
 				user_tot_cl=0
 				if [ -f "$tmpdir/.panel_alert.clean" ]; then

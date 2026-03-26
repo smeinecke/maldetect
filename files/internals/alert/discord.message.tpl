@@ -2,13 +2,13 @@
 	"embeds": [
 		{
 			"title": "LMD Alert: {{HOSTNAME}}",
-			"description": "**{{TOTAL_HITS}}** threat(s) detected | {{SCAN_STARTED}}",
+			"description": "**{{TOTAL_HITS}}** threat(s) detected | {{SUMMARY_TOTAL_QUARANTINED}} quarantined | {{SUMMARY_TOTAL_CLEANED}} cleaned\n{{SUMMARY_BY_TYPE}} | {{SCAN_STARTED}}",
 			"color": 557490,
 			"fields": [
 {{ENTRY_FIELDS}}
 				{
-					"name": "Summary",
-					"value": "{{SUMMARY_TOTAL_HITS}} hits | {{SUMMARY_TOTAL_CLEANED}} cleaned | {{SUMMARY_BY_TYPE}}\n{{SUMMARY_QUARANTINE_STATUS}}",
+					"name": "\u200b",
+					"value": "{{SUMMARY_QUARANTINE_STATUS}}",
 					"inline": false
 				}
 			],

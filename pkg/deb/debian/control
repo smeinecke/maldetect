@@ -6,9 +6,6 @@
 #   Linux Malware Detect (LMD) is a malware scanner for Linux designed around the threats faced in shared hosted environments. It uses threat data from network edge intrusion detection systems to extract malware that is actively being used in attacks and generates signatures for detection. Features include MD5 hash, HEX pattern, statistical analysis, and YARA rule scanning, inotify real-time monitoring, ClamAV integration, quarantine/restore/clean operations, and multi-channel alerting (email, Slack, Telegram, Discord).    — multi-line description (leading space, . for blank lines)
 #   https://github.com/rfxn/linux-malware-detect            — upstream homepage URL
 #   R-fx Networks <proj@rfxn.com>     — maintainer in "Name <email>" format
-#   @@PKG_DEB_DEPENDS@@    — comma-separated dependency list
-#   @@PKG_DEB_RECOMMENDS@@ — comma-separated recommends list
-#   @@PKG_DEB_SUGGESTS@@   — comma-separated suggests list
 #
 Source: maldet
 Section: admin
@@ -20,8 +17,8 @@ Homepage: https://github.com/rfxn/linux-malware-detect
 
 Package: maldet
 Architecture: all
-Depends: @@PKG_DEB_DEPENDS@@, ${misc:Depends}
-Recommends: @@PKG_DEB_RECOMMENDS@@
-Suggests: @@PKG_DEB_SUGGESTS@@
+Depends: bash (>= 4.1), coreutils, findutils, grep, gawk, file, procps, ${misc:Depends}
+Recommends: inotify-tools, cron
+Suggests: clamav, yara, curl | wget
 Description: Linux Malware Detect — malware scanner for Linux
-Linux Malware Detect (LMD) is a malware scanner for Linux designed around the threats faced in shared hosted environments. It uses threat data from network edge intrusion detection systems to extract malware that is actively being used in attacks and generates signatures for detection. Features include MD5 hash, HEX pattern, statistical analysis, and YARA rule scanning, inotify real-time monitoring, ClamAV integration, quarantine/restore/clean operations, and multi-channel alerting (email, Slack, Telegram, Discord).
+ Linux Malware Detect (LMD) is a malware scanner for Linux designed around the threats faced in shared hosted environments. It uses threat data from network edge intrusion detection systems to extract malware that is actively being used in attacks and generates signatures for detection. Features include MD5 hash, HEX pattern, statistical analysis, and YARA rule scanning, inotify real-time monitoring, ClamAV integration, quarantine/restore/clean operations, and multi-channel alerting (email, Slack, Telegram, Discord).

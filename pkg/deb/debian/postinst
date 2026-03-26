@@ -7,8 +7,7 @@
 # Placeholders:
 #   maldet            — package name
 #   /usr/local/maldetect    — legacy install path
-#   @@PKG_POSTINST_PERMS@@  — chmod commands for config/state files
-#   @@PKG_POSTINST_EXTRA@@  — project-specific post-install commands (optional)
+#
 #
 set -e
 
@@ -16,14 +15,27 @@ LEGACY_PATH="/usr/local/maldetect"
 
 case "$1" in
     configure)
-@@PKG_POSTINST_PERMS@@
-        # Run importconf if migrating from install.sh backup
-        if [ -d "${LEGACY_PATH}.bk.last" ]; then
+        chmod 750 /var/lib/maldet/sigs /var/lib/maldet/quarantine \
+            /var/lib/maldet/sess /var/lib/maldet/tmp /var/lib/maldet/pub \
+            /var/lib/maldet/clean /var/log/maldet 2>/dev/null || true
+        chmod 640 /etc/maldet/conf.maldet /etc/maldet/ignore_paths \
+            /etc/maldet/ignore_file_ext /etc/maldet/ignore_sigs \
+            /etc/maldet/ignore_inotify /etc/maldet/monitor_paths \
+            /etc/maldet/monitor_paths.extra 2>/dev/null || true
+        # Run importconf only on initial install (empty $2), not pkg-to-pkg upgrade.
+        # This is the install.sh-to-package migration path — .bk.last is created by preinst.
+        if [ -z "$2" ] && [ -d "${LEGACY_PATH}.bk.last" ]; then
             if [ -x /usr/lib/maldet/importconf ]; then
                 INSTALL_PATH="$LEGACY_PATH" /usr/lib/maldet/importconf || true
             fi
         fi
-@@PKG_POSTINST_EXTRA@@
+        for _f in custom.md5.dat custom.sha256.dat custom.hex.dat custom.csig.dat custom.yara; do
+            [ -f "/var/lib/maldet/sigs/$_f" ] || touch "/var/lib/maldet/sigs/$_f"
+        done
+        [ -d "/var/lib/maldet/sigs/custom.yara.d" ] || mkdir -p "/var/lib/maldet/sigs/custom.yara.d"
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
         ;;
 esac
 

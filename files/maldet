@@ -25,8 +25,13 @@ header() {
 	echo ""
 }
 
+# FHS package layout paths — fallback when legacy symlink farm is broken
+_fhs_internals="/usr/lib/maldet/internals"
+
 if [ -f "$intcnf" ]; then
 	source "$intcnf"
+elif [ -f "$_fhs_internals/internals.conf" ]; then
+	source "$_fhs_internals/internals.conf"
 else
 	header
 	echo "maldet($$): {glob} \$intcnf not found, aborting." >&2
@@ -36,10 +41,27 @@ fi
 # Source decomposed library hub (sources all vendored libs, sub-libraries, and config)
 if [ -f "$inspath/internals/lmd.lib.sh" ]; then
 	source "$inspath/internals/lmd.lib.sh"
+elif [ -f "$_fhs_internals/lmd.lib.sh" ]; then
+	source "$_fhs_internals/lmd.lib.sh"
 else
 	header
 	echo "maldet($$): {glob} lmd.lib.sh not found, aborting." >&2
 	exit 1
+fi
+
+# Verify and repair package symlink farm (no-op for install.sh layout —
+# pkg_fhs_verify_farm returns 0 immediately when manifest file is absent).
+# pkg_lib.sh is not in the lmd.lib.sh source chain (it is a packaging
+# library, not a runtime library), so source it directly here.
+# shellcheck disable=SC1090
+_pkg_lib="$inspath/internals/pkg_lib.sh"
+if [ ! -f "$_pkg_lib" ] && [ -f "$_fhs_internals/pkg_lib.sh" ]; then
+	_pkg_lib="$_fhs_internals/pkg_lib.sh"
+fi
+if [ -f "$_pkg_lib" ]; then
+	source "$_pkg_lib"
+	pkg_fhs_verify_farm "$_fhs_internals/.symlink-manifest" ||
+		echo "maldet($$): warning: symlink farm has unresolvable entries — reinstall package" >&2
 fi
 
 # prerun operations

@@ -11,21 +11,12 @@
 			"type": "section",
 			"text": {
 				"type": "mrkdwn",
-				"text": "*{{TOTAL_HITS}}* threat(s) detected  |  {{SCAN_STARTED}}"
+				"text": "*{{TOTAL_HITS}}* threat(s) detected  |  {{SUMMARY_TOTAL_QUARANTINED}} quarantined  |  {{SUMMARY_TOTAL_CLEANED}} cleaned\n{{SUMMARY_BY_TYPE}}  |  {{SUMMARY_QUARANTINE_STATUS}}  |  {{SCAN_STARTED}}"
 			}
 		},
 {{ENTRY_BLOCKS}}
 		{
 			"type": "divider"
-		},
-		{
-			"type": "context",
-			"elements": [
-				{
-					"type": "mrkdwn",
-					"text": "{{SUMMARY_TOTAL_HITS}} hits | {{SUMMARY_TOTAL_CLEANED}} cleaned | {{SUMMARY_BY_TYPE}} | {{SUMMARY_QUARANTINE_STATUS}}"
-				}
-			]
 		},
 		{
 			"type": "context",
