@@ -316,6 +316,11 @@ BEGIN { next_sid = 0 }
 		}
 	}
 	if (cur != "") { nsubs++; subsigs[nsubs] = cur }
+	# Detect && — not valid hex or a recognized separator (use || between clauses)
+	if (index(sigs_field, "&&") > 0) {
+		print "{csig} WARNING: found && in csig (not a valid separator; use || between clauses), skipping: " signame > "/dev/stderr"
+		next
+	}
 	if (nsubs == 0) {
 		print "{csig} WARNING: no subsigs in csig line, skipping: " substr(line, 1, 60) > "/dev/stderr"
 		next
@@ -375,6 +380,10 @@ BEGIN { next_sid = 0 }
 				gere = compile_subsig(grp_subs[gi])
 				if (gere == "") {
 					print "{csig} WARNING: failed to compile group subsig, skipping rule: " signame > "/dev/stderr"
+					compile_ok = 0; break
+				}
+				if (length(gere) < 8) {
+					print "{csig} WARNING: universal subsig (length " length(gere) ") in OR group defeats filtering, skipping rule: " signame > "/dev/stderr"
 					compile_ok = 0; break
 				}
 				gsid = get_sid(gere)

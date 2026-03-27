@@ -491,17 +491,18 @@ _source_lmd_stack() {
     assert_success
 }
 
-# --- Test 32: Universal subsig in OR group counts as match (edge case 4) ---
-@test "csig: universal subsig (short pattern) satisfies OR threshold" {
-    # OR rule: threshold 1 out of (CHARLIE + short_pattern)
-    # File has neither CHARLIE, but short_pattern (2 hex chars = 1 byte) is universal
-    # Universal subsigs always match → threshold met → hit
-    # "aa" is 2 hex chars (1 byte) — classified as universal (< 8 chars)
+# --- Test 32: Universal subsig in OR group rejected (compiler guard) ---
+@test "csig: universal subsig in OR group rejected — no false positive" {
+    # "aa" is 2 hex chars (1 byte) — universal tier (< 8 chars).
+    # A universal alternative in an OR group defeats filtering (always matches),
+    # so the compiler must reject the entire rule with a warning.
     echo "(${HEX_CHARLIE}||aa);1:{CSIG}test.csig.uni.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
     cp "$SAMPLES_DIR/test-csig-single.php" "$TEST_SCAN_DIR/"
     run maldet -a "$TEST_SCAN_DIR"
     assert_scan_completed
-    assert_output --partial "malware hits 1"
+    assert_output --partial "malware hits 0"
+    run grep "universal subsig" "$LMD_INSTALL/logs/event_log"
+    assert_success
 }
 
 @test "csig: AND-rule hit output unchanged after SID preload refactor" {
@@ -537,4 +538,43 @@ _source_lmd_stack() {
     run maldet -a "$TEST_SCAN_DIR"
     assert_scan_completed
     assert_output --partial "malware hits 1"
+}
+
+# --- Test 35: && between groups rejected with warning ---
+@test "csig: && between groups rejected — no false positive" {
+    # && is not a valid clause separator; the correct separator is ||.
+    # Without this guard, the parser treats the whole expression as one OR group
+    # and garbage alternatives (including short patterns) cause match-everything.
+    echo "(${HEX_ALPHA}||${HEX_BRAVO})&&(${HEX_CHARLIE}):{CSIG}test.csig.amp.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+    cp "$SAMPLES_DIR/test-csig-and.php" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 0"
+    run grep "not a valid separator" "$LMD_INSTALL/logs/event_log"
+    assert_success
+}
+
+# --- Test 36: All-OR-group sig matches when all groups satisfied ---
+@test "csig: all-OR-group sig matches when all groups satisfied" {
+    # Two OR groups with no plain AND anchor — file has ALPHA + BRAVO.
+    # Group 1 (ALPHA||CHARLIE): ALPHA present → satisfied
+    # Group 2 (BRAVO||CHARLIE): BRAVO present → satisfied
+    # All groups pass → hit
+    echo "(${HEX_ALPHA}||${HEX_CHARLIE})||(${HEX_BRAVO}||${HEX_CHARLIE}):{CSIG}test.csig.allor.hit.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+    cp "$SAMPLES_DIR/test-csig-and.php" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 1"
+}
+
+# --- Test 37: All-OR-group sig misses when one group unsatisfied ---
+@test "csig: all-OR-group sig misses when one group unsatisfied" {
+    # Two OR groups — file has ALPHA + BRAVO but NOT CHARLIE.
+    # Group 1 (ALPHA||BRAVO): ALPHA present → satisfied
+    # Group 2 (CHARLIE only): not present → unsatisfied → miss
+    echo "(${HEX_ALPHA}||${HEX_BRAVO})||(${HEX_CHARLIE}):{CSIG}test.csig.allor.miss.1" > "$LMD_INSTALL/sigs/custom.csig.dat"
+    cp "$SAMPLES_DIR/test-csig-and.php" "$TEST_SCAN_DIR/"
+    run maldet -a "$TEST_SCAN_DIR"
+    assert_scan_completed
+    assert_output --partial "malware hits 0"
 }

@@ -180,15 +180,28 @@ _run_yara_scan() {
 _scan_progress() {
 	# Unified scan progress line for all engines and stages.
 	# Gated by _in_scan_context to prevent output in monitor/clean paths.
-	# Args: stage fileinfo [elapsed]
-	local _stage="$1" _fileinfo="$2" _elapsed="$3"
+	# Args: stage fileinfo [elapsed [processed file_count]]
+	local _stage="$1" _fileinfo="$2" _elapsed="$3" _processed="${4:-}" _file_count="${5:-}"
 	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
 	   [ "$set_background" != "1" ] && [ -z "$single_filescan" ]; then
-		local _status=""
+		local _status="" _pct="" _eta_str=""
+		# Compute % and ETA when per-file progress is available
+		if [ -n "$_processed" ] && [ "$_processed" -gt 0 ] && [ -n "$_file_count" ] && [ "$_file_count" -gt 0 ]; then
+			local _eta
+			_pct=" ($(( _processed * 100 / _file_count ))%)"
+			if [ -n "$_elapsed" ] && [ "$_elapsed" -gt 5 ]; then
+				_eta=$(( (_elapsed * _file_count / _processed) - _elapsed ))
+				if [ "$_eta" -ge 60 ]; then
+					_eta_str=" | eta ~$((_eta / 60))m$((_eta % 60))s"
+				else
+					_eta_str=" | eta ~${_eta}s"
+				fi
+			fi
+		fi
 		if [ -n "$_elapsed" ]; then
 			_status=" | elapsed ${_elapsed}s"
 		fi
-		local _line="maldet($$): {scan} [$_stage] $_fileinfo${_status} | $progress_hits hits $progress_cleaned cleaned"
+		local _line="maldet($$): {scan} [$_stage] $_fileinfo${_pct}${_status}${_eta_str} | $progress_hits hits $progress_cleaned cleaned"
 		if [ -t 1 ]; then
 			# TTY: overwrite current line with cursor-to-column-1 and erase-to-EOL
 			printf '\033[%sG\033[K%s' "$res_col" "$_line"
@@ -197,6 +210,41 @@ _scan_progress() {
 			echo "$_line"
 		fi
 	fi
+}
+
+# Background scan progress checkpoint interval in seconds (0 = disabled)
+_bg_progress_interval="${scan_progress_log_interval:-60}"
+[[ "$_bg_progress_interval" =~ ^[0-9]+$ ]] || _bg_progress_interval=60  # sanitize non-numeric to default
+_bg_progress_last=0
+
+_scan_progress_log() {
+	# Log a progress checkpoint to event_log during background scans.
+	# Called from worker poll loops; rate-limited to _bg_progress_interval.
+	# Args: stage processed file_count elapsed
+	[ "$set_background" != "1" ] && return
+	[ "$_in_scan_context" != "1" ] && return
+	[ "$_bg_progress_interval" -le 0 ] 2>/dev/null && return  # safe: sanitized at init; suppresses edge-case comparison error
+	local _stage="$1" _processed="$2" _file_count="$3" _elapsed="$4"
+	local _now _pct _eta _eta_str
+	_now=$SECONDS
+	if [ $((_now - _bg_progress_last)) -lt "$_bg_progress_interval" ]; then
+		return
+	fi
+	_bg_progress_last=$_now
+	_pct=0
+	_eta_str=""
+	if [ "$_processed" -gt 0 ] && [ "$_file_count" -gt 0 ]; then
+		_pct=$(( _processed * 100 / _file_count ))
+		if [ "$_elapsed" -gt 5 ]; then
+			_eta=$(( (_elapsed * _file_count / _processed) - _elapsed ))
+			if [ "$_eta" -ge 60 ]; then
+				_eta_str=" | eta ~$((_eta / 60))m$((_eta % 60))s"
+			else
+				_eta_str=" | eta ~${_eta}s"
+			fi
+		fi
+	fi
+	eout "{scan} [$_stage] ${_processed}/${_file_count} files (${_pct}%) | elapsed ${_elapsed}s${_eta_str} | ${progress_hits:-0} hits ${progress_cleaned:-0} cleaned"
 }
 
 _wait_workers_with_progress() {
@@ -210,6 +258,7 @@ _wait_workers_with_progress() {
 	local _total=${#_pids[@]}
 	local _start_ts _elapsed _running _pid _processed _wpath _wval
 	_start_ts=$SECONDS
+	_bg_progress_last=0  # reset rate limiter so first checkpoint of each stage fires promptly
 	while true; do
 		_running=0
 		for _pid in "${_pids[@]}"; do
@@ -231,7 +280,8 @@ _wait_workers_with_progress() {
 			done
 		fi
 		if [ "$_processed" -gt 0 ]; then
-			_scan_progress "$_stage" "${_processed}/${_file_count} files" "$_elapsed"
+			_scan_progress "$_stage" "${_processed}/${_file_count} files" "$_elapsed" "$_processed" "$_file_count"
+			_scan_progress_log "$_stage" "$_processed" "$_file_count" "$_elapsed"
 		else
 			_scan_progress "$_stage" "$_file_count files" "$_elapsed"
 		fi
@@ -252,16 +302,28 @@ _start_elapsed_timer() {
 	# Usage: _start_elapsed_timer <stage> <file_count>
 	# Sets _timer_pid to the background process PID.
 	# Caller must call _stop_elapsed_timer when the stage completes.
-	# No-op in background mode to avoid wasted wake-ups.
+	# In foreground: console progress every 2s. In background: log checkpoint only.
 	_timer_pid=""
-	[ "$set_background" == "1" ] && return
-	local _stage="$1" _file_count="$2" _start_ts
+	local _stage="$1" _file_count="$2" _start_ts _poll
 	_start_ts=$SECONDS
-	while true; do
-		sleep 2
-		_scan_progress "$_stage" "$_file_count files" "$(( SECONDS - _start_ts ))"
-	done &
-	_timer_pid=$!
+	if [ "$set_background" == "1" ]; then
+		_poll="${_bg_progress_interval:-60}"
+		[[ "$_poll" =~ ^[0-9]+$ ]] || _poll=60  # sanitize non-numeric to default
+		[ "$_poll" -le 0 ] && return
+		while true; do
+			sleep "$_poll"
+			# Note: subshell cannot see parent's progress_hits/progress_cleaned updates;
+			# report elapsed time only — accurate hit counts come from _scan_progress_log
+			eout "{scan} [$_stage] $_file_count files | elapsed $(( SECONDS - _start_ts ))s"
+		done &
+		_timer_pid=$!
+	else
+		while true; do
+			sleep 2
+			_scan_progress "$_stage" "$_file_count files" "$(( SECONDS - _start_ts ))"
+		done &
+		_timer_pid=$!
+	fi
 }
 
 _stop_elapsed_timer() {
@@ -414,9 +476,7 @@ _scan_run_native() {
 				_w=0
 				while [ "$_w" -lt "$_nworkers" ]; do
 					if [ -f "$_md5_chunk_prefix.$_w" ]; then
-						# Skip progress writes in background mode for max throughput
-						_md5_pfile=""
-						[ "$set_background" != "1" ] && _md5_pfile="$_md5_progress_dir/$_w"
+						_md5_pfile="$_md5_progress_dir/$_w"
 						_hash_batch_worker "$md5sum" "md5" "$_md5_chunk_prefix.$_w" "$runtime_md5" \
 							"$_md5_pfile" \
 							> "$tmpdir/.md5_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
@@ -490,8 +550,7 @@ _scan_run_native() {
 				_w=0
 				while [ "$_w" -lt "$_nworkers" ]; do
 					if [ -f "$_sha256_chunk_prefix.$_w" ]; then
-						_sha256_pfile=""
-						[ "$set_background" != "1" ] && _sha256_pfile="$_sha256_progress_dir/$_w"
+						_sha256_pfile="$_sha256_progress_dir/$_w"
 						_hash_batch_worker "$sha256sum" "sha256" "$_sha256_chunk_prefix.$_w" "$runtime_sha256" \
 							"$_sha256_pfile" \
 							> "$tmpdir/.sha256_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
@@ -548,7 +607,18 @@ _scan_run_native() {
 	[ "$_has_csig_sigs" -eq 1 ] && _hex_stage_label="hex+csig"
 	if [ "$_hex_file_count" -gt 0 ] && { [ "$_has_hex_sigs" -eq 1 ] || [ "$_has_csig_sigs" -eq 1 ]; }; then
 		# Determine hex depth
-		_hex_depth="${scan_hexdepth:-524288}"
+		_hex_depth="${scan_hexdepth:-262144}"
+		# Validate scan_hex_chunk_size: floor 1024, ceiling 20480
+		local _hex_chunk_size="${scan_hex_chunk_size:-10240}"
+		if ! [[ "$_hex_chunk_size" =~ ^[0-9]+$ ]]; then
+			_hex_chunk_size=10240
+		elif [ "$_hex_chunk_size" -lt 1024 ]; then
+			eout "scan_hex_chunk_size=$scan_hex_chunk_size below minimum, clamped to 1024; to reduce disk usage lower scan_hexdepth instead" "stdout"
+			_hex_chunk_size=1024
+		elif [ "$_hex_chunk_size" -gt 20480 ]; then
+			eout "scan_hex_chunk_size=$scan_hex_chunk_size above maximum, clamped to 20480; to increase throughput raise scan_workers instead" "stdout"
+			_hex_chunk_size=20480
+		fi
 		# Resolve worker count
 		_nworkers=$(_resolve_worker_count "$_hex_file_count")
 		_scan_progress "$_hex_stage_label" "$_hex_file_count files"
@@ -565,14 +635,13 @@ _scan_run_native() {
 		while [ "$_w" -lt "$_nworkers" ]; do
 			_wout="$tmpdir/.hex_worker.$$.${_w}"
 			if [ -f "$_chunk_prefix.$_w" ]; then
-				# Skip progress writes in background mode for max throughput
-				_hex_pfile=""
-				[ "$set_background" != "1" ] && _hex_pfile="$_hex_progress_dir/$_w"
+				_hex_pfile="$_hex_progress_dir/$_w"
 				_hex_csig_batch_worker "$_chunk_prefix.$_w" "$_hex_depth" \
 					"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 					"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
 					"$runtime_csig_wildcards" "$runtime_csig_universals" \
 					"$_hex_pfile" \
+					"$_hex_chunk_size" \
 					> "$_wout" 2>/dev/null &  # suppress worker file-access stderr
 				_worker_pids[_w]=$!
 				_worker_outputs[_w]="$_wout"

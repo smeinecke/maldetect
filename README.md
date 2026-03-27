@@ -261,7 +261,8 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `scan_max_depth` | Maximum directory depth for find | `15` |
 | `scan_min_filesize` | Minimum file size to scan | `24` bytes |
 | `scan_max_filesize` | Maximum file size to scan | `2048k` |
-| `scan_hexdepth` | Byte depth for HEX signature matching | `524288` |
+| `scan_hexdepth` | Byte depth for HEX signature matching | `262144` |
+| `scan_hex_chunk_size` | Files per micro-batch in HEX+CSIG scanning (range: 1024-20480) | `10240` |
 | `scan_csig` | Enable compound signature (csig) scanning (native mode only) | `1` |
 | `scan_workers` | Parallel workers for MD5, SHA-256, HEX, and CSIG scan passes | `auto` |
 | `scan_cpunice` | Nice priority for scan process (-19 to 19) | `19` |

@@ -9,7 +9,21 @@
 #
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 lmd_version="2.0.1"
-inspath='/usr/local/maldetect'
+
+# Resolve install/source path (3-tier: LMD_BASEDIR env > source-tree auto-detect > default)
+if [ -n "${LMD_BASEDIR:-}" ]; then
+	inspath="$LMD_BASEDIR"
+else
+	_self=$(readlink -f "$0" 2>/dev/null || echo "$0")  # resolve symlinks; fallback to $0
+	_selfdir="${_self%/*}"
+	if [ -f "$_selfdir/internals/internals.conf" ]; then
+		inspath="$_selfdir"
+	else
+		inspath='/usr/local/maldetect'
+	fi
+	unset _self _selfdir
+fi
+unset LMD_BASEDIR  # consumed; prevent leakage to child processes (e.g. maldet -b)
 intcnf="$inspath/internals/internals.conf"
 if [ -f "/etc/sysconfig/maldet" ]; then
         syscnf=/etc/sysconfig/maldet

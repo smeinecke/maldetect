@@ -211,3 +211,24 @@ teardown() {
     run maldet -co quar_hits=1 -a "$TEST_SCAN_DIR"
     assert_output --partial "rejected unsafe -co value"
 }
+
+# ── HEX scalability config tests ──────────────────────────────────
+
+@test "conf.maldet defines scan_hexdepth default as 262144" {
+    run grep '^scan_hexdepth=' "$LMD_INSTALL/conf.maldet"
+    assert_success
+    assert_output 'scan_hexdepth="262144"'
+}
+
+@test "conf.maldet defines scan_hex_chunk_size default as 10240" {
+    run grep '^scan_hex_chunk_size=' "$LMD_INSTALL/conf.maldet"
+    assert_success
+    assert_output 'scan_hex_chunk_size="10240"'
+}
+
+@test "-co scan_hex_chunk_size is accepted by allowlist" {
+    cp "$SAMPLES_DIR/clean-file.txt" "$TEST_SCAN_DIR/"
+    run maldet -co scan_hex_chunk_size=2048 -a "$TEST_SCAN_DIR"
+    assert_success
+    refute_output --partial "rejected unsafe -co value"
+}

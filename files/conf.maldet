@@ -268,9 +268,19 @@ scan_min_filesize="24"
 scan_max_filesize="2048k"
 
 # The maximum byte depth that the scanner will search into a file's content.
-# Higher values allow deeper pattern matching at the cost of scan performance.
-# [ changing this may have an impact on scan performance ]
-scan_hexdepth="524288"
+# Higher values allow deeper pattern matching at the cost of scan performance
+# and temporary disk usage. The default (256 KB) covers 98.9% of HEX patterns;
+# the remaining 1.1% (deep php.inject.* at offsets > 256 KB) are caught by
+# YARA Stage 3 when scan_yara is enabled (default).
+# [ changing this may have an impact on scan performance and disk usage ]
+scan_hexdepth="262144"
+
+# The maximum number of files processed per micro-batch during HEX+CSIG
+# scanning. Valid range: 1024-20480. Values outside this range are clamped
+# with a logged warning. To increase throughput, raise scan_workers instead.
+# To reduce disk usage, lower scan_hexdepth instead.
+# [ changing this may have an impact on scan performance and disk usage ]
+scan_hex_chunk_size="10240"
 
 # Process CPU scheduling (nice) priority level for scan operations.
 # [ -19 = high prio , 19 = low prio, default = 19 ]
@@ -508,3 +518,13 @@ session_legacy_compat="auto"
 # [ string length in characters, default = 150000 ]
 string_length_scan="0"		# [ 0 = disabled, 1 = enabled ]
 string_length="150000"		# [ max string length ]
+
+##
+# [ SCAN PROGRESS LOGGING ]
+##
+# Interval in seconds between progress checkpoints written to the
+# event log during background scans (maldet -b). Each checkpoint
+# reports the current scan stage, files processed, percentage,
+# elapsed time, and estimated time remaining.
+# [ 0 = disabled, default = 60 ]
+scan_progress_log_interval="60"

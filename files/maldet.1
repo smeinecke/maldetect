@@ -312,6 +312,7 @@ Key variables by category:
 .BR scan_min_filesize ,
 .BR scan_max_filesize ,
 .BR scan_hexdepth ,
+.BR scan_hex_chunk_size ,
 .BR scan_find_timeout ,
 .BR scan_export_filelist ,
 .BR scan_tmpdir_paths ,
@@ -322,7 +323,8 @@ Key variables by category:
 .BR scan_ignore_user ,
 .BR scan_ignore_group ,
 .BR string_length_scan ,
-.BR string_length .
+.BR string_length ,
+.BR scan_progress_log_interval .
 .PP
 .B Quarantine:
 .BR quarantine_hits ,
@@ -457,6 +459,41 @@ file list generation phase.
 A value of 0 disables the timeout.
 Values between 1 and 59 are silently ignored (minimum is 60).
 Default: 0.
+.PP
+.B scan_progress_log_interval
+sets the interval in seconds between progress checkpoints written to the
+event log during background scans
+.RB ( "maldet \-b" ).
+Each checkpoint reports the current scan stage, files processed, percentage
+complete, elapsed time, and estimated time remaining.
+A value of 0 disables progress logging.
+Default: 60.
+.PP
+.B scan_hexdepth
+sets the maximum byte depth that the scanner reads from each file during
+HEX signature matching (stage 2).
+The default (262144 = 256\ KB) covers 98.9% of HEX patterns; the remaining
+1.1% of deep patterns (php.inject.* at offsets > 256\ KB) are caught by
+YARA stage 3 when
+.B scan_yara
+is enabled (default).
+Higher values increase temporary disk usage during large scans.
+Default: 262144.
+.PP
+.B scan_hex_chunk_size
+sets the maximum number of files processed per micro\-batch during
+HEX+CSIG scanning.
+Lower values reduce temporary disk usage; higher values may improve throughput
+on fast storage.
+Valid range: 1024\(en20480.
+Values outside this range are clamped with a logged warning.
+To increase throughput, raise
+.B scan_workers
+instead.
+To reduce disk usage, lower
+.B scan_hexdepth
+instead.
+Default: 10240.
 .PP
 .B scan_days
 sets the number of days to look back for recently modified files during

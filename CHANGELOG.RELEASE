@@ -51,8 +51,15 @@ v2.0.1 | Mar 25 2026:
 [New] Symlink farm enforcement: static manifest ships with RPM/DEB; pkg_fhs_verify_farm
       auto-detects and repairs broken symlinks at startup
 [New] FHS fallback sourcing: maldet boots from /usr/lib/maldet when legacy symlinks broken
+[New] Portable source-tree execution: run maldet directly from git clone or tarball without
+      install.sh; auto-detects inspath from script location; LMD_BASEDIR env override
 
   -- Changes --
+
+[Change] Alert templates: consolidate summary into header templates; add quarantine metrics
+         to scan and panel templates
+[Change] Update pkg_lib.sh to v1.0.6: symlink farm enforcement
+[Change] Update batsman submodule to v1.3.0: GNU parallel support, BATS --jobs
 
 [Change] Hook scans write to rolling hook.hits.log instead of creating session files;
          genalert suppressed for hook scans
@@ -73,16 +80,24 @@ v2.0.1 | Mar 25 2026:
 [Change] inotify_verbose per-file ClamAV logging deprecated; batch engine log
          messages supersede
 [Change] Vendored libraries updated: tlog_lib v2.0.4, elog_lib v1.0.4, alert_lib
-         v1.0.5, pkg_lib v1.0.5; batsman submodule v1.2.2
+         v1.0.5, pkg_lib v1.0.6; batsman submodule v1.3.0
 [Change] Scan engine: HEX+CSIG merged into single worker pass; scan stage reorder
          (strlen runs last); bulk awk HEX classifier
 [Change] gensigs: awk compiler replaces bash+sed wildcard/csig loops; dead helpers removed
 [Change] _scan_progress(): plain newline-terminated output in non-TTY contexts;
          ANSI escape sequences gated behind TTY check
 [Change] install.sh: delegate config/state migration to importconf
+[Change] scan_hexdepth default reduced from 524288 (512 KB) to 262144 (256 KB); covers
+         98.9% of HEX patterns with YARA backstop for remaining 1.1%
+[New] scan_hex_chunk_size: micro-batch file count for HEX+CSIG scanning (default 10240);
+      peak disk per worker bounded to ~75 MB vs ~4 GB for large scans
+[New] Micro-chunked HEX batch processing: _hex_csig_batch_worker() processes files in
+      micro-chunks, creating and deleting .hcb batch files per iteration
+[New] importconf: upgrade migration for scan_hexdepth old default 524288 to 262144
 
   -- Bug Fixes --
 
+[Fix] CSIG compiler: reject invalid && separator and universal subsigs in OR groups
 [Fix] pkg/Makefile: VERSION extraction, test target Dockerfile paths
 [Fix] install.sh: detect supervisor and legacy monitor; graceful stop+restart on upgrade
 [Fix] -co/--config-option now position-independent; in-memory parser replaces tmpfile+sed

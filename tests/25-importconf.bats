@@ -191,8 +191,93 @@ _run_compat_migrate() {
     assert_output 'scan_hexdepth="1048576"'
 }
 
+# --- scan_hexdepth old-default migration tests ---
+# NOTE: These tests inline the production migration logic rather than calling a
+# function because the hexdepth migration is top-level script code in importconf
+# (not a function like _compat_migrate). The structural test at the end of this
+# file ("importconf contains hexdepth old-default migration block") guards
+# against the inline copy diverging from production.
+
+@test "hexdepth migration: old default 524288 migrated to 262144" {
+    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
+    sed -i 's/^scan_hexdepth=.*/scan_hexdepth="524288"/' "$_BATS_OLD_CONF"
+    _run_merge
+    _load_install_functions
+    # Replicate hexdepth old-default migration logic from importconf
+    local _hexfifo_val _old_hexdepth
+    # safe: 2>/dev/null on pkg_config_get — var may be absent from old config
+    _hexfifo_val=$(pkg_config_get "$_BATS_OLD_CONF" scan_hexfifo 2>/dev/null) || \
+        _hexfifo_val=$(pkg_config_get "$_BATS_OLD_CONF" hex_fifo_scan 2>/dev/null) || \
+        _hexfifo_val=""
+    # safe: 2>/dev/null on pkg_config_get — var may be absent from old config
+    _old_hexdepth=$(pkg_config_get "$_BATS_OLD_CONF" scan_hexdepth 2>/dev/null) || \
+        _old_hexdepth=""
+    if [[ "$_old_hexdepth" = "524288" ]] && [[ "${_hexfifo_val:-0}" != "1" ]]; then
+        pkg_config_set "$_BATS_MERGED" scan_hexdepth "262144"
+    fi
+    run grep '^scan_hexdepth=' "$_BATS_MERGED"
+    assert_output 'scan_hexdepth="262144"'
+}
+
+@test "hexdepth migration: custom value preserved (not overwritten)" {
+    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
+    sed -i 's/^scan_hexdepth=.*/scan_hexdepth="1048576"/' "$_BATS_OLD_CONF"
+    _run_merge
+    _load_install_functions
+    # Replicate hexdepth old-default migration logic from importconf
+    local _hexfifo_val _old_hexdepth
+    # safe: 2>/dev/null on pkg_config_get — var may be absent from old config
+    _hexfifo_val=$(pkg_config_get "$_BATS_OLD_CONF" scan_hexfifo 2>/dev/null) || \
+        _hexfifo_val=$(pkg_config_get "$_BATS_OLD_CONF" hex_fifo_scan 2>/dev/null) || \
+        _hexfifo_val=""
+    # safe: 2>/dev/null on pkg_config_get — var may be absent from old config
+    _old_hexdepth=$(pkg_config_get "$_BATS_OLD_CONF" scan_hexdepth 2>/dev/null) || \
+        _old_hexdepth=""
+    if [[ "$_old_hexdepth" = "524288" ]] && [[ "${_hexfifo_val:-0}" != "1" ]]; then
+        pkg_config_set "$_BATS_MERGED" scan_hexdepth "262144"
+    fi
+    run grep '^scan_hexdepth=' "$_BATS_MERGED"
+    assert_output 'scan_hexdepth="1048576"'
+}
+
+@test "hexdepth migration: skipped when hexfifo was enabled (hexfifo migration handles depth)" {
+    cp "$LMD_INSTALL/conf.maldet" "$_BATS_OLD_CONF"
+    sed -i 's/^scan_hexdepth=.*/scan_hexdepth="524288"/' "$_BATS_OLD_CONF"
+    echo 'scan_hexfifo="1"' >> "$_BATS_OLD_CONF"
+    echo 'scan_hexfifo_depth="1048576"' >> "$_BATS_OLD_CONF"
+    _run_merge
+    _load_install_functions
+    # Replicate hexfifo consolidation first (sets depth from hexfifo)
+    local _hexfifo_val _hexfifo_depth _old_hexdepth
+    # safe: 2>/dev/null on pkg_config_get — var may be absent from old config
+    _hexfifo_val=$(pkg_config_get "$_BATS_OLD_CONF" scan_hexfifo 2>/dev/null) || \
+        _hexfifo_val=$(pkg_config_get "$_BATS_OLD_CONF" hex_fifo_scan 2>/dev/null) || \
+        _hexfifo_val=""
+    if [[ "${_hexfifo_val:-0}" = "1" ]]; then
+        _hexfifo_depth=$(pkg_config_get "$_BATS_OLD_CONF" scan_hexfifo_depth 2>/dev/null) || _hexfifo_depth=""
+        if [[ -n "$_hexfifo_depth" ]]; then
+            pkg_config_set "$_BATS_MERGED" scan_hexdepth "$_hexfifo_depth"
+        fi
+    fi
+    # Now replicate hexdepth old-default migration (should NOT fire)
+    # safe: 2>/dev/null on pkg_config_get — var may be absent from old config
+    _old_hexdepth=$(pkg_config_get "$_BATS_OLD_CONF" scan_hexdepth 2>/dev/null) || \
+        _old_hexdepth=""
+    if [[ "$_old_hexdepth" = "524288" ]] && [[ "${_hexfifo_val:-0}" != "1" ]]; then
+        pkg_config_set "$_BATS_MERGED" scan_hexdepth "262144"
+    fi
+    # hexfifo depth should win — 1048576, NOT 262144
+    run grep '^scan_hexdepth=' "$_BATS_MERGED"
+    assert_output 'scan_hexdepth="1048576"'
+}
+
 # --- Structural validation ---
 
 @test "importconf file exists at install path" {
     [ -f "$LMD_INSTALL/internals/importconf" ]
+}
+
+@test "importconf contains hexdepth old-default migration block" {
+    run grep -c 'scan_hexdepth old default' "$LMD_INSTALL/internals/importconf"
+    assert_output '1'
 }

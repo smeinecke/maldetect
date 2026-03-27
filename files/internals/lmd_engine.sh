@@ -122,6 +122,7 @@ _hex_csig_batch_worker() {
 	local _hex_literals="$3" _hex_regexes="$4" _hex_sigmap="$5"
 	local _csig_batch_compiled="${6:-}" _csig_lit="${7:-}" _csig_wc="${8:-}" _csig_uni="${9:-}"
 	local _progress_file="${10:-}"
+	local _chunk_size="${11:-0}"
 
 	# Preload hex sigmap into associative array (eliminates awk fork per HEX hit)
 	# local -A safe here: runs in backgrounded subshell, not sourced-from-function
@@ -134,29 +135,76 @@ _hex_csig_batch_worker() {
 		done < "$_hex_sigmap"
 	fi
 
-	local _batch_hex _idx=0 _line
-	_batch_hex=$(mktemp "$tmpdir/.hcb.$$.XXXXXX")
-
-	# --- Phase 1: Batch hex extraction ---
-	local _names
-	_names=()
-	while IFS= read -r _line; do
-		[ -f "$_line" ] && [ -r "$_line" ] || continue
-		_names[_idx]="$_line"
-		_idx=$((_idx + 1))
-		_hex_extract_file "$_line" "$_depth"
-		printf '\n'
-		if [ -n "$_progress_file" ] && ((_idx % 100 == 0)); then
-			echo "$_idx" > "$_progress_file"
-		fi
-	done < "$_chunk" > "$_batch_hex"
-	[ -n "$_progress_file" ] && echo "$_idx" > "$_progress_file"
-
-	local _total_files=$_idx
-	if [ "$_total_files" -eq 0 ]; then
-		rm -f "$_batch_hex"
-		return 0
+	# Defense-in-depth: caller validates, but guard against direct invocation.
+	# Floor 1024, ceiling 20480; non-integer → default 10240.
+	if ! [[ "$_chunk_size" =~ ^[0-9]+$ ]]; then
+		_chunk_size=10240
+	elif [ "$_chunk_size" -lt 1024 ]; then
+		_chunk_size=1024
+	elif [ "$_chunk_size" -gt 20480 ]; then
+		_chunk_size=20480
 	fi
+
+	# Preload universal subsig IDs (hoisted — shared across all micro-chunks)
+	local _uni_sids=()
+	if [ -n "${_csig_batch_compiled:-}" ] && [ -s "${_csig_batch_compiled:-}" ]; then
+		if [ -n "${_csig_uni:-}" ] && [ -s "${_csig_uni:-}" ]; then
+			local _usid
+			while IFS= read -r _usid; do
+				_uni_sids[$_usid]=1
+			done < "$_csig_uni"
+		fi
+	fi
+
+	# Create CSIG literal temp files once (hoisted — shared across all micro-chunks)
+	local _lit_pats="" _lit_lkup=""
+	if [ -n "${_csig_batch_compiled:-}" ] && [ -s "${_csig_batch_compiled:-}" ]; then
+		if [ -n "${_csig_lit:-}" ] && [ -s "${_csig_lit:-}" ]; then
+			_lit_pats=$(mktemp "$tmpdir/.csig_lp.$$.XXXXXX")
+			_lit_lkup=$(mktemp "$tmpdir/.csig_ll.$$.XXXXXX")
+			command cut -f2 "$_csig_lit" > "$_lit_pats"
+			awk -F'\t' '{print $2 "\t" $1}' "$_csig_lit" > "$_lit_lkup"
+		fi
+	fi
+
+	# --- Micro-chunk outer loop ---
+	local _global_idx=0 _batch_hex _idx _line _total_files _names
+	local -A _loaded_sids=()
+
+	# Helper: check if SID matched on a given file line number
+	# Hoisted before loop — _uni_sids and _loaded_sids are both in enclosing scope
+	_check_sid_match() {
+		local __sid="$1" __linenum="$2"
+		[ -n "${_uni_sids[$__sid]:-}" ] && return 0
+		[ -n "${_loaded_sids[${__sid}:${__linenum}]+set}" ]
+	}
+
+	exec 3< "$_chunk"  # FD 3 reserved for chunk reader — inner pipelines must not use FD 3
+	while :; do
+		_batch_hex=$(mktemp "$tmpdir/.hcb.$$.XXXXXX")
+		_names=()
+		_idx=0
+
+		# --- Phase 1: Batch hex extraction (up to _chunk_size files) ---
+		while IFS= read -r _line <&3; do
+			[ -f "$_line" ] && [ -r "$_line" ] || continue
+			_names[_idx]="$_line"
+			_idx=$((_idx + 1))
+			_hex_extract_file "$_line" "$_depth"
+			printf '\n'
+			if [ -n "$_progress_file" ] && (((_global_idx + _idx) % 100 == 0)); then
+				echo "$((_global_idx + _idx))" > "$_progress_file"
+			fi
+			[ "$_idx" -ge "$_chunk_size" ] && break
+		done > "$_batch_hex"
+
+		if [ "$_idx" -eq 0 ]; then
+			command rm -f "$_batch_hex"
+			break
+		fi
+		[ -n "$_progress_file" ] && echo "$((_global_idx + _idx))" > "$_progress_file"
+
+		_total_files=$_idx
 
 	# --- Phase 2: HEX pattern matching ---
 	if [ -s "$_hex_literals" ]; then
@@ -195,22 +243,8 @@ _hex_csig_batch_worker() {
 		local _match_dir
 		_match_dir=$(mktemp -d "$tmpdir/.csig_mtx.$$.XXXXXX")
 
-		# Load universal subsig IDs
-		local _uni_sids=()
-		if [ -n "$_csig_uni" ] && [ -s "$_csig_uni" ]; then
-			local _usid
-			while IFS= read -r _usid; do
-				_uni_sids[$_usid]=1
-			done < "$_csig_uni"
-		fi
-
 		# Tier 1: Literal pass — single grep -Fno, awk fan-out to per-SID files
-		if [ -n "$_csig_lit" ] && [ -s "$_csig_lit" ]; then
-			local _lit_pats _lit_lkup
-			_lit_pats=$(mktemp "$tmpdir/.csig_lp.$$.XXXXXX")
-			_lit_lkup=$(mktemp "$tmpdir/.csig_ll.$$.XXXXXX")
-			cut -f2 "$_csig_lit" > "$_lit_pats"
-			awk -F'\t' '{print $2 "\t" $1}' "$_csig_lit" > "$_lit_lkup"
+		if [ -n "$_lit_pats" ] && [ -s "$_lit_pats" ]; then
 
 			# grep stderr: empty pattern file or no match — safe to ignore
 			grep -Fno -f "$_lit_pats" "$_batch_hex" 2>/dev/null |
@@ -242,7 +276,6 @@ _hex_csig_batch_worker() {
 					}
 				}' || true  # safe: no match is valid
 
-			rm -f "$_lit_pats" "$_lit_lkup"
 		fi
 
 		# Tier 2: Wildcard pass — one grep -En per ERE
@@ -251,15 +284,15 @@ _hex_csig_batch_worker() {
 			while IFS=$'\t' read -r _wsid _were; do
 				# grep stderr: malformed ERE is non-fatal — safe to ignore
 				grep -En "$_were" "$_batch_hex" 2>/dev/null |
-					cut -d: -f1 | sort -un >> "${_match_dir}/${_wsid}" || true  # safe: no match is valid
+					command cut -d: -f1 | command sort -un >> "${_match_dir}/${_wsid}" || true  # safe: no match is valid
 			done < "$_csig_wc"
 		fi
 
 		# Preload SID match files into associative array for O(1) lookup
 		# (eliminates grep -qFx fork per candidate-element pair in rule evaluation)
-		# local -A safe here: runs in backgrounded subshell, not sourced-from-function
-		# context; avoids the declare-A-global-state trap (see CLAUDE.md Bash 4.1+)
-		local -A _loaded_sids=()
+		# MUST reset per micro-chunk — stale SID data from prior chunks causes false hits
+		# local -A declared once before the loop; bare =() reliably clears on bash 4.1+
+		_loaded_sids=()
 		local _sid_file _sid_name _sid_ln
 		for _sid_file in "$_match_dir"/*; do
 			[ -f "$_sid_file" ] || continue
@@ -268,13 +301,6 @@ _hex_csig_batch_worker() {
 				_loaded_sids["${_sid_name}:${_sid_ln}"]=1
 			done < "$_sid_file"
 		done
-
-		# Helper: check if SID matched on a given file line number
-		_check_sid_match() {
-			local __sid="$1" __linenum="$2"
-			[ -n "${_uni_sids[$__sid]:-}" ] && return 0
-			[ -n "${_loaded_sids[${__sid}:${__linenum}]+set}" ]
-		}
 
 		# Rule evaluation: iterate rules in source order (first-match-wins)
 		local _signame _rtype _threshold _rule_spec
@@ -407,10 +433,17 @@ _hex_csig_batch_worker() {
 			esac
 		done < "$_csig_batch_compiled"
 
-		rm -rf "$_match_dir"
+		command rm -rf "$_match_dir"
 	fi
 
-	rm -f "$_batch_hex"
+	command rm -f "$_batch_hex"
+	_global_idx=$((_global_idx + _idx))
+	done
+	exec 3<&-
+
+	# Cleanup hoisted CSIG temp files
+	[ -n "$_lit_pats" ] && command rm -f "$_lit_pats"
+	[ -n "$_lit_lkup" ] && command rm -f "$_lit_lkup"
 }
 
 scan_strlen() {

@@ -64,11 +64,11 @@ _clean_rescan() {
 		local _chunk _hits
 		_chunk=$(mktemp "$tmpdir/.clean_chunk.$$.XXXXXX")
 		printf '%s\n' "$_fpath" > "$_chunk"
-		_hits=$(_hex_csig_batch_worker "$_chunk" "${scan_hexdepth:-524288}" \
+		_hits=$(_hex_csig_batch_worker "$_chunk" "${scan_hexdepth:-262144}" \
 			"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 			"${runtime_csig_batch_compiled:-}" "${runtime_csig_literals:-}" \
 			"${runtime_csig_wildcards:-}" "${runtime_csig_universals:-}" \
-			"")
+			"" "")
 		rm -f "$_chunk"
 		if [ -n "$_hits" ]; then
 			clean_failed=1

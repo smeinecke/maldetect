@@ -237,7 +237,7 @@ _build_co_allowed_pattern() {
 	_pat="${_pat}|sig_import_md5_url|sig_import_hex_url|sig_import_yara_url|sig_import_sha256_url|sig_import_csig_url"
 	_pat="${_pat}|scan_hashtype|scan_workers|scan_clamscan|scan_yara|scan_yara_timeout|scan_yara_scope|scan_csig"
 	_pat="${_pat}|scan_user_access|scan_user_access_minuid|scan_max_depth"
-	_pat="${_pat}|scan_min_filesize|scan_max_filesize|scan_hexdepth"
+	_pat="${_pat}|scan_min_filesize|scan_max_filesize|scan_hexdepth|scan_hex_chunk_size"
 	_pat="${_pat}|scan_cpunice|scan_ionice|scan_cpulimit"
 	_pat="${_pat}|scan_ignore_root|scan_ignore_user|scan_ignore_group"
 	_pat="${_pat}|scan_find_timeout|scan_export_filelist|scan_tmpdir_paths"
@@ -251,6 +251,7 @@ _build_co_allowed_pattern() {
 	_pat="${_pat}|enable_statistic|elk_host|elk_port|elk_index"
 	_pat="${_pat}|string_length_scan|string_length"
 	_pat="${_pat}|session_legacy_compat"
+	_pat="${_pat}|scan_progress_log_interval"
 	_pat="${_pat})\$"
 	printf -v "$1" '%s' "$_pat"
 }

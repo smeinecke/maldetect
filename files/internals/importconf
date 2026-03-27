@@ -138,6 +138,20 @@ if [[ "${_hexfifo_val:-0}" = "1" ]]; then
     fi
 fi
 
+# --- Special case: scan_hexdepth old default migration ---
+# Pre-v2.0.1 default was 524288 (512KB), reduced to 262144 (256KB).
+# Override if still at old default; preserve user customizations.
+# Read from BK_LAST (old config), not _merge_tmp, to avoid conflating
+# a user's explicit scan_hexfifo_depth=524288 with the old default.
+# Only fire when hexfifo was NOT enabled (hexfifo migration already
+# handled the depth in that case).
+# safe: 2>/dev/null on pkg_config_get — var may be absent from old config
+_old_hexdepth=$(pkg_config_get "$BK_LAST/conf.maldet" scan_hexdepth 2>/dev/null) || \
+    _old_hexdepth=""
+if [[ "$_old_hexdepth" = "524288" ]] && [[ "${_hexfifo_val:-0}" != "1" ]]; then
+    pkg_config_set "$_merge_tmp" scan_hexdepth "262144"
+fi
+
 # --- Special case: scan_hex_workers -> scan_workers (unconditional) ---
 # safe: 2>/dev/null on pkg_config_get — var may be absent from old config
 _hex_workers=$(pkg_config_get "$BK_LAST/conf.maldet" scan_hex_workers 2>/dev/null) || \
