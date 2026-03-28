@@ -254,6 +254,14 @@ else
 	exit 1
 fi
 
+if [ -f "$_internals_dir/lmd_lifecycle.sh" ]; then
+	source "$_internals_dir/lmd_lifecycle.sh"
+else
+	header
+	echo "maldet($$): {glob} lmd_lifecycle.sh not found, aborting." >&2
+	exit 1
+fi
+
 if [ -f "$_internals_dir/lmd_scan.sh" ]; then
 	source "$_internals_dir/lmd_scan.sh"
 else

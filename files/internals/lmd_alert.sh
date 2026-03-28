@@ -733,46 +733,88 @@ _lmd_render_json_legacy() {
 }
 
 # _lmd_render_json_list — render all session reports as JSON array
-# Iterates session files in $sessdir (TSV first, then legacy plaintext),
-# and outputs a JSON object with a "reports" array. Deduplicates by scanid.
+# Index-first hybrid: rebuilds index from TSV files if missing, reads from
+# index (fast path), then scans for legacy plaintext sessions not in the
+# index (backward compat with pre-2.0.1 sessions). No per-file TSV glob.
 # shellcheck disable=SC2154
 _lmd_render_json_list() {
-	printf '{\n  "version": "1.0",\n  "type": "report_list",\n  "reports": ['
-	local _first=1
-	local _file _seen_ids=""
-	# Pass 1: TSV session files (preferred format)
-	for _file in "$sessdir"/session.tsv.[0-9]*; do
-		[ -f "$_file" ] || continue
-		_session_read_meta "$_file"
-		[ -z "$scanid" ] && continue
-		_seen_ids="$_seen_ids $scanid"
-		if [ "$_first" != "1" ]; then printf ","; fi
-		_first=0
-		printf '\n    {'
-		printf '"scan_id": "%s", ' "$scanid"
-		if [ "$scan_start_hr" = "-" ]; then printf '"started": null, '
-		else printf '"started": "%s", ' "$scan_start_hr"; fi
-		if [ "$tot_files" = "-" ]; then printf '"total_files": null, '
-		else printf '"total_files": %s, ' "$tot_files"; fi
-		if [ "$tot_hits" = "-" ]; then printf '"total_hits": null, '
-		else printf '"total_hits": %s, ' "$tot_hits"; fi
-		local _jval="${tot_cl:-0}"
-		[ "$_jval" = "-" ] && _jval="0"
-		printf '"total_cleaned": %s, ' "$_jval"
-		if [ "$scan_et" = "-" ]; then printf '"elapsed_seconds": null'
-		else printf '"elapsed_seconds": %s' "$scan_et"; fi
-		printf '}'
+	printf '{\n  "version": "1.0",\n  "type": "report_list",\n  "active": ['
+
+	# Enumerate active scans for the "active" array
+	local _first_active=1 _jl_meta_file _jl_scanid _jl_state
+	for _jl_meta_file in "$sessdir"/scan.meta.*; do
+		[ -f "$_jl_meta_file" ] || continue
+		_jl_scanid="${_jl_meta_file##*scan.meta.}"
+		case "$_jl_scanid" in *.tmp) continue ;; esac
+		_jl_state=$(_lifecycle_detect_state "$_jl_scanid" 2>/dev/null) || continue  # safe: skip unreadable meta
+		case "$_jl_state" in
+			running|paused|stale)
+				_lifecycle_read_meta "$_jl_scanid" || continue
+				[ "$_first_active" != "1" ] && printf ","
+				_first_active=0
+				local _jl_path="${_meta_path//\\/\\\\}"
+				_jl_path="${_jl_path//\"/\\\"}"
+				local _jl_pid="${_meta_pid:-0}"; [ "$_jl_pid" = "-" ] && _jl_pid=0
+				local _jl_files="${_meta_total_files:-0}"; [ "$_jl_files" = "-" ] && _jl_files=0
+				local _jl_hits="${_meta_hits:-0}"; [ "$_jl_hits" = "-" ] && _jl_hits=0
+				local _jl_elapsed="${_meta_elapsed:-0}"; [ "$_jl_elapsed" = "-" ] && _jl_elapsed=0
+				printf '\n    {"scan_id": "%s", "state": "%s", "pid": %s, "path": "%s", "engine": "%s", "total_files": %s, "hits": %s, "elapsed": %s}' \
+					"$_jl_scanid" "$_jl_state" "$_jl_pid" "$_jl_path" \
+					"${_meta_engine:--}" "$_jl_files" "$_jl_hits" "$_jl_elapsed"
+				;;
+		esac
 	done
-	# Pass 2: Legacy plaintext session files (skip if TSV exists)
+
+	printf '\n  ],\n  "reports": ['
+	local _first=1
+	local _index_file="$sessdir/session.index"
+	local _seen_ids=""
+
+	# Rebuild index from TSV files if missing (first call on upgraded server)
+	if [ ! -f "$_index_file" ]; then
+		_session_index_rebuild
+	fi
+
+	# Fast path: read from session.index (covers all TSV sessions)
+	if [ -f "$_index_file" ]; then
+		local _ix_scanid _ix_epoch _ix_started_hr _ix_elapsed
+		local _ix_tot_files _ix_tot_hits _ix_tot_cl _ix_path
+		while IFS=$'\t' read -r _ix_scanid _ix_epoch _ix_started_hr _ix_elapsed \
+				_ix_tot_files _ix_tot_hits _ix_tot_cl _ix_path; do
+			case "$_ix_scanid" in "#"*|"") continue ;; esac
+			_seen_ids="$_seen_ids $_ix_scanid"
+			if [ "$_first" != "1" ]; then printf ","; fi
+			_first=0
+			printf '\n    {'
+			printf '"scan_id": "%s", ' "$_ix_scanid"
+			if [ "$_ix_started_hr" = "-" ]; then printf '"started": null, '
+			else printf '"started": "%s", ' "$_ix_started_hr"; fi
+			if [ "$_ix_tot_files" = "-" ]; then printf '"total_files": null, '
+			else printf '"total_files": %s, ' "$_ix_tot_files"; fi
+			if [ "$_ix_tot_hits" = "-" ]; then printf '"total_hits": null, '
+			else printf '"total_hits": %s, ' "$_ix_tot_hits"; fi
+			local _jval="${_ix_tot_cl:-0}"
+			[ "$_jval" = "-" ] && _jval="0"
+			printf '"total_cleaned": %s, ' "$_jval"
+			if [ "$_ix_elapsed" = "-" ]; then printf '"elapsed_seconds": null'
+			else printf '"elapsed_seconds": %s' "$_ix_elapsed"; fi
+			printf '}'
+		done < "$_index_file"
+	fi
+
+	# Pass 2: legacy plaintext sessions not in the index
+	# (preserved for backward compat with pre-2.0.1 sessions)
+	local _file
 	for _file in "$sessdir"/session.[0-9]*; do
 		[ -f "$_file" ] || continue
 		case "$_file" in *.tsv.*|*.hits.*) continue ;; esac
 		local _sid="${_file##*session.}"
-		case "$_seen_ids" in *" $_sid"*) continue ;; esac
+		case "$_seen_ids" in *" $_sid"*) continue ;; esac  # skip if already in index
 		# Clear vars before parsing (prevent stale data from prior iteration)
 		scanid="" scan_start_hr="" scan_end_hr="" scan_et="" tot_files="" tot_hits="" tot_cl=""
 		_parse_session_metadata "$_file"
 		[ -z "$scanid" ] && continue
+		_seen_ids="$_seen_ids $scanid"
 		if [ "$_first" != "1" ]; then printf ","; fi
 		_first=0
 		printf '\n    {'

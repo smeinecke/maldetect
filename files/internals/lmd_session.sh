@@ -95,10 +95,13 @@ _session_write_header() {
 # Usage: local _datafile; _datafile=$(_session_resolve "$rid")
 _session_resolve() {
 	local _sid="$1"
+	local _compressed
 	if [ -f "$sessdir/session.tsv.$_sid" ]; then
 		echo "$sessdir/session.tsv.$_sid"
 	elif [ -f "$sessdir/session.hits.$_sid" ]; then
 		echo "$sessdir/session.hits.$_sid"
+	elif _compressed=$(_session_resolve_compressed "$_sid" 2>/dev/null); then  # safe: suppress stderr from missing function during early init
+		echo "$_compressed"
 	fi
 }
 
@@ -298,33 +301,84 @@ view_report() {
 		return 0
 	fi
 
+	# --- TSV format restriction ---
+	# TSV is only supported for list commands, not individual report rendering
+	if [ "${_report_format:-}" = "tsv" ] && [ "$rid" != "list" ] && [ "$rid" != "active" ] && [ "$rid" != "hooks" ]; then
+		echo "maldet($$): TSV format is only supported for list commands (--report list, --report active, -L)" >&2
+		return 1
+	fi
+
 	# --- LIST MODE ---
 	if [ "$rid" == "list" ]; then
 		if [ "${_report_format:-}" = "json" ]; then
 			_lmd_render_json_list
 			exit 0
 		fi
+		# Prepend active scans if any exist (unified view)
+		if _lifecycle_list_active "text" "0" 2>/dev/null; then
+			echo
+		fi
 		tmpf=$(mktemp "$tmpdir/.areps.XXXXXX")
+		local _index_file="$sessdir/session.index"
 		local _seen_ids=""
-		# Pass 1: TSV session files (preferred format)
+		# Rebuild index from TSV files if missing (first call on upgraded server)
+		if [ ! -f "$_index_file" ]; then
+			_session_index_rebuild
+		fi
+		if [ -f "$_index_file" ]; then
+			# Fast path: read completed scans from session.index (O(1) vs O(n) per-file)
+			local _ix_scanid _ix_epoch _ix_started_hr _ix_elapsed
+			local _ix_tot_files _ix_tot_hits _ix_tot_cl _ix_path
+			while IFS=$'\t' read -r _ix_scanid _ix_epoch _ix_started_hr _ix_elapsed \
+					_ix_tot_files _ix_tot_hits _ix_tot_cl _ix_path; do
+				# Skip header and empty lines
+				case "$_ix_scanid" in "#"*|"") continue ;; esac
+				_seen_ids="$_seen_ids $_ix_scanid"
+				local _time_display _etime _cl _trunc_path
+				# Strip timezone offset for column alignment
+				_time_display=$(echo "$_ix_started_hr" | awk '{print $1,$2,$3,$4}')
+				if [ "$_ix_elapsed" = "-" ] || [ -z "$_ix_elapsed" ]; then
+					_etime="n/a"
+				else
+					_etime="${_ix_elapsed}s"
+				fi
+				_cl="${_ix_tot_cl:-0}"
+				[ "$_cl" = "-" ] && _cl="0"
+				# Truncate path to 30 chars with ellipsis
+				_trunc_path="${_ix_path:--}"
+				if [ "${#_trunc_path}" -gt 30 ]; then
+					_trunc_path="${_trunc_path:0:27}..."
+				fi
+				echo "$_ix_epoch | $_time_display | $_ix_scanid | $_etime | ${_ix_tot_files:--} | ${_ix_tot_hits:--} | $_cl | $_trunc_path" >> "$tmpf"
+			done < "$_index_file"
+		fi
+		# Fallback: per-file glob for sessions not in the index
+		# (_seen_ids populated inline during index read above)
+		# Pass 1: TSV session files not in the index
 		for file in "$sessdir"/session.tsv.[0-9]*; do
 			[ -f "$file" ] || continue
 			local _sid="${file##*session.tsv.}"
+			case "$_seen_ids" in *" $_sid"*) continue ;; esac
 			_session_read_meta "$file"
 			if [ -n "$scanid" ] && [ "$scan_start_hr" != "-" ]; then
-				local _time_u _etime _time_display
+				local _time_u _etime _time_display _trunc_path
 				_time_u=$(date -d "$scan_start_hr" "+%s" 2>/dev/null)
 				# Strip timezone offset for consistent column alignment with legacy pass
 				_time_display=$(echo "$scan_start_hr" | awk '{print $1,$2,$3,$4}')
 				# Handle "-" sentinel from interrupted scans (no end-time recorded)
 				if [ "$scan_et" = "-" ] || [ -z "$scan_et" ]; then
-					_etime="RUNTIME: n/a"
+					_etime="n/a"
 				else
-					_etime="RUNTIME: ${scan_et}s"
+					_etime="${scan_et}s"
 				fi
 				local _cl="${tot_cl:-0}"
 				[ "$_cl" = "-" ] && _cl="0"
-				echo "$_time_u | $_time_display | SCANID: $scanid | $_etime | FILES: ${tot_files:--} | HITS: ${tot_hits:--} | CLEANED: $_cl" >> "$tmpf"
+				# Truncate path to 30 chars with ellipsis
+				_trunc_path="${hrspath:--}"
+				if [ "${#_trunc_path}" -gt 30 ]; then
+					_trunc_path="${_trunc_path:0:27}..."
+				fi
+				echo "$_time_u | $_time_display | $scanid | $_etime | ${tot_files:--} | ${tot_hits:--} | $_cl | $_trunc_path" >> "$tmpf"
 				_seen_ids="$_seen_ids $_sid"
 			fi
 		done
@@ -334,38 +388,84 @@ view_report() {
 			case "$file" in *.tsv.*|*.hits.*) continue ;; esac
 			local _sid="${file##*session.}"
 			case "$_seen_ids" in *" $_sid"*) continue ;; esac
-			_meta=$(grep -E "^SCAN ID|^TOTAL FILES|^TOTAL HITS|^TOTAL CLEANED|^TIME:|^STARTED:|^ELAPSED" "$file")
-			SCANID=$(grep "SCAN ID" <<< "$_meta" | sed 's/SCAN ID/SCANID/')
-			FILES=$(grep "TOTAL FILES" <<< "$_meta" | sed 's/TOTAL //')
-			HITS=$(grep "TOTAL HITS" <<< "$_meta" | sed 's/TOTAL //')
-			CLEAN=$(grep "TOTAL CLEANED" <<< "$_meta" | sed 's/TOTAL //')
-			TIME=$(grep -E "^TIME|^STARTED" <<< "$_meta" | sed -e 's/TIME: //' -e 's/STARTED: //' | awk '{print$1,$2,$3,$4}')
+			_meta=$(command grep -E "^SCAN ID|^TOTAL FILES|^TOTAL HITS|^TOTAL CLEANED|^TIME:|^STARTED:|^ELAPSED|^PATH" "$file")
+			SCANID=$(command grep "SCAN ID" <<< "$_meta" | command sed 's/SCAN ID: *//')
+			FILES=$(command grep "TOTAL FILES" <<< "$_meta" | command sed 's/TOTAL FILES: *//')
+			HITS=$(command grep "TOTAL HITS" <<< "$_meta" | command sed 's/TOTAL HITS: *//')
+			CLEAN=$(command grep "TOTAL CLEANED" <<< "$_meta" | command sed 's/TOTAL CLEANED: *//')
+			TIME=$(command grep -E "^TIME|^STARTED" <<< "$_meta" | command sed -e 's/TIME: //' -e 's/STARTED: //' | awk '{print$1,$2,$3,$4}')
 			TIME_U=$(date -d "$TIME" "+%s" 2>/dev/null)
-			ETIME=$(grep "ELAPSED" <<< "$_meta" | awk '{print$1,$2}' | sed 's/ELAPSED/RUNTIME/')
-			# Empty ETIME or bare "RUNTIME: s" (no number) from interrupted scans
-			if [ -z "$ETIME" ] || [ "$ETIME" = "RUNTIME: s" ]; then
-				ETIME="RUNTIME: n/a"
+			ETIME=$(command grep "ELAPSED" <<< "$_meta" | awk '{print$2}')
+			LPATH=$(command grep "^PATH" <<< "$_meta" | command sed 's/PATH: *//')
+			# Empty ETIME or bare "s" (no number) from interrupted scans
+			if [ -z "$ETIME" ] || [ "$ETIME" = "s" ]; then
+				ETIME="n/a"
+			fi
+			if [ -z "$CLEAN" ]; then
+				CLEAN="0"
 			fi
 			if [ -n "$SCANID" ] && [ -n "$TIME" ]; then
-				clean_zero=$(echo $CLEAN | awk '{print$2}')
-				if [ -z "$clean_zero" ]; then
-					CLEAN="CLEANED:  0"
+				local _trunc_path="${LPATH:--}"
+				if [ "${#_trunc_path}" -gt 30 ]; then
+					_trunc_path="${_trunc_path:0:27}..."
 				fi
-				echo "$TIME_U | $TIME | $SCANID | $ETIME | $FILES | $HITS | $CLEAN" >> "$tmpf"
+				echo "$TIME_U | $TIME | $SCANID | $ETIME | ${FILES:--} | ${HITS:--} | $CLEAN | $_trunc_path" >> "$tmpf"
 			fi
 		done
-		if [ -f "$tmpf" ]; then
+		# Display sorted results with section header and cap
+		local _sorted _total
+		if [ -f "$tmpf" ] && [ -s "$tmpf" ]; then
 			if [ "$os_freebsd" == "1" ]; then
-				sort -k1 -n "$tmpf" | cut -d'|' -f2-7 | column -t | more
+				# FreeBSD: ascending order (oldest first), cap with tail
+				_sorted=$(command sort -k1 -n "$tmpf" | command cut -d'|' -f2-)
 			else
-				sort -k1 -n "$tmpf" | tac | cut -d'|' -f2-7 | column -t | more
+				_sorted=$(command sort -k1 -rn "$tmpf" | command cut -d'|' -f2-)
 			fi
-			rm -f "$tmpf" 2> /dev/null
-			exit 0
+			_total=$(printf '%s\n' "$_sorted" | command grep -c '^.' || echo 0)
 		else
-			eout "{report} no report data found" 1
-			exit 1
+			_sorted=""
+			_total=0
 		fi
+		command rm -f "$tmpf"
+		if [ "$_total" -eq 0 ]; then
+			printf 'Scan history (0):\n  No scans found.\n'
+		else
+			if [ "$_total" -le 14 ] || [ "${_list_all:-0}" = "1" ]; then
+				printf 'Scan history (%s):\n' "$_total"
+			else
+				printf 'Scan history (%s total, last 14):\n' "$_total"
+			fi
+			local _display
+			if [ "${_list_all:-0}" = "1" ] || [ "$_total" -le 14 ]; then
+				_display=$(
+					printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | CLEANED | PATH"
+					printf '%s\n' "$_sorted"
+				)
+			else
+				if [ "$os_freebsd" == "1" ]; then
+					# FreeBSD ascending: newest are at the end, use tail
+					_display=$(
+						printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | CLEANED | PATH"
+						printf '%s\n' "$_sorted" | command tail -14
+					)
+				else
+					_display=$(
+						printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | CLEANED | PATH"
+						printf '%s\n' "$_sorted" | command head -14
+					)
+				fi
+			fi
+			if [ "${_list_all:-0}" = "1" ] && [ -t 1 ]; then
+				printf '%s\n' "$_display" | command column -t -s '|' | ${PAGER:-less}  # standard PAGER convention; only on interactive TTY (guarded by -t 1 above)
+			else
+				printf '%s\n' "$_display" | command column -t -s '|'
+			fi
+			# Overflow hint (outside column -t so it's not column-aligned)
+			if [ "${_list_all:-0}" != "1" ] && [ "$_total" -gt 14 ]; then
+				printf '  (%s older — maldet -e list --all)\n' "$(( _total - 14 ))"
+			fi
+		fi
+		exit 0
 	fi
 
 	# --- RESOLVE RID (newest/empty) ---
@@ -376,6 +476,18 @@ view_report() {
 			eout "{report} no recent scan session found" 1
 			exit 1
 		fi
+	fi
+
+	# --- STATE-AWARE: check for active scan meta ---
+	local _vr_state
+	_vr_state=$(_lifecycle_detect_state "$rid" 2>/dev/null) || _vr_state=""  # safe: no meta file means scan is not active; fall through to session resolution
+	if [ -n "$_vr_state" ]; then
+		case "$_vr_state" in
+			running|paused|stale)
+				_lifecycle_list_active "${_report_format:-text}" "0" "$rid"
+				return $?
+				;;
+		esac
 	fi
 
 	# --- DETERMINE EMAIL TARGET ---
@@ -394,10 +506,21 @@ view_report() {
 			[ -f "$sessdir/session.hits.$rid" ] && _hits="$sessdir/session.hits.$rid"
 			_lmd_render_json_legacy "$_sess" "$_hits" > "$_json_tmp"
 		else
-			command rm -f "$_json_tmp"
-			local _safe_rid="${rid//\"/\\\"}"
-			echo '{"error": "no report found for scan ID '"$_safe_rid"'"}' >&2
-			exit 1
+			# Try compressed/archived session
+			local _gz_path
+			_gz_path=$(_session_resolve_compressed "$rid" 2>/dev/null) || _gz_path=""  # safe: missing function during early init
+			if [ -n "$_gz_path" ] && [ -f "$_gz_path" ]; then
+				local _tmp_decomp
+				_tmp_decomp=$(command mktemp "$tmpdir/.session_view.XXXXXX")
+				command gzip -dc "$_gz_path" > "$_tmp_decomp"
+				_lmd_render_json "$_tmp_decomp" > "$_json_tmp"
+				command rm -f "$_tmp_decomp"
+			else
+				command rm -f "$_json_tmp"
+				local _safe_rid="${rid//\"/\\\"}"
+				echo '{"error": "no report found for scan ID '"$_safe_rid"'"}' >&2
+				exit 1
+			fi
 		fi
 		if [ -n "$_mailto" ]; then
 			_alert_deliver_email "$_mailto" "$email_subj" "$_json_tmp" "" "text"
@@ -410,14 +533,23 @@ view_report() {
 	fi
 
 	# --- RESOLVE SESSION FILE (text/html, legacy-first) ---
-	local _report_file=""
+	local _report_file="" _vr_tmp_session=""
 	if [ -f "$sessdir/session.$rid" ]; then
 		_report_file="$sessdir/session.$rid"
 	elif [ -f "$sessdir/session.tsv.$rid" ]; then
 		_report_file="$sessdir/session.tsv.$rid"
 	else
-		eout "{report} no report found for scan ID $rid" 1
-		exit 1
+		# Try compressed/archived session — decompress to temp for rendering
+		local _gz_path
+		_gz_path=$(_session_resolve_compressed "$rid" 2>/dev/null) || _gz_path=""  # safe: missing function during early init
+		if [ -n "$_gz_path" ] && [ -f "$_gz_path" ]; then
+			_vr_tmp_session=$(command mktemp "$tmpdir/.session_view.XXXXXX")
+			command gzip -dc "$_gz_path" > "$_vr_tmp_session"
+			_report_file="$_vr_tmp_session"
+		else
+			eout "{report} no report found for scan ID $rid" 1
+			exit 1
+		fi
 	fi
 
 	# --- EMAIL DISPATCH ---
@@ -439,6 +571,7 @@ view_report() {
 		fi
 		eout "{report} report ID $rid sent to $_mailto" 1
 		command rm -f "$_html"  # cleanup rendered HTML tempfile
+		[ -n "$_vr_tmp_session" ] && command rm -f "$_vr_tmp_session"
 		exit 0
 	fi
 
@@ -451,6 +584,7 @@ view_report() {
 			command rm -f "$_html"
 		else
 			eout "{report} HTML rendering unavailable" 1
+			[ -n "$_vr_tmp_session" ] && command rm -f "$_vr_tmp_session"
 			exit 1
 		fi
 	elif _session_is_tsv "$_report_file"; then
@@ -467,6 +601,7 @@ view_report() {
 	else
 		cat "$_report_file"
 	fi
+	[ -n "$_vr_tmp_session" ] && command rm -f "$_vr_tmp_session"
 	exit 0
 }
 
@@ -556,9 +691,10 @@ _scan_finalize_session() {
 	fi
 	# Count hits (skip header if present — header starts with #)
 	tot_hits=$(awk '!/^#/' "$scan_session" | $wc -l)
-	nsess_hits="$sessdir/session.tsv.$datestamp.$$"
-	echo "$datestamp.$$" > "$sessdir/session.last"
-	nsess="$sessdir/session.$datestamp.$$"
+	local _sid="${scanid:-$datestamp.$$}"
+	nsess_hits="$sessdir/session.tsv.$_sid"
+	echo "$_sid" > "$sessdir/session.last"
+	nsess="$sessdir/session.$_sid"
 
 	# Write header + hit data to TSV
 	_session_write_header "$nsess_hits" "scan"
@@ -577,6 +713,11 @@ _scan_finalize_session() {
 	if [ ! -f "$nsess" ]; then
 		nsess="$nsess_hits"
 	fi
+
+	# Append to session index (non-hook scans only)
+	_session_index_append "$_sid" "${scan_start:-0}" \
+		"${scan_start_hr:--}" "${scan_et:--}" \
+		"${tot_files:--}" "${tot_hits:--}" "${tot_cl:--}" "${hrspath:--}"
 
 	# Remove in-flight scan_session — all data now in nsess_hits
 	command rm -f "$scan_session"

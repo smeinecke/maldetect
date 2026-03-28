@@ -40,7 +40,8 @@ MD5 and HEX signature matching now use batch grep with Aho-Corasick parallel wor
 eliminating per-file pattern compilation overhead and ~500,000 subprocess forks per scan.
 Configure parallel worker count with `scan_workers` (default: auto).
 
-Other highlights: SHA-256 hash scanning with CPU hardware auto-detection (`scan_hashtype`),
+Other highlights: scan lifecycle management (`--kill`, `--pause`, `--stop`/`--continue`,
+`-L`), SHA-256 hash scanning with CPU hardware auto-detection (`scan_hashtype`),
 native YARA scanning (`scan_yara=1`), Discord webhook alerting, Slack/Telegram alerting
 fixes, ClamAV hex wildcard support in the native engine, and 200+ bug fixes across the
 codebase.
@@ -403,6 +404,15 @@ MONITORING:
   -m, --monitor USERS|PATHS|FILE|RELOAD  start inotify monitoring
   -k, --kill-monitor            stop inotify monitoring
 
+SCAN MANAGEMENT:
+  -L, --list-active             list active scans (text/json/tsv)
+  --kill SCANID                 abort a running scan
+  --pause SCANID [DURATION]     pause a running scan (e.g., 2h, 30m)
+  --unpause SCANID              resume a paused scan
+  --stop SCANID                 checkpoint and stop a running scan
+  --continue SCANID             resume a stopped scan from checkpoint
+  --maintenance                 rotate histories, compress/archive old sessions
+
 QUARANTINE & RESTORE:
   -q, --quarantine SCANID       quarantine hits from scan
   -n, --clean SCANID            clean malware from scan hits
@@ -479,6 +489,47 @@ entries with signature name, file path, hit type, owner, permissions, and quaran
 status, plus a summary with per-type breakdowns. Both TSV and legacy plaintext sessions
 are supported; legacy sessions include `"source": "legacy"` and render unavailable
 enriched fields (hash, size, owner, etc.) as `null`.
+
+### 4.2 Scan Management
+
+Long-running scans on large filesystems (1M+ files) can be controlled without `kill -9`:
+
+```bash
+# List active scans (running, paused, stopped)
+maldet -L
+
+# List active scans as JSON
+maldet --format json -L
+
+# Abort a running scan (full cleanup of temp files and workers)
+maldet --kill 260327-1509.25279
+
+# Pause a scan for 2 hours (workers sleep, I/O freed)
+maldet --pause 260327-1509.25279 2h
+
+# Resume a paused scan
+maldet --unpause 260327-1509.25279
+
+# Checkpoint and stop a scan for later resume
+maldet --stop 260327-1509.25279
+
+# Resume from checkpoint (skips completed stages, restores prior hits)
+maldet --continue 260327-1509.25279
+
+# Rotate histories, compress old sessions, archive by month
+maldet --maintenance
+```
+
+**Checkpoint resume:** `--stop` writes a checkpoint file recording the scan stage, hit
+count, config options, and per-worker progress. `--continue` validates the checkpoint,
+warns if signatures changed, rebuilds the file list from current filesystem state, restores
+prior hits, and resumes scanning from the interrupted stage. HEX workers resume at
+chunk granularity (~30s lost work per worker).
+
+**Engine support:** Native engine (HEX/CSIG/hash workers) and standalone `clamscan`
+support all lifecycle operations. Daemon-based ClamAV (`clamdscan`/`clamd`) supports
+`--kill` only — `--pause` and `--stop` are rejected with an error message because
+daemon I/O state is opaque and shared with other clients.
 
 ---
 

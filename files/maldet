@@ -91,6 +91,9 @@ for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
 		-b|--background)
 			set_background=1
 		;;
+		--verbose)
+			set_verbose=1
+		;;
 		-hscan|--hook-scan|--modsec)
 			hscan=1
 		;;
@@ -131,11 +134,11 @@ for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
 			if [ "$_i" -lt "${#_all_args[@]}" ]; then
 				_report_format="${_all_args[$_i]}"
 				case "$_report_format" in
-					text|json|html) ;;
-					*) echo "ERROR: --format requires text, json, or html" >&2; exit 1 ;;
+					text|json|html|tsv) ;;
+					*) echo "ERROR: --format requires text, json, html, or tsv" >&2; exit 1 ;;
 				esac
 			else
-				echo "ERROR: --format requires a format argument (text, json, html)" >&2
+				echo "ERROR: --format requires a format argument (text, json, html, tsv)" >&2
 				exit 1
 			fi
 		;;
@@ -159,6 +162,9 @@ for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
 				exit 1
 			fi
 			_apply_cli_co "${_all_args[$_i]}"
+		;;
+		--all)
+			_list_all=1
 		;;
 		*)
 			_remaining_args+=("${_all_args[$_i]}")
@@ -195,9 +201,19 @@ usage: maldet [OPTION] [ARGUMENT]
     -n|--clean SCANID           clean malware from scan hits
     -s|--restore FILE|SCANID    restore quarantined file(s)
 
+  scan management:
+    -L|--list-active              list active scans
+    --kill SCANID                 abort a running scan
+    --pause SCANID [DURATION]     pause a running scan
+    --unpause SCANID              resume a paused scan
+    --stop SCANID                 checkpoint and stop a running scan
+    --continue SCANID             resume a stopped scan from checkpoint
+    --maintenance                 rotate histories, compress/archive old sessions
+
   reporting:
-    -e|--report [SCANID|list|latest|hooks]  view scan report
-    --format text|json|html       set report output format (default: text)
+    -e|--report [SCANID|list|latest|hooks|active]  view scan report
+    --all                         show full history with -e list (default: recent)
+    --format text|json|html|tsv   set report output format (default: text)
     --mailto ADDRESS              email report to address
     --json-report [SCANID|list]   shorthand: --report --format json
     --alert-daily                 generate inotify monitor digest alert
@@ -302,10 +318,68 @@ QUARANTINE & RESTORE:
        e.g: maldet -qd /data/quarantine -q 050910-1534.21135
        e.g: maldet -q 050910-1534.21135 -qd /data/quarantine
 
+SCAN MANAGEMENT:
+    -L, --list-active
+       List active (running, paused, stale) scans with status info.
+       Combine with --format for JSON or TSV output. Use --verbose
+       for additional detail (workers, sig version, progress).
+       e.g: maldet -L
+       e.g: maldet --format json -L
+       e.g: maldet --verbose -L
+
+    --kill SCANID
+       Abort a running or paused scan. Writes an abort sentinel for
+       cooperative shutdown, then sends SIGTERM (with SIGKILL fallback
+       after 30s). Cleans scan-scoped temp files and updates meta to
+       state=killed. Also handles stale scans (process already dead).
+       e.g: maldet --kill 260327-1509.25279
+
+    --pause SCANID [DURATION]
+       Pause a running scan. Workers enter a sleep loop and external
+       processes (clamscan, yara) receive SIGSTOP. Optional DURATION
+       auto-resumes after the specified time: Ns (seconds), Nm (minutes),
+       Nh (hours), or bare number (seconds). Without DURATION, the pause
+       is indefinite until --unpause. Not supported for daemon ClamAV
+       (clamdscan) scans.
+       e.g: maldet --pause 260327-1509.25279
+       e.g: maldet --pause 260327-1509.25279 30m
+       e.g: maldet --pause 260327-1509.25279 2h
+
+    --unpause SCANID
+       Resume a paused scan. Removes the pause sentinel and sends
+       SIGCONT to any stopped external processes.
+       e.g: maldet --unpause 260327-1509.25279
+
+    --stop SCANID
+       Checkpoint and stop a running or paused scan at the current
+       stage boundary. Writes a checkpoint file preserving the scan
+       state (stage, hits, options, sig version) for later resumption
+       via --continue. Not supported for daemon ClamAV (clamdscan)
+       scans.
+       e.g: maldet --stop 260327-1509.25279
+
+    --continue SCANID
+       Resume a previously stopped scan from its checkpoint. Compares
+       the current signature version with the checkpoint and warns if
+       signatures have changed. Restores -co options from the
+       checkpoint. Use --unpause for paused scans instead.
+       e.g: maldet --continue 260327-1509.25279
+
+    --maintenance
+       Run maintenance tasks: rotate oversized history files (hits.hist,
+       quarantine.hist, monitor.scanned.hist, inotify_log), clean up
+       stale scan meta files, compress completed session files older
+       than 1 hour, and archive sessions older than 30 days into monthly
+       bundles (session.archive.YYMM.tsv.gz). Intended for cron or
+       manual housekeeping.
+       e.g: maldet --maintenance
+
 REPORTING:
-    -e, --report [SCANID|list|latest|hooks]
+    -e, --report [SCANID|list|latest|hooks|active]
        View scan report of most recent scan or of a specific SCANID.
-       Use "latest" for most recent, "list" for all, "hooks" for hook scan activity.
+       Use "latest" for most recent, "list" for all, "hooks" for hook
+       scan activity, "active" for running scans. Requesting a SCANID
+       that is still running shows active scan status instead.
        Combine with --format and --mailto.
        e.g: maldet --report
        e.g: maldet --report list
@@ -315,14 +389,22 @@ REPORTING:
        e.g: maldet --report hooks
        e.g: maldet --report hooks --last 7d
        e.g: maldet --report hooks --mode modsec
+       e.g: maldet --report active
 
     --report hooks [--last DURATION] [--mode MODE]
        View hook scan activity log. DURATION: Nh (hours), Nd (days),
        Nm (minutes), default 24h. MODE: filter by hook mode (modsec,
        ftp, proftpd, exim, generic).
 
-    --format text|json|html
-       Set report output format for -e/--report (default: text).
+    --all
+       Show full scan history when used with -e list. Without --all,
+       -e list shows only recent sessions. May appear anywhere in the
+       command line.
+       e.g: maldet -e list --all
+       e.g: maldet --all --report list
+
+    --format text|json|html|tsv
+       Set report output format for -e/--report and -L (default: text).
        May appear anywhere in the command line.
        e.g: maldet --format json -e list
        e.g: maldet -e 050910-1534.21135 --format html
@@ -542,28 +624,41 @@ else
 			-m|--monitor)
 				header
 				shift
+				# Use CLI argument if provided, fall back to default_monitor_mode
+				# from conf.maldet. If neither is set, bail out cleanly (exit 0
+				# so systemd Restart=on-failure does not respawn).
+				_mon_mode="${1:-${default_monitor_mode:-}}"
+				if [ -z "$_mon_mode" ]; then
+					eout "{mon} no monitor mode specified and default_monitor_mode is not configured" 1
+					eout "{mon} set default_monitor_mode in $cnf or MONITOR_MODE in /etc/sysconfig/maldet" 1
+					exit 0
+				fi
 				if [ "$os_freebsd" == "1" ]; then
 					eout "{mon} not currently supported under FreeBSD" 1
-				elif [ "$1" == "reload" ] || [ "$1" == "RELOAD" ]; then
+				elif [ "$_mon_mode" == "reload" ] || [ "$_mon_mode" == "RELOAD" ]; then
 					eout "{mon} queued monitor for configuration reload" 1
 					touch $inspath/reload_monitor
 				else
 					svc=m
 					if [ "$set_background" = "1" ]; then
 						eout "{mon} daemonizing monitor supervisor to background" 1
-						( exec "$0" --monitor "$1" ) >> /dev/null 2>&1 &
+						( exec "$0" --monitor "$_mon_mode" ) >> /dev/null 2>&1 &
 						_bg_pid=$!
 						echo "$_bg_pid" > "$tmpdir/monitor.pid"
 						eout "{mon} background monitor started (pid: $_bg_pid)" 1
 						exit 0
 					fi
-					monitor_init "$1"
+					monitor_init "$_mon_mode"
 				fi
 			;;
 			-k|--kill-monitor|-kill)
 				header
 				if [ "$os_freebsd" == "1" ]; then
 					eout "{mon} not currently supported under FreeBSD" 1
+				elif command -v systemctl >/dev/null 2>&1 && systemctl is-active maldet.service >/dev/null 2>&1; then
+					# Use systemctl stop so Restart=on-failure does not respawn
+					eout "{mon} stopping monitor via systemctl" 1
+					systemctl stop maldet.service
 				else
 					if [ -f "$tmpdir/monitor.pid" ]; then
 						_mpid=$(cat "$tmpdir/monitor.pid")
@@ -585,13 +680,154 @@ else
 					fi
 				fi
 			;;
+			--kill)
+				shift
+				if [ -z "${1:-}" ]; then
+					echo "maldet($$): --kill requires a SCANID argument" >&2
+					exit 1
+				fi
+				# Validate scanid format: YYMMDD-HHMM.PID
+				_valid_scanid_pat='^[0-9]{6}-[0-9]{4}\.[0-9]+$'
+				if [[ ! "$1" =~ $_valid_scanid_pat ]]; then
+					echo "maldet($$): invalid SCANID format: $1" >&2
+					exit 1
+				fi
+				header
+				_lifecycle_kill "$1"
+				exit $?
+			;;
+			--pause)
+				shift
+				if [ -z "${1:-}" ]; then
+					echo "maldet($$): --pause requires a SCANID argument" >&2
+					exit 1
+				fi
+				# Validate scanid format: YYMMDD-HHMM.PID
+				_valid_scanid_pat='^[0-9]{6}-[0-9]{4}\.[0-9]+$'
+				if [[ ! "$1" =~ $_valid_scanid_pat ]]; then
+					echo "maldet($$): invalid SCANID format: $1" >&2
+					exit 1
+				fi
+				_pause_scanid="$1"
+				shift
+				header
+				_lifecycle_pause "$_pause_scanid" "${1:-}"
+				exit $?
+			;;
+			--unpause)
+				shift
+				if [ -z "${1:-}" ]; then
+					echo "maldet($$): --unpause requires a SCANID argument" >&2
+					exit 1
+				fi
+				# Validate scanid format: YYMMDD-HHMM.PID
+				_valid_scanid_pat='^[0-9]{6}-[0-9]{4}\.[0-9]+$'
+				if [[ ! "$1" =~ $_valid_scanid_pat ]]; then
+					echo "maldet($$): invalid SCANID format: $1" >&2
+					exit 1
+				fi
+				header
+				_lifecycle_unpause "$1"
+				exit $?
+			;;
+			--stop)
+				shift
+				if [ -z "${1:-}" ]; then
+					echo "maldet($$): --stop requires a SCANID argument" >&2
+					exit 1
+				fi
+				# Validate scanid format: YYMMDD-HHMM.PID
+				_valid_scanid_pat='^[0-9]{6}-[0-9]{4}\.[0-9]+$'
+				if [[ ! "$1" =~ $_valid_scanid_pat ]]; then
+					echo "maldet($$): invalid SCANID format: $1" >&2
+					exit 1
+				fi
+				header
+				_lifecycle_stop "$1"
+				exit $?
+			;;
+			--continue)
+				shift
+				if [ -z "${1:-}" ]; then
+					echo "maldet($$): --continue requires a SCANID argument" >&2
+					exit 1
+				fi
+				# Validate scanid format: YYMMDD-HHMM.PID
+				_valid_scanid_pat='^[0-9]{6}-[0-9]{4}\.[0-9]+$'
+				if [[ ! "$1" =~ $_valid_scanid_pat ]]; then
+					echo "maldet($$): invalid SCANID format: $1" >&2
+					exit 1
+				fi
+				header
+				_lifecycle_continue "$1" || exit $?
+				# Read meta for original scan path
+				_lifecycle_read_meta "$_continue_scanid" || {
+					echo "maldet($$): {lifecycle} meta not found for $_continue_scanid" >&2
+					exit 1
+				}
+				svc=a
+				trap trap_exit INT TERM
+				spath="$_meta_path"
+				hrspath="$_meta_path"
+				scan "$spath" all
+			;;
+			-L|--list-active)
+				# List active scans — structured output suppresses header
+				if [ -z "${_report_format:-}" ] || [ "$_report_format" = "text" ]; then
+					header
+				fi
+				_lifecycle_list_active "${_report_format:-text}" "${set_verbose:-0}"
+				exit $?
+			;;
+			--maintenance)
+				header
+				eout "{lifecycle} running maintenance tasks" 1
+				# Rotate oversized history files
+				_rotate_histories
+				# Clean up old meta files
+				_lifecycle_cleanup_stale_metas
+				# Compress completed sessions older than 1 hour (60 minutes)
+				_maint_compress_age_min=60
+				for _maint_tsv in "$sessdir"/session.tsv.[0-9]*; do
+					[ -f "$_maint_tsv" ] || continue
+					# Skip already-compressed (.gz) files — glob won't match them
+					# but guard against session.tsv.SCANID.gz naming confusion
+					case "$_maint_tsv" in *.gz) continue ;; esac
+					if [ -n "$($find "$_maint_tsv" -maxdepth 0 -mmin +"$_maint_compress_age_min" 2>/dev/null)" ]; then  # safe: find may warn on race-deleted files
+						_maint_sid="${_maint_tsv##*session.tsv.}"
+						_session_compress "$_maint_sid"
+						eout "{lifecycle} compressed session: $_maint_sid" 1
+					fi
+				done
+				# Archive sessions older than 30 days into monthly bundles (43200 minutes)
+				_maint_archive_age_min=$((30 * 24 * 60))
+				_maint_seen_months=""
+				for _maint_sess in "$sessdir"/session.tsv.[0-9]*; do
+					[ -f "$_maint_sess" ] || continue
+					# Skip monthly archives
+					case "$_maint_sess" in *session.archive.*) continue ;; esac
+					if [ -n "$($find "$_maint_sess" -maxdepth 0 -mmin +"$_maint_archive_age_min" 2>/dev/null)" ]; then  # safe: find may warn on race-deleted files
+						# Extract YYMM from filename: session.tsv.YYMMDD-HHMM.PID[.gz]
+						_maint_basename="${_maint_sess##*/session.tsv.}"
+						_maint_month="${_maint_basename:0:4}"
+						# Deduplicate: only archive each month once
+						case "$_maint_seen_months" in
+							*" $_maint_month "*) continue ;;
+						esac
+						_maint_seen_months="$_maint_seen_months $_maint_month "
+						_session_archive_month "$_maint_month"
+					fi
+				done
+				eout "{lifecycle} maintenance complete" 1
+				exit 0
+			;;
 			-f|--file-list)
 				shift
 				if [ -z "$hscan" ]; then
 					header
 				fi
 				svc=f
-				trap trap_exit 2
+				trap trap_exit INT TERM
 				file_list="$1"
 				if [ ! -f "$file_list" ]; then
 					eout "{scan} file does not exist ($1)" 1
@@ -615,7 +851,7 @@ else
 					header
 				fi
 				svc=a
-				trap trap_exit 2
+				trap trap_exit INT TERM
 				spath="$1"
 				hrspath="$1"
 				if [ "$spath" == "" ]; then
@@ -638,7 +874,7 @@ else
 			-r|--scan-recent)
 				header
 				svc=r
-				trap trap_exit 2
+				trap trap_exit INT TERM
 				shift
 				spath="$1"
 				hrspath="$1"
@@ -679,6 +915,13 @@ else
 						shift
 					done
 					view_report "hooks" "$_hooks_last" "$_hooks_mode"
+				elif [ "${1:-}" = "active" ]; then
+					# List active scans — structured output suppresses header
+					if [ -z "${_report_format:-}" ] || [ "$_report_format" = "text" ]; then
+						header
+					fi
+					_lifecycle_list_active "${_report_format:-text}" "${set_verbose:-0}"
+					exit $?
 				else
 					if [ -z "${_report_format:-}" ] || [ "$_report_format" = "text" ]; then
 						header

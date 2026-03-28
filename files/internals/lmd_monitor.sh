@@ -262,7 +262,8 @@ _monitor_housekeeping() {
 			eout "{mon} firing periodic digest alert (interval=${digest_interval})" 1
 			genalert digest
 			# Rotate session
-			scan_session="$sessdir/session.tsv.$datestamp.$$"
+			scanid="$datestamp.$$"
+			scan_session="$sessdir/session.tsv.$scanid"
 			touch "$scan_session"
 			_session_write_header "$scan_session" "monitor"
 			echo "$scan_session" > "$sessdir/session.monitor.current"
@@ -611,7 +612,8 @@ monitor_init() {
 	fi
 
 	# --- Session setup ---
-	scan_session="$sessdir/session.tsv.$datestamp.$$"
+	scanid="$datestamp.$$"
+	scan_session="$sessdir/session.tsv.$scanid"
 	touch "$scan_session"
 	echo "$scan_session" > "$sessdir/session.monitor.current"
 	_session_write_header "$scan_session" "monitor"
@@ -684,7 +686,11 @@ monitor_init() {
 
 	# === Supervisor main loop ===
 	while ! _monitor_should_stop; do
-		sleep "$inotify_sleep"
+		# Background sleep + wait: bash defers trap handlers during foreground
+		# external commands (sleep), but fires them immediately during 'wait'.
+		# Without this, SIGTERM is blocked for up to $inotify_sleep seconds.
+		sleep "$inotify_sleep" &
+		wait $! 2>/dev/null || true  # wait returns 128+sig when interrupted by trap
 		_monitor_cycle_tick
 	done
 

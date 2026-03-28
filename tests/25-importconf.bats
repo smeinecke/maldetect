@@ -26,6 +26,7 @@ teardown() {
 # CH-3-002: uses awk to extract real function body — NOT a copy-paste re-implementation.
 _load_install_functions() {
     set +eu
+    trap - ERR  # bash 5.1: BATS ERR trap leaks into sourced files even with set +e
     # shellcheck disable=SC1091
     source "$LMD_INSTALL/internals/pkg_lib.sh"
     # Extract _compat_migrate from importconf without executing top-level code

@@ -374,10 +374,13 @@ quarantine_on_error="1"
 # value is ignored when '/etc/sysconfig/maldet' or '/etc/default/maldet' is
 # present with a defined value for $MONITOR_MODE.
 #
-# For the systemd maldet.service, the startup monitor mode is controlled by
-# MONITOR_MODE in /etc/sysconfig/maldet or /etc/default/maldet, not this
-# variable. The init script (maldet.sh) reads this variable as a fallback.
-default_monitor_mode="users"
+# The default monitor mode used when the service starts without an explicit
+# mode argument. Set to "users" to monitor all local user home paths, or
+# specify a file/directory path. Leave empty to disable automatic monitoring
+# — the service will exit cleanly until this is explicitly configured.
+# Can also be set via MONITOR_MODE in /etc/sysconfig/maldet or /etc/default/maldet.
+default_monitor_mode=""
+# default_monitor_mode="users"
 # default_monitor_mode="/usr/local/maldetect/monitor_paths"
 
 # The base number of files that can be watched under a path,
@@ -528,3 +531,8 @@ string_length="150000"		# [ max string length ]
 # elapsed time, and estimated time remaining.
 # [ 0 = disabled, default = 60 ]
 scan_progress_log_interval="60"
+
+# Hours to retain completed/killed scan.meta files before cleanup.
+# Meta files for active/paused/stopped scans are never cleaned.
+# Set 0 to disable automatic cleanup.
+scan_meta_cleanup_age="24"

@@ -251,7 +251,7 @@ _build_co_allowed_pattern() {
 	_pat="${_pat}|enable_statistic|elk_host|elk_port|elk_index"
 	_pat="${_pat}|string_length_scan|string_length"
 	_pat="${_pat}|session_legacy_compat"
-	_pat="${_pat}|scan_progress_log_interval"
+	_pat="${_pat}|scan_progress_log_interval|scan_meta_cleanup_age"
 	_pat="${_pat})\$"
 	printf -v "$1" '%s' "$_pat"
 }

@@ -68,6 +68,7 @@ override_dh_auto_install:
 	install -m 750 files/internals/lmd_yara.sh $(CURDIR)/debian/maldet/usr/lib/maldet/internals/lmd_yara.sh
 	install -m 750 files/internals/lmd_quarantine.sh $(CURDIR)/debian/maldet/usr/lib/maldet/internals/lmd_quarantine.sh
 	install -m 750 files/internals/lmd_session.sh $(CURDIR)/debian/maldet/usr/lib/maldet/internals/lmd_session.sh
+	install -m 750 files/internals/lmd_lifecycle.sh $(CURDIR)/debian/maldet/usr/lib/maldet/internals/lmd_lifecycle.sh
 	install -m 750 files/internals/lmd_scan.sh $(CURDIR)/debian/maldet/usr/lib/maldet/internals/lmd_scan.sh
 	install -m 750 files/internals/lmd_monitor.sh $(CURDIR)/debian/maldet/usr/lib/maldet/internals/lmd_monitor.sh
 	install -m 750 files/internals/lmd_update.sh $(CURDIR)/debian/maldet/usr/lib/maldet/internals/lmd_update.sh

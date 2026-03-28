@@ -1,0 +1,11 @@
+# Exclude from release tarballs (git archive / GitHub downloads)
+tests/              export-ignore
+docs/               export-ignore
+pkg/                export-ignore
+audit-output/       export-ignore
+.github/            export-ignore
+CLAUDE.md           export-ignore
+PLAN*.md            export-ignore
+AUDIT.md            export-ignore
+HANDOFF.md          export-ignore
+GEMINI-review.md    export-ignore

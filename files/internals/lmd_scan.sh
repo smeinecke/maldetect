@@ -16,6 +16,14 @@ _LMD_SCAN_LOADED=1
 # shellcheck disable=SC2034
 LMD_SCAN_VERSION="1.0.0"
 
+# Lifecycle abort flag — set by trap_exit() to prevent re-entry and
+# to signal clean_exit() that an abort is in progress.
+_scan_aborting=0
+
+# Lifecycle stop mode — when set to 1, _scan_cleanup() preserves
+# session.hits and scan.checkpoint files for resume via --continue.
+_scan_stop_mode=0
+
 _build_scan_filters() {
 	# Reset all find-filter variables before rebuilding
 	ignore_fext_args=()
@@ -59,7 +67,13 @@ _build_scan_filters() {
 }
 
 _scan_cleanup() {
-	rm -f "$find_results" "$scan_session" "$runtime_ndb" "$runtime_hdb" \
+	# In stop mode, preserve scan_session for checkpoint resume via --continue.
+	# All other runtime temp files are cleaned normally.
+	if [ "${_scan_stop_mode:-0}" != "1" ]; then
+		rm -f "$scan_session" \
+			2>/dev/null  # safe: file may not exist
+	fi
+	rm -f "$find_results" "$runtime_ndb" "$runtime_hdb" \
 		"$runtime_hexstrings" "$runtime_md5" "$runtime_sha256" "$runtime_hsb" \
 		"$clamscan_results" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
@@ -171,7 +185,7 @@ _run_yara_scan() {
 		_yara_file_count=$($wc -l < "$yara_filelist")
 		_scan_progress "yara" "$_yara_file_count files"
 		_start_elapsed_timer "yara" "$_yara_file_count"
-		scan_stage_yara "$yara_filelist"
+		scan_stage_yara "$yara_filelist" "" "$scanid"
 		_stop_elapsed_timer
 		rm -f "$yara_filelist"
 	fi
@@ -256,7 +270,7 @@ _wait_workers_with_progress() {
 	shift 3
 	local _pids=("$@")
 	local _total=${#_pids[@]}
-	local _start_ts _elapsed _running _pid _processed _wpath _wval
+	local _start_ts _elapsed _running _pid _processed _wpath _wval _paused_accum=0
 	_start_ts=$SECONDS
 	_bg_progress_last=0  # reset rate limiter so first checkpoint of each stage fires promptly
 	while true; do
@@ -266,7 +280,16 @@ _wait_workers_with_progress() {
 				_running=$((_running + 1))
 			fi
 		done
-		_elapsed=$(( SECONDS - _start_ts ))
+		# Suppress console output while scan is paused; keep polling workers
+		if [ -n "${scanid:-}" ] && [ -f "$tmpdir/.pause.$scanid" ]; then
+			_paused_accum=$((_paused_accum + _poll_interval))
+			if [ "$_running" -eq 0 ]; then
+				break
+			fi
+			sleep "$_poll_interval"
+			continue
+		fi
+		_elapsed=$(( SECONDS - _start_ts - _paused_accum ))
 		# Sum per-worker progress files for file-level progress
 		_processed=0
 		if [ -d "$_progress_dir" ]; then
@@ -290,11 +313,17 @@ _wait_workers_with_progress() {
 		fi
 		sleep "$_poll_interval"
 	done
-	# Collect exit codes (non-critical)
+	# Collect exit codes — detect lifecycle signals (abort/stop/orphan)
+	local _lifecycle_exit=0 _wrc
 	for _pid in "${_pids[@]}"; do
-		wait "$_pid" 2>/dev/null || true  # worker exit code not critical
+		wait "$_pid" 2>/dev/null  # reap regardless of exit code
+		_wrc=$?
+		case "$_wrc" in
+			3|4|5) _lifecycle_exit=1 ;;  # 3=abort, 4=stop, 5=orphan
+		esac
 	done
 	rm -rf "$_progress_dir" 2>/dev/null
+	return "$_lifecycle_exit"
 }
 
 _start_elapsed_timer() {
@@ -304,7 +333,7 @@ _start_elapsed_timer() {
 	# Caller must call _stop_elapsed_timer when the stage completes.
 	# In foreground: console progress every 2s. In background: log checkpoint only.
 	_timer_pid=""
-	local _stage="$1" _file_count="$2" _start_ts _poll
+	local _stage="$1" _file_count="$2" _start_ts _poll _paused_accum=0
 	_start_ts=$SECONDS
 	if [ "$set_background" == "1" ]; then
 		_poll="${_bg_progress_interval:-60}"
@@ -312,15 +341,25 @@ _start_elapsed_timer() {
 		[ "$_poll" -le 0 ] && return
 		while true; do
 			sleep "$_poll"
+			# Suppress progress while scan is paused
+			if [ -n "${scanid:-}" ] && [ -f "$tmpdir/.pause.$scanid" ]; then
+				_paused_accum=$((_paused_accum + _poll))
+				continue
+			fi
 			# Note: subshell cannot see parent's progress_hits/progress_cleaned updates;
 			# report elapsed time only — accurate hit counts come from _scan_progress_log
-			eout "{scan} [$_stage] $_file_count files | elapsed $(( SECONDS - _start_ts ))s"
+			eout "{scan} [$_stage] $_file_count files | elapsed $(( SECONDS - _start_ts - _paused_accum ))s"
 		done &
 		_timer_pid=$!
 	else
 		while true; do
 			sleep 2
-			_scan_progress "$_stage" "$_file_count files" "$(( SECONDS - _start_ts ))"
+			# Suppress console output while scan is paused
+			if [ -n "${scanid:-}" ] && [ -f "$tmpdir/.pause.$scanid" ]; then
+				_paused_accum=$((_paused_accum + 2))
+				continue
+			fi
+			_scan_progress "$_stage" "$_file_count files" "$(( SECONDS - _start_ts - _paused_accum ))"
 		done &
 		_timer_pid=$!
 	fi
@@ -351,7 +390,9 @@ _scan_run_clamav() {
 	clamscan_results=$(mktemp "$tmpdir/.clamscan.XXXXXX")
 	chmod 600 "$clamscan_results"
 	echo "$(date +"%b %d %Y %H:%M:%S") $(hostname -s) executed: $nice_command $clamscan $clamopts --infected --no-summary -f $find_results" >> "$clamscan_log"
-	_clamd_retry_scan "$find_results"
+	local _clam_pid_file="$tmpdir/.clamscan_pid.$scanid"
+	_clamd_retry_scan "$find_results" "$clamscan_results" "$_clam_pid_file"
+	command rm -f "$_clam_pid_file"
 	_stop_elapsed_timer
 	if [ "$clamscan_return" == "2" ]; then
 		if [ "$quarantine_on_error" == "0" ] || [ -z "$quarantine_on_error" ]; then
@@ -448,10 +489,28 @@ _scan_run_native() {
 		touch "$scan_session"
 	fi
 
+	# Continue mode: skip completed stages based on checkpoint
+	local _skip_hash=0 _skip_hex=0
+	if [ -n "${_continue_stage:-}" ]; then
+		case "$_continue_stage" in
+			hex)     _skip_hash=1 ;;
+			yara)    _skip_hash=1; _skip_hex=1 ;;
+			strlen)  _skip_hash=1; _skip_hex=1 ;;
+			# md5/sha256: restart from that stage (no partial skip within hash)
+		esac
+		if [ "$_skip_hash" -eq 1 ]; then
+			eout "{scan} continue mode: skipping hash stages (completed before checkpoint)" 1
+		fi
+		if [ "$_skip_hex" -eq 1 ]; then
+			eout "{scan} continue mode: skipping hex stage (completed before checkpoint)" 1
+		fi
+	fi
+
 	# --- Pass 1: MD5 (batch parallel workers) ---
 	# Runs when effective hashtype is md5 or both; skipped for sha256-only.
 	local rpath _md5_batch_flist _md5_file_count
-	if [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; then
+	if [ "$_skip_hash" -eq 0 ] && { [ "$_effective_hashtype" == "md5" ] || [ "$_effective_hashtype" == "both" ]; }; then
+		[ -z "$hscan" ] && [ -n "${scanid:-}" ] && _lifecycle_update_meta "$scanid" "stage" "md5"
 		_md5_batch_flist=$(mktemp "$tmpdir/.md5_batch_flist.$$.XXXXXX")
 		# Build readable file list from find_results
 		while IFS= read -r rpath; do
@@ -462,8 +521,9 @@ _scan_run_native() {
 			_nworkers=$(_resolve_worker_count "$_md5_file_count")
 			_scan_progress "md5" "$_md5_file_count files"
 			if [ "$_nworkers" -le 1 ]; then
-				# Single worker: run inline (no subshell overhead)
-				_hash_batch_worker "$md5sum" "md5" "$_md5_batch_flist" "$runtime_md5" > "$tmpdir/.md5_worker.$$.0"
+				# Single worker: subshell isolates exit 3/4/5 from lifecycle sentinels
+				( _hash_batch_worker "$md5sum" "md5" "$_md5_batch_flist" "$runtime_md5" "" "$scanid" ) > "$tmpdir/.md5_worker.$$.0"
+				case $? in 3|4|5) return 1 ;; esac
 			else
 				# Multi-worker: round-robin split and background
 				local _md5_chunk_prefix _w _md5_progress_dir _md5_pfile
@@ -478,13 +538,17 @@ _scan_run_native() {
 					if [ -f "$_md5_chunk_prefix.$_w" ]; then
 						_md5_pfile="$_md5_progress_dir/$_w"
 						_hash_batch_worker "$md5sum" "md5" "$_md5_chunk_prefix.$_w" "$runtime_md5" \
-							"$_md5_pfile" \
+							"$_md5_pfile" "$scanid" \
 							> "$tmpdir/.md5_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
 						_md5_worker_pids[_w]=$!
 					fi
 					_w=$((_w + 1))
 				done
-				_wait_workers_with_progress "md5" "$_md5_file_count" "$_md5_progress_dir" "${_md5_worker_pids[@]}"
+				if ! _wait_workers_with_progress "md5" "$_md5_file_count" "$_md5_progress_dir" "${_md5_worker_pids[@]}"; then
+					eout "{scan} workers detected lifecycle signal, aborting scan" 1
+					rm -f "$_md5_chunk_prefix".* 2>/dev/null
+					return 1
+				fi
 				rm -f "$_md5_chunk_prefix".* 2>/dev/null
 			fi
 			# Merge worker outputs into single manifest and batch-process hits
@@ -506,8 +570,9 @@ _scan_run_native() {
 	# --- Pass 1b: SHA-256 (batch parallel workers) ---
 	# Runs instead of MD5 when _effective_hashtype=sha256,
 	# or after MD5 when _effective_hashtype=both (on remaining files).
-	if { [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } \
+	if [ "$_skip_hash" -eq 0 ] && { [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; } \
 	   && [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
+		[ -z "$hscan" ] && [ -n "${scanid:-}" ] && _lifecycle_update_meta "$scanid" "stage" "sha256"
 		local _sha256_batch_flist _sha256_file_count
 		_sha256_batch_flist=$(mktemp "$tmpdir/.sha256_batch_flist.$$.XXXXXX")
 		if [ "$_effective_hashtype" == "both" ]; then
@@ -538,7 +603,9 @@ _scan_run_native() {
 			_nworkers=$(_resolve_worker_count "$_sha256_file_count")
 			_scan_progress "sha256" "$_sha256_file_count files"
 			if [ "$_nworkers" -le 1 ]; then
-				_hash_batch_worker "$sha256sum" "sha256" "$_sha256_batch_flist" "$runtime_sha256" > "$tmpdir/.sha256_worker.$$.0"
+				# Single worker: subshell isolates exit 3/4/5 from lifecycle sentinels
+				( _hash_batch_worker "$sha256sum" "sha256" "$_sha256_batch_flist" "$runtime_sha256" "" "$scanid" ) > "$tmpdir/.sha256_worker.$$.0"
+				case $? in 3|4|5) return 1 ;; esac
 			else
 				local _sha256_chunk_prefix _w _sha256_progress_dir _sha256_pfile
 				_sha256_chunk_prefix="$tmpdir/.sha256_chunk.$$"
@@ -552,13 +619,17 @@ _scan_run_native() {
 					if [ -f "$_sha256_chunk_prefix.$_w" ]; then
 						_sha256_pfile="$_sha256_progress_dir/$_w"
 						_hash_batch_worker "$sha256sum" "sha256" "$_sha256_chunk_prefix.$_w" "$runtime_sha256" \
-							"$_sha256_pfile" \
+							"$_sha256_pfile" "$scanid" \
 							> "$tmpdir/.sha256_worker.$$.${_w}" 2>/dev/null &  # suppress worker file-access stderr
 						_sha256_worker_pids[_w]=$!
 					fi
 					_w=$((_w + 1))
 				done
-				_wait_workers_with_progress "sha256" "$_sha256_file_count" "$_sha256_progress_dir" "${_sha256_worker_pids[@]}"
+				if ! _wait_workers_with_progress "sha256" "$_sha256_file_count" "$_sha256_progress_dir" "${_sha256_worker_pids[@]}"; then
+					eout "{scan} workers detected lifecycle signal, aborting scan" 1
+					rm -f "$_sha256_chunk_prefix".* 2>/dev/null
+					return 1
+				fi
 				rm -f "$_sha256_chunk_prefix".* 2>/dev/null
 			fi
 			# Merge worker outputs into single manifest and batch-process hits
@@ -580,24 +651,47 @@ _scan_run_native() {
 	# --- Pass 2: HEX batch (parallel workers) ---
 	local _hex_filelist _hex_depth
 	_hex_filelist=$(mktemp "$tmpdir/.hex_batch_flist.$$.XXXXXX")
-	# Build file list: skip files already hit by hash passes (MD5/SHA-256).
-	# Quarantined files are chmod 000 (not readable); non-quarantined hits
-	# are listed in scan_session — extract paths and use grep -vFf to exclude.
-	local _hash_hit_paths
-	_hash_hit_paths=$(mktemp "$tmpdir/.hex_md5hits.$$.XXXXXX")
-	if [ -s "$scan_session" ]; then
-		awk -F'\t' '!/^#/{if ($2 != "") print $2}' "$scan_session" > "$_hash_hit_paths"
-	fi
-	while IFS= read -r rpath; do
-		[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
-	done < "$find_results" | {
-		if [ -s "$_hash_hit_paths" ]; then
-			grep -vFxf "$_hash_hit_paths"
-		else
-			cat
+	if [ "$_skip_hex" -eq 0 ]; then
+		[ -z "$hscan" ] && [ -n "${scanid:-}" ] && _lifecycle_update_meta "$scanid" "stage" "hex"
+		# Build file list: skip files already hit by hash passes (MD5/SHA-256).
+		# Quarantined files are chmod 000 (not readable); non-quarantined hits
+		# are listed in scan_session — extract paths and use grep -vFf to exclude.
+		local _hash_hit_paths
+		_hash_hit_paths=$(mktemp "$tmpdir/.hex_md5hits.$$.XXXXXX")
+		if [ -s "$scan_session" ]; then
+			awk -F'\t' '!/^#/{if ($2 != "") print $2}' "$scan_session" > "$_hash_hit_paths"
 		fi
-	} > "$_hex_filelist"
-	rm -f "$_hash_hit_paths"
+		while IFS= read -r rpath; do
+			[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
+		done < "$find_results" | {
+			if [ -s "$_hash_hit_paths" ]; then
+				grep -vFxf "$_hash_hit_paths"
+			else
+				cat
+			fi
+		} > "$_hex_filelist"
+		rm -f "$_hash_hit_paths"
+	else
+		eout "{scan} continue mode: rebuilding file list for post-hex stages" 1
+		# Populate hex filelist for downstream stages (YARA, strlen) even when
+		# skipping HEX. Exclude files that already have hits from prior stages
+		# (same logic as the normal HEX path above).
+		local _hash_hit_paths
+		_hash_hit_paths=$(mktemp "$tmpdir/.hex_md5hits.$$.XXXXXX")
+		if [ -s "$scan_session" ]; then
+			awk -F'\t' '!/^#/{if ($2 != "") print $2}' "$scan_session" > "$_hash_hit_paths"
+		fi
+		while IFS= read -r rpath; do
+			[ -f "$rpath" ] && [ -r "$rpath" ] && printf '%s\n' "$rpath"
+		done < "$find_results" | {
+			if [ -s "$_hash_hit_paths" ]; then
+				grep -vFxf "$_hash_hit_paths"
+			else
+				command cat
+			fi
+		} > "$_hex_filelist"
+		command rm -f "$_hash_hit_paths"
+	fi
 	local _hex_file_count
 	_hex_file_count=$($wc -l < "$_hex_filelist")
 	local _has_hex_sigs=0 _has_csig_sigs=0
@@ -631,17 +725,26 @@ _scan_run_native() {
 		_worker_pids=()
 		_worker_outputs=()
 		_hex_progress_dir=$(mktemp -d "$tmpdir/.hex_progress.$$.XXXXXX")
+		# Parse per-worker chunk-skip counts from continue mode (Phase 14)
+		local _hex_chunk_skips=()
+		if [ -n "${_continue_chunk_skips:-}" ]; then
+			# shellcheck disable=SC2206
+			_hex_chunk_skips=($_continue_chunk_skips)
+		fi
 		_w=0
 		while [ "$_w" -lt "$_nworkers" ]; do
 			_wout="$tmpdir/.hex_worker.$$.${_w}"
 			if [ -f "$_chunk_prefix.$_w" ]; then
 				_hex_pfile="$_hex_progress_dir/$_w"
+				local _w_chunk_skip="${_hex_chunk_skips[$_w]:-0}"
 				_hex_csig_batch_worker "$_chunk_prefix.$_w" "$_hex_depth" \
 					"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 					"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
 					"$runtime_csig_wildcards" "$runtime_csig_universals" \
 					"$_hex_pfile" \
 					"$_hex_chunk_size" \
+					"$scanid" \
+					"$_w_chunk_skip" \
 					> "$_wout" 2>/dev/null &  # suppress worker file-access stderr
 				_worker_pids[_w]=$!
 				_worker_outputs[_w]="$_wout"
@@ -649,7 +752,10 @@ _scan_run_native() {
 			_w=$((_w + 1))
 		done
 		# Wait for all workers with progress updates
-		_wait_workers_with_progress "$_hex_stage_label" "$_hex_file_count" "$_hex_progress_dir" "${_worker_pids[@]}"
+		if ! _wait_workers_with_progress "$_hex_stage_label" "$_hex_file_count" "$_hex_progress_dir" "${_worker_pids[@]}"; then
+			eout "{scan} workers detected lifecycle signal, aborting scan" 1
+			return 1
+		fi
 		# Merge worker outputs into single manifest and batch-process hits
 		_scan_progress "$_hex_stage_label" "processing hits"
 		local _hex_manifest
@@ -734,6 +840,10 @@ scan() {
 	done <<< "$spaths_str"
 	days="$2"
 	scanid="$datestamp.$$"
+	# Continue mode: use checkpoint scanid instead of fresh one
+	if [ -n "${_continue_scanid:-}" ]; then
+		scanid="$_continue_scanid"
+	fi
 	if [ "$file_list" ]; then
 		spath="\"$file_list\""
 	elif [ ! -f "$find" ]; then
@@ -783,10 +893,26 @@ scan() {
 	scan_session=$(mktemp "$tmpdir/.sess.XXXXXX")
 	find_results=$(mktemp "$tmpdir/.find.XXXXXX")
 
+	# Continue mode: pre-seed scan_session with prior hits from --stop
+	if [ -n "${_continue_scanid:-}" ] && [ -f "$sessdir/session.hits.$scanid" ]; then
+		command cp "$sessdir/session.hits.$scanid" "$scan_session"
+		progress_hits="${_continue_hits_so_far:-0}"
+	fi
+
 	# Resolve hash engine after -co overrides have been applied
 	_resolve_hashtype
 	_resolve_clamscan
 	_resolve_yara
+
+	# Lifecycle housekeeping for non-hook scans: sweep orphans, clean stale
+	# metas, and guard against duplicate scans on the same path
+	if [ -z "$hscan" ]; then
+		_lifecycle_orphan_sweep
+		_lifecycle_cleanup_stale_metas
+		if ! _lifecycle_duplicate_guard "$hrspath"; then
+			exit 1
+		fi
+	fi
 
 	# Pre-gensigs signature preview: count from on-disk files (fast, no compilation)
 	_count_signatures "$sig_md5_file" "$sig_hex_file"
@@ -841,10 +967,47 @@ scan() {
 	if [ ! -f "$scan_session" ]; then
 		touch "$scan_session"
 	fi
-	progress_hits=0
+	if [ -z "${_continue_scanid:-}" ]; then
+		progress_hits=0
+	fi
 	progress_cleaned=0
 	_in_scan_context=1
 	_lmd_elog_event "$ELOG_EVT_SCAN_STARTED" "info" "scan started on $hrspath" "path=$hrspath" "mode=${svc:-a}" ${hscan:+"source=hook"}
+
+	# Write lifecycle meta (non-hook scans only)
+	if [ -z "$hscan" ]; then
+		# Determine engine type from resolved config
+		local _engine_type="native"
+		if [ -f "$clamscan" ] && [ "$scan_clamscan" == "1" ]; then
+			if [ "${clamd:-0}" == "1" ]; then
+				_engine_type="clamdscan"
+			else
+				_engine_type="clamav"
+			fi
+		fi
+		# Build stages string
+		local _scan_stages=""
+		if [ "$_engine_type" = "clamav" ] || [ "$_engine_type" = "clamdscan" ]; then
+			_scan_stages="clamav"
+		else
+			case "$_effective_hashtype" in
+				sha256)  _scan_stages="sha256" ;;
+				both)    _scan_stages="sha256,md5" ;;
+				*)       _scan_stages="md5" ;;
+			esac
+			_scan_stages="${_scan_stages},hex"
+		fi
+		if [ "$scan_yara" == "1" ]; then
+			_scan_stages="${_scan_stages},yara"
+		fi
+		if [ "${string_length_scan:-0}" == "1" ]; then
+			_scan_stages="${_scan_stages},strlen"
+		fi
+		_lifecycle_write_meta "$scanid" "$$" "$PPID" "$hrspath" \
+			"$tot_files" "${scan_workers:-auto}" "$_engine_type" \
+			"$_effective_hashtype" "$_scan_stages" \
+			"scan_clamscan=$scan_clamscan,scan_yara=$scan_yara,quarantine_hits=$quarantine_hits"
+	fi
 
 	if [ -n "$hscan" ]; then
 		eout "{scan.hook} scan of $spath in progress (id: $datestamp.$$)"
@@ -853,10 +1016,31 @@ scan() {
 	if [ -z "$mail" ] && [ -z "$sendmail" ]; then
 		eout "{scan} no \$mail or \$sendmail binaries found, e-mail alerts disabled."
 	fi
+	local _engine_rc=0
 	if [ -f "$clamscan" ] && [ "$scan_clamscan" == "1" ]; then
-		_scan_run_clamav
+		_scan_run_clamav || _engine_rc=$?
 	else
-		_scan_run_native
+		_scan_run_native || _engine_rc=$?
+	fi
+
+	# Lifecycle signal: workers detected abort/stop/orphan — do not finalize
+	if [ "$_engine_rc" -ne 0 ] && [ -z "$hscan" ] && [ -n "${scanid:-}" ]; then
+		_scan_aborting=1  # prevent trap_exit double-handling
+		# Detect stop vs kill from sentinel content
+		if [ -f "$tmpdir/.abort.$scanid" ]; then
+			local _sig_type
+			IFS= read -r _sig_type < "$tmpdir/.abort.$scanid" 2>/dev/null  # safe: sentinel may vanish
+			if [ "$_sig_type" = "stop" ]; then
+				_scan_stop_mode=1
+				if [ -f "$scan_session" ] && [ -s "$scan_session" ]; then
+					command cp "$scan_session" "$sessdir/session.hits.$scanid"
+				fi
+				_lifecycle_update_meta "$scanid" "state" "stopped"
+				eout "{scan} scan stopped by operator" 1
+			fi
+		fi
+		_scan_cleanup
+		return "$_engine_rc"
 	fi
 
 	scan_end_hr=$(date +"%b %e %Y %H:%M:%S %z")
@@ -897,9 +1081,9 @@ scan() {
 	else
 		echo
 		eout "{scan} scan completed on $hrspath: files $tot_files, malware hits $tot_hits, cleaned hits $tot_cl, time ${scan_et}s" 1
-		eout "{scan} scan report saved, to view run: maldet --report $datestamp.$$" 1
+		eout "{scan} scan report saved, to view run: maldet --report $scanid" 1
 		if [ "$quarantine_hits" == "0" ] && [ "$tot_hits" != "0" ]; then
-			eout "{scan} quarantine is disabled! set quarantine_hits=1 in $cnffile or to quarantine results run: maldet -q $datestamp.$$" 1
+			eout "{scan} quarantine is disabled! set quarantine_hits=1 in $cnffile or to quarantine results run: maldet -q $scanid" 1
 		fi
 	fi
 	_lmd_elog_event "$ELOG_EVT_SCAN_COMPLETED" "info" "scan completed on $hrspath" "hits=$tot_hits" "files=$tot_files" "cleaned=$tot_cl" "time=${scan_et}s" ${hscan:+"source=hook"}
@@ -920,5 +1104,24 @@ scan() {
 	if [ "$tot_hits" != "0" ] && [ -n "$hscan" ]; then
 		_hook_escalate_check
 	fi
+
+	# --- Lifecycle meta: mark completed (non-hook scans only) ---
+	if [ -z "$hscan" ] && [ -n "${scanid:-}" ]; then
+		local _end_ts
+		_end_ts=$(command date +%s)
+		_lifecycle_update_meta "$scanid" "state" "completed"
+		_lifecycle_update_meta "$scanid" "completed" "$_end_ts"
+		_lifecycle_update_meta "$scanid" "completed_hr" "$(command date '+%b %d %Y %H:%M:%S %z')"
+		_lifecycle_update_meta "$scanid" "elapsed" "$(( _end_ts - scan_start ))"
+		_lifecycle_update_meta "$scanid" "hits" "$tot_hits"
+		# Clean checkpoint artifacts if this was a continued scan
+		if [ -n "${_continue_scanid:-}" ]; then
+			command rm -f "$sessdir/scan.checkpoint.$scanid" \
+				"$sessdir/session.hits.$scanid" \
+				"$sessdir"/scan.wp."$scanid".* \
+				2>/dev/null  # safe: artifacts may not exist
+		fi
+	fi
+
 	_scan_cleanup
 }

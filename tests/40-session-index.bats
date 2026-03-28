@@ -1,0 +1,392 @@
+#!/usr/bin/env bats
+# 40-session-index.bats — Unit tests for session index (O(1) report listing)
+
+load '/usr/local/lib/bats/bats-support/load'
+load '/usr/local/lib/bats/bats-assert/load'
+source /opt/tests/helpers/lmd-config.sh
+
+LMD_INSTALL="/usr/local/maldetect"
+
+setup() {
+    source /opt/tests/helpers/reset-lmd.sh
+    TEST_DIR=$(mktemp -d)
+}
+
+teardown() {
+    rm -rf "$TEST_DIR"
+}
+
+# --- Helper: source LMD stack ---
+_source_lmd_stack() {
+    set +eu
+    trap - ERR  # bash 5.1: BATS ERR trap leaks into sourced files even with set +e
+    export inspath="$LMD_INSTALL"
+    # shellcheck disable=SC1090,SC1091
+    source "$LMD_INSTALL/internals/internals.conf"
+    # shellcheck disable=SC1090,SC1091
+    source "$LMD_INSTALL/conf.maldet"
+    # shellcheck disable=SC1090,SC1091
+    source "$LMD_INSTALL/internals/tlog_lib.sh"
+    # shellcheck disable=SC1090,SC1091
+    source "$LMD_INSTALL/internals/elog_lib.sh"
+    # shellcheck disable=SC1090,SC1091
+    source "$LMD_INSTALL/internals/alert_lib.sh"
+    # shellcheck disable=SC1090,SC1091
+    source "$LMD_INSTALL/internals/lmd_alert.sh"
+    # shellcheck disable=SC1090,SC1091
+    source "$LMD_INSTALL/internals/lmd.lib.sh"
+    set -eu
+}
+
+# --- Helper: create a TSV session file with metadata header ---
+_create_session_tsv() {
+    local _scanid="$1" _started_hr="$2" _elapsed="$3"
+    local _tot_files="$4" _tot_hits="$5" _tot_cl="$6" _path="$7"
+    local _file="$sessdir/session.tsv.$_scanid"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "#LMD:v1" "scan" "$_scanid" "testhost" "$_path" "-" \
+        "$_started_hr" "-" "$_elapsed" "-" \
+        "$_tot_files" "$_tot_hits" "$_tot_cl" \
+        "2.0.1" "2026032801" "md5" "native" "0" "-" \
+        > "$_file"
+}
+
+# ========================================================================
+# _session_index_append tests
+# ========================================================================
+
+@test "session index: append creates file with header when missing" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    _session_index_append "260327-1000.8832" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "142" "823401" "3" "1" "/home/siteb"
+    [ -f "$sessdir/session.index" ]
+    head -1 "$sessdir/session.index" | grep -q '^#LMD_INDEX:v1$'
+}
+
+@test "session index: append writes correct tab-delimited record" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    _session_index_append "260327-1000.8832" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "142" "823401" "3" "1" "/home/siteb"
+    # Second line should be the data record
+    local data_line
+    data_line=$(sed -n '2p' "$sessdir/session.index")
+    # Verify tab-separated fields
+    local field1 field2 field3 field4 field5 field6 field7 field8
+    IFS=$'\t' read -r field1 field2 field3 field4 field5 field6 field7 field8 <<< "$data_line"
+    [ "$field1" = "260327-1000.8832" ]
+    [ "$field2" = "1774555222" ]
+    [ "$field3" = "Mar 27 2026 10:00:22 +0000" ]
+    [ "$field4" = "142" ]
+    [ "$field5" = "823401" ]
+    [ "$field6" = "3" ]
+    [ "$field7" = "1" ]
+    [ "$field8" = "/home/siteb" ]
+}
+
+@test "session index: append appends without overwriting existing records" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    _session_index_append "260327-1000.1111" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "100" "500" "2" "0" "/home/siteA"
+    _session_index_append "260327-1100.2222" "1774558822" "Mar 27 2026 11:00:22 +0000" \
+        "200" "1000" "5" "3" "/home/siteB"
+    # Should have header + 2 data lines = 3 lines total
+    local line_count
+    line_count=$(wc -l < "$sessdir/session.index")
+    [ "$line_count" -eq 3 ]
+}
+
+@test "session index: append preserves header when file already exists" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    _session_index_append "260327-1000.1111" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "100" "500" "2" "0" "/home/site1"
+    _session_index_append "260327-1100.2222" "1774558822" "Mar 27 2026 11:00:22 +0000" \
+        "200" "1000" "5" "3" "/home/site2"
+    # Header should still be the first line
+    head -1 "$sessdir/session.index" | grep -q '^#LMD_INDEX:v1$'
+    # Should NOT have a second header
+    local header_count
+    header_count=$(grep -c '^#LMD_INDEX:v1$' "$sessdir/session.index")
+    [ "$header_count" -eq 1 ]
+}
+
+@test "session index: record is under 200 bytes (PIPE_BUF safety)" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    # Use reasonable field sizes that would appear in production
+    _session_index_append "260327-1000.8832" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "142" "823401" "3" "1" "/home/siteb"
+    local data_line
+    data_line=$(sed -n '2p' "$sessdir/session.index")
+    local line_len
+    line_len=$(printf '%s' "$data_line" | wc -c)
+    [ "$line_len" -lt 200 ]
+}
+
+# ========================================================================
+# _session_index_rebuild tests
+# ========================================================================
+
+@test "session index: rebuild creates index from TSV session files" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    # Create TSV session files
+    _create_session_tsv "260327-1000.1111" "Mar 27 2026 10:00:22 +0000" "100" "500" "2" "0" "/home/siteA"
+    _create_session_tsv "260327-1100.2222" "Mar 27 2026 11:00:22 +0000" "200" "1000" "5" "3" "/home/siteB"
+    _session_index_rebuild
+    [ -f "$sessdir/session.index" ]
+    head -1 "$sessdir/session.index" | grep -q '^#LMD_INDEX:v1$'
+    # Should have 2 data records (+ header = 3 lines)
+    local data_count
+    data_count=$(grep -vc '^#' "$sessdir/session.index")
+    [ "$data_count" -eq 2 ]
+}
+
+@test "session index: rebuild produces correct fields from TSV metadata" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    _create_session_tsv "260327-1000.5555" "Mar 27 2026 10:00:22 +0000" "142" "823401" "3" "1" "/home/site"
+    _session_index_rebuild
+    local data_line
+    data_line=$(grep -v '^#' "$sessdir/session.index" | head -1)
+    local field1
+    IFS=$'\t' read -r field1 _ <<< "$data_line"
+    [ "$field1" = "260327-1000.5555" ]
+}
+
+@test "session index: rebuild overwrites stale index" {
+    _source_lmd_stack
+    # Create an index with a stale record
+    printf '#LMD_INDEX:v1\n' > "$sessdir/session.index"
+    printf 'stale-record\t0\t-\t0\t0\t0\t0\t/gone\n' >> "$sessdir/session.index"
+    # Create one real TSV session
+    _create_session_tsv "260327-1000.9999" "Mar 27 2026 10:00:22 +0000" "50" "100" "0" "0" "/home/only"
+    _session_index_rebuild
+    # Should only have 1 data record (the stale one is gone)
+    local data_count
+    data_count=$(grep -vc '^#' "$sessdir/session.index")
+    [ "$data_count" -eq 1 ]
+    # Verify it's the real one
+    grep -q "260327-1000.9999" "$sessdir/session.index"
+}
+
+@test "session index: rebuild handles empty sessdir gracefully" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.*
+    rm -f "$sessdir/session.index"
+    _session_index_rebuild
+    [ -f "$sessdir/session.index" ]
+    # Only header line
+    local line_count
+    line_count=$(wc -l < "$sessdir/session.index")
+    [ "$line_count" -eq 1 ]
+}
+
+@test "session index: rebuild uses atomic write (no .tmp leftover)" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index" "$sessdir/session.index.tmp"
+    _create_session_tsv "260327-1000.7777" "Mar 27 2026 10:00:22 +0000" "50" "100" "0" "0" "/home"
+    _session_index_rebuild
+    [ -f "$sessdir/session.index" ]
+    [ ! -f "$sessdir/session.index.tmp" ]
+}
+
+# ========================================================================
+# purge removes session.index
+# ========================================================================
+
+@test "session index: purge removes session.index" {
+    _source_lmd_stack
+    # Create an index file
+    printf '#LMD_INDEX:v1\n' > "$sessdir/session.index"
+    printf 'test\t0\t-\t0\t0\t0\t0\t/tmp\n' >> "$sessdir/session.index"
+    [ -f "$sessdir/session.index" ]
+    # purge clears $sessdir via find -delete, so session.index should be removed
+    purge 2>/dev/null
+    [ ! -f "$sessdir/session.index" ]
+}
+
+# ========================================================================
+# view_report list mode uses index when available
+# ========================================================================
+
+@test "session index: list mode reads from index file" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.* "$sessdir"/session.[0-9]* "$sessdir/session.index"
+    # Create two TSV session files and their index
+    _create_session_tsv "260327-1000.1111" "Mar 27 2026 10:00:22 +0000" "100" "500" "2" "0" "/home/siteA"
+    _create_session_tsv "260327-1100.2222" "Mar 27 2026 11:00:22 +0000" "200" "1000" "5" "3" "/home/siteB"
+    _session_index_append "260327-1000.1111" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "100" "500" "2" "0" "/home/siteA"
+    _session_index_append "260327-1100.2222" "1774558822" "Mar 27 2026 11:00:22 +0000" \
+        "200" "1000" "5" "3" "/home/siteB"
+    # The list mode uses 'more' which we need to bypass
+    os_freebsd=0
+    run bash -c 'source /opt/tests/helpers/lmd-config.sh; set +eu; export inspath="'"$LMD_INSTALL"'"; source "'"$LMD_INSTALL"'/internals/internals.conf"; source "'"$LMD_INSTALL"'/conf.maldet"; source "'"$LMD_INSTALL"'/internals/tlog_lib.sh"; source "'"$LMD_INSTALL"'/internals/elog_lib.sh"; source "'"$LMD_INSTALL"'/internals/alert_lib.sh"; source "'"$LMD_INSTALL"'/internals/lmd_alert.sh"; source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"; os_freebsd=0; view_report list 2>&1 | head -10'
+    # Should contain both scanids
+    assert_output --partial "260327-1000.1111"
+    assert_output --partial "260327-1100.2222"
+}
+
+@test "session index: list mode falls back to per-file glob when index missing" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    # Create one TSV session file without an index
+    _create_session_tsv "260327-1000.3333" "Mar 27 2026 10:00:22 +0000" "100" "500" "2" "0" "/home/test"
+    os_freebsd=0
+    run bash -c 'source /opt/tests/helpers/lmd-config.sh; set +eu; export inspath="'"$LMD_INSTALL"'"; source "'"$LMD_INSTALL"'/internals/internals.conf"; source "'"$LMD_INSTALL"'/conf.maldet"; source "'"$LMD_INSTALL"'/internals/tlog_lib.sh"; source "'"$LMD_INSTALL"'/internals/elog_lib.sh"; source "'"$LMD_INSTALL"'/internals/alert_lib.sh"; source "'"$LMD_INSTALL"'/internals/lmd_alert.sh"; source "'"$LMD_INSTALL"'/internals/lmd.lib.sh"; os_freebsd=0; view_report list 2>&1 | head -10'
+    assert_output --partial "260327-1000.3333"
+}
+
+# ========================================================================
+# _lmd_render_json_list reads from session.index
+# ========================================================================
+
+@test "session index: json list reads from index when available" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.* "$sessdir"/session.[0-9]* "$sessdir/session.index"
+    # Create session files and index
+    _create_session_tsv "260327-1000.4444" "Mar 27 2026 10:00:22 +0000" "100" "500" "2" "0" "/home/jsontest"
+    _session_index_append "260327-1000.4444" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "100" "500" "2" "0" "/home/jsontest"
+    run _lmd_render_json_list
+    [ "$status" -eq 0 ]
+    assert_output --partial '"reports"'
+    assert_output --partial '"260327-1000.4444"'
+}
+
+@test "session index: json list includes completed fields from index" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.* "$sessdir"/session.[0-9]* "$sessdir/session.index"
+    _create_session_tsv "260327-1000.5555" "Mar 27 2026 10:00:22 +0000" "142" "823401" "3" "1" "/home/test"
+    _session_index_append "260327-1000.5555" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "142" "823401" "3" "1" "/home/test"
+    run _lmd_render_json_list
+    [ "$status" -eq 0 ]
+    assert_output --partial '"total_files": 823401'
+    assert_output --partial '"total_hits": 3'
+    assert_output --partial '"elapsed_seconds": 142'
+}
+
+# ========================================================================
+# _lmd_render_json_list: index-first hybrid (Phase 4 fix)
+# ========================================================================
+
+# Helper: create a legacy plaintext session file
+_create_session_legacy() {
+    local _scanid="$1" _started_hr="$2" _elapsed="$3"
+    local _tot_files="$4" _tot_hits="$5" _tot_cl="$6" _path="$7"
+    local _file="$sessdir/session.$_scanid"
+    printf 'SCAN ID: %s\n' "$_scanid"   > "$_file"
+    printf 'STARTED: %s\n' "$_started_hr" >> "$_file"
+    printf 'COMPLETED: %s\n' "-"          >> "$_file"
+    printf 'ELAPSED: %ss [find: 1s]\n' "$_elapsed" >> "$_file"
+    printf 'PATH: %s\n' "$_path"          >> "$_file"
+    printf 'TOTAL FILES: %s\n' "$_tot_files" >> "$_file"
+    printf 'TOTAL HITS: %s\n' "$_tot_hits"   >> "$_file"
+    printf 'TOTAL CLEANED: %s\n' "$_tot_cl"  >> "$_file"
+}
+
+@test "session index: json list rebuilds index when missing then returns TSV sessions" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.* "$sessdir"/session.[0-9]* "$sessdir/session.index"
+    # Create TSV session files WITHOUT an index
+    _create_session_tsv "260327-1000.6666" "Mar 27 2026 10:00:22 +0000" "100" "500" "2" "0" "/home/rebuild-test"
+    [ ! -f "$sessdir/session.index" ]
+    run _lmd_render_json_list
+    [ "$status" -eq 0 ]
+    # Should have rebuilt the index and returned the session
+    assert_output --partial '"260327-1000.6666"'
+    assert_output --partial '"reports"'
+    # Index file should now exist (rebuilt at top)
+    [ -f "$sessdir/session.index" ]
+}
+
+@test "session index: json list includes legacy plaintext sessions not in index" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.* "$sessdir"/session.[0-9]* "$sessdir/session.index"
+    # Create a TSV session and its index
+    _create_session_tsv "260327-1000.7777" "Mar 27 2026 10:00:22 +0000" "100" "500" "2" "0" "/home/tsv-session"
+    _session_index_append "260327-1000.7777" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "100" "500" "2" "0" "/home/tsv-session"
+    # Create a legacy plaintext session (pre-upgrade, not in index)
+    _create_session_legacy "260326-0900.8888" "Mar 26 2026 09:00:00 +0000" "50" "200" "1" "0" "/home/legacy-session"
+    run _lmd_render_json_list
+    [ "$status" -eq 0 ]
+    # Both sessions should appear
+    assert_output --partial '"260327-1000.7777"'
+    assert_output --partial '"260326-0900.8888"'
+}
+
+@test "session index: json list does not duplicate sessions between index and legacy" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.* "$sessdir"/session.[0-9]* "$sessdir/session.index"
+    # Create a TSV session with index entry
+    _create_session_tsv "260327-1000.9999" "Mar 27 2026 10:00:22 +0000" "100" "500" "2" "0" "/home/both"
+    _session_index_append "260327-1000.9999" "1774555222" "Mar 27 2026 10:00:22 +0000" \
+        "100" "500" "2" "0" "/home/both"
+    # Also create a legacy plaintext file with the SAME scan ID (simulates upgrade)
+    _create_session_legacy "260327-1000.9999" "Mar 27 2026 10:00:22 +0000" "100" "500" "2" "0" "/home/both"
+    run _lmd_render_json_list
+    [ "$status" -eq 0 ]
+    # Count occurrences of this scan_id — should be exactly 1
+    local count
+    count=$(echo "$output" | grep -c '"260327-1000.9999"')
+    [ "$count" -eq 1 ]
+}
+
+@test "session index: json list always includes active array" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.* "$sessdir"/session.[0-9]* "$sessdir/session.index" "$sessdir"/scan.meta.*
+    run _lmd_render_json_list
+    [ "$status" -eq 0 ]
+    assert_output --partial '"active": ['
+    assert_output --partial '"reports": ['
+}
+
+@test "session index: json list legacy entries have source legacy marker" {
+    _source_lmd_stack
+    rm -f "$sessdir"/session.tsv.* "$sessdir"/session.[0-9]* "$sessdir/session.index"
+    # Create only a legacy session — no TSV, no index
+    _create_session_legacy "260325-0800.1234" "Mar 25 2026 08:00:00 +0000" "30" "100" "0" "0" "/home/legacy-only"
+    # Rebuild index (will be empty since no TSV files)
+    _session_index_rebuild
+    run _lmd_render_json_list
+    [ "$status" -eq 0 ]
+    assert_output --partial '"260325-0800.1234"'
+    assert_output --partial '"source": "legacy"'
+}
+
+# ========================================================================
+# _scan_finalize_session appends to index
+# ========================================================================
+
+@test "session index: finalize_session appends to session index for non-hook scan" {
+    _source_lmd_stack
+    rm -f "$sessdir/session.index"
+    # Set up minimal scan context for _scan_finalize_session
+    datestamp="260328"
+    scan_session=$(mktemp "$tmpdir/.sess.XXXXXX")
+    echo -e "test.sig\t/test/file\t-\tMD5\tMD5 Hash\t-\t-\t-\t-\t-\t-" > "$scan_session"
+    scan_clamscan=0
+    scan_start_hr="Mar 28 2026 15:00:00 +0000"
+    scan_start=$(date +%s)
+    scan_et="300"
+    tot_files="1000"
+    tot_cl="0"
+    hrspath="/home/test"
+    hscan=""
+    session_legacy_compat=0
+    quarantine_hits=0
+    hostid=""
+    _effective_hashtype="md5"
+    lmd_version="2.0.1"
+    sig_version="2026032801"
+    _scan_finalize_session
+    # session.index should exist and contain the scan record
+    [ -f "$sessdir/session.index" ]
+    grep -q "260328.$$" "$sessdir/session.index"
+}

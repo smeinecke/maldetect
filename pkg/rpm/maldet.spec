@@ -128,6 +128,7 @@ install -m 750 files/internals/lmd_engine.sh %{buildroot}/usr/lib/maldet/interna
 install -m 750 files/internals/lmd_yara.sh %{buildroot}/usr/lib/maldet/internals/lmd_yara.sh
 install -m 750 files/internals/lmd_quarantine.sh %{buildroot}/usr/lib/maldet/internals/lmd_quarantine.sh
 install -m 750 files/internals/lmd_session.sh %{buildroot}/usr/lib/maldet/internals/lmd_session.sh
+install -m 750 files/internals/lmd_lifecycle.sh %{buildroot}/usr/lib/maldet/internals/lmd_lifecycle.sh
 install -m 750 files/internals/lmd_scan.sh %{buildroot}/usr/lib/maldet/internals/lmd_scan.sh
 install -m 750 files/internals/lmd_monitor.sh %{buildroot}/usr/lib/maldet/internals/lmd_monitor.sh
 install -m 750 files/internals/lmd_update.sh %{buildroot}/usr/lib/maldet/internals/lmd_update.sh
@@ -226,6 +227,7 @@ ln -sf /usr/lib/maldet/internals/lmd_engine.sh %{buildroot}/usr/local/maldetect/
 ln -sf /usr/lib/maldet/internals/lmd_yara.sh %{buildroot}/usr/local/maldetect/internals/lmd_yara.sh
 ln -sf /usr/lib/maldet/internals/lmd_quarantine.sh %{buildroot}/usr/local/maldetect/internals/lmd_quarantine.sh
 ln -sf /usr/lib/maldet/internals/lmd_session.sh %{buildroot}/usr/local/maldetect/internals/lmd_session.sh
+ln -sf /usr/lib/maldet/internals/lmd_lifecycle.sh %{buildroot}/usr/local/maldetect/internals/lmd_lifecycle.sh
 ln -sf /usr/lib/maldet/internals/lmd_scan.sh %{buildroot}/usr/local/maldetect/internals/lmd_scan.sh
 ln -sf /usr/lib/maldet/internals/lmd_monitor.sh %{buildroot}/usr/local/maldetect/internals/lmd_monitor.sh
 ln -sf /usr/lib/maldet/internals/lmd_update.sh %{buildroot}/usr/local/maldetect/internals/lmd_update.sh
@@ -335,6 +337,7 @@ fi
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_yara.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_quarantine.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_session.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_lifecycle.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_scan.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_monitor.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_update.sh
@@ -429,6 +432,7 @@ fi
 /usr/local/maldetect/internals/lmd_yara.sh
 /usr/local/maldetect/internals/lmd_quarantine.sh
 /usr/local/maldetect/internals/lmd_session.sh
+/usr/local/maldetect/internals/lmd_lifecycle.sh
 /usr/local/maldetect/internals/lmd_scan.sh
 /usr/local/maldetect/internals/lmd_monitor.sh
 /usr/local/maldetect/internals/lmd_update.sh

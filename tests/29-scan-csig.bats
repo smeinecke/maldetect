@@ -310,6 +310,7 @@ teardown() {
 # Helper to source the LMD function stack for direct function testing
 _source_lmd_stack() {
     set +eu
+    trap - ERR  # bash 5.1: BATS ERR trap leaks into sourced files even with set +e
     source "$LMD_INSTALL/internals/internals.conf"
     source "$LMD_INSTALL/conf.maldet"
     source "$LMD_INSTALL/internals/lmd.lib.sh"

@@ -267,23 +267,39 @@ clamselector() {
 }
 
 _clamd_retry_scan() {
-	local _filelist="$1" _results="${2:-$clamscan_results}"
+	local _filelist="$1" _results="${2:-$clamscan_results}" _pid_file="${3:-}"
 	if [ "$scan_clamd_remote" == "1" ] && [ -f "$remote_clamd_config" ]; then
 		local try=0
 		while [ $try -le $remote_clamd_max_retry ]; do
-			$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$_results" 2>> "$clamscan_log"
-			clamscan_return=$?
+			if [ -n "$_pid_file" ]; then
+				# Launch with PID capture for lifecycle management
+				$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$_results" 2>> "$clamscan_log" &
+				echo "$!" > "$_pid_file"
+				wait "$!"
+				clamscan_return=$?
+			else
+				$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$_results" 2>> "$clamscan_log"
+				clamscan_return=$?
+			fi
 			if [ "$clamscan_return" == "2" ]; then
 				((try++))
 				echo "$(date +"%b %d %H:%M:%S") $(hostname -s) remote clamd error - retrying in $remote_clamd_retry_sleep seconds ($try)" >> "$clamscan_log"
-				sleep "$remote_clamd_retry_sleep"
+				command sleep "$remote_clamd_retry_sleep"
 			else
 				break
 			fi
 		done
 	else
-		$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$_results" 2>> "$clamscan_log"
-		clamscan_return=$?
+		if [ -n "$_pid_file" ]; then
+			# Launch with PID capture for lifecycle management
+			$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$_results" 2>> "$clamscan_log" &
+			echo "$!" > "$_pid_file"
+			wait "$!"
+			clamscan_return=$?
+		else
+			$nice_command $clamscan $clamopts --infected --no-summary -f "$_filelist" > "$_results" 2>> "$clamscan_log"
+			clamscan_return=$?
+		fi
 	fi
 }
 

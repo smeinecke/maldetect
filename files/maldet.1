@@ -74,6 +74,11 @@ Use \fBlatest\fR for the most recent scan, \fBlist\fR for all reports,
 \fBhooks\fR for hook scan activity (see HOOK SCANNING).
 Combine with \fB\-\-format\fR and \fB\-\-mailto\fR for output control.
 .TP
+\fB\-\-all\fR
+Show full scan history when used with \fB\-e list\fR.
+Without \fB\-\-all\fR, \fB\-e list\fR shows only recent sessions.
+May appear anywhere in the command line.
+.TP
 \fB\-\-format\fR \fBtext\fR|\fBjson\fR|\fBhtml\fR
 Set report output format for \fB\-e\fR/\fB\-\-report\fR (default: text).
 May appear anywhere in the command line.
@@ -891,6 +896,156 @@ Test Slack digest delivery:
 .BR clamscan (1),
 .BR yara (1),
 .BR inotifywait (1)
+.SH SCAN MANAGEMENT
+Scan lifecycle commands allow controlling running scans without terminating
+the maldet process. Scans transition through a state machine:
+.PP
+.RS 4
+.nf
+running \(-> paused   (\-\-pause)   \(-> running (\-\-unpause)
+running \(-> killed   (\-\-kill)
+running \(-> stopped  (\-\-stop)    \(-> running (\-\-continue)
+running \(-> completed (normal exit)
+.fi
+.RE
+.PP
+.B ClamAV limitation:
+Daemon ClamAV (clamdscan) scans can only be killed (\fB\-\-kill\fR),
+not paused or stopped.
+Standalone clamscan and yara/yr processes support full lifecycle control
+via SIGSTOP/SIGCONT.
+.HP
+\fB\-L\fR, \fB\-\-list\-active\fR
+.IP
+List active (running, paused, stale) scans with status information.
+Combine with \fB\-\-format\fR for JSON or TSV output. Use \fB\-\-verbose\fR
+for additional detail (workers, sig version, progress).
+.br
+e.g: maldet \fB\-L\fR
+.br
+e.g: maldet \fB\-\-format\fR json \fB\-L\fR
+.HP
+\fB\-\-report\fR active
+.IP
+View active scans. Equivalent to \fB\-L\fR but supports
+\fB\-\-format\fR json|tsv output and integration with the report system.
+.HP
+\fB\-\-kill\fR \fISCANID\fR
+.IP
+Abort a running or paused scan. Writes an abort sentinel for cooperative
+shutdown, then sends SIGTERM to the scan process (with SIGKILL fallback
+after 30 seconds). Cleans scan\-scoped temporary files and updates meta
+to state=killed. Also handles stale scans where the process has already
+exited.
+.br
+e.g: maldet \fB\-\-kill\fR 260327\-1509.25279
+.HP
+\fB\-\-pause\fR \fISCANID\fR [\fIDURATION\fR]
+.IP
+Pause a running scan. Workers enter a sleep loop and external processes
+(clamscan, yara) receive SIGSTOP. Optional \fIDURATION\fR auto\-resumes
+after the specified time: \fIN\fRs (seconds), \fIN\fRm (minutes),
+\fIN\fRh (hours), or a bare number (seconds). Without \fIDURATION\fR,
+the pause is indefinite until \fB\-\-unpause\fR. Not supported for daemon
+ClamAV (clamdscan) scans.
+.br
+e.g: maldet \fB\-\-pause\fR 260327\-1509.25279
+.br
+e.g: maldet \fB\-\-pause\fR 260327\-1509.25279 30m
+.br
+e.g: maldet \fB\-\-pause\fR 260327\-1509.25279 2h
+.HP
+\fB\-\-unpause\fR \fISCANID\fR
+.IP
+Resume a paused scan. Removes the pause sentinel and sends SIGCONT to
+any stopped external processes.
+.br
+e.g: maldet \fB\-\-unpause\fR 260327\-1509.25279
+.HP
+\fB\-\-stop\fR \fISCANID\fR
+.IP
+Checkpoint and stop a running or paused scan at the current stage
+boundary. Writes a checkpoint file (format \fB#LMD_CHECKPOINT:v1\fR)
+preserving the scan state (stage, hits, options, signature version)
+for later resumption via \fB\-\-continue\fR. Not supported for daemon
+ClamAV (clamdscan) scans.
+.br
+e.g: maldet \fB\-\-stop\fR 260327\-1509.25279
+.HP
+\fB\-\-continue\fR \fISCANID\fR
+.IP
+Resume a previously stopped scan from its checkpoint. Compares the
+current signature version with the checkpoint and warns if signatures
+have changed since the scan was stopped. Restores \fB\-co\fR options from
+the checkpoint. Use \fB\-\-unpause\fR for paused scans instead.
+.br
+e.g: maldet \fB\-\-continue\fR 260327\-1509.25279
+.HP
+\fB\-\-maintenance\fR
+.IP
+Run maintenance tasks: rotate oversized history files (hits.hist,
+quarantine.hist, monitor.scanned.hist, inotify_log), clean up stale
+scan meta files older than \fBscan_meta_cleanup_age\fR hours, compress
+completed session files older than 1 hour, and archive sessions older
+than 30 days into monthly bundles (\fIsession.archive.YYMM.tsv.gz\fR).
+Intended for cron or manual housekeeping.
+.br
+e.g: maldet \fB\-\-maintenance\fR
+.SS Checkpoint Format
+The checkpoint file uses a simple key=value format with a
+\fB#LMD_CHECKPOINT:v1\fR header line. Fields include:
+\fBscanid\fR, \fBstopped\fR (epoch), \fBstage\fR (last completed stage),
+\fBsig_version\fR, \fBworkers\fR, \fBtotal_files\fR, \fBhits_so_far\fR,
+and \fBoptions\fR (original \fB\-co\fR values). The session hits file is
+preserved across stop/continue so that accumulated detections are retained.
+.SH CONFIGURATION
+The configuration of LMD is handled through \fI$inspath/conf.maldet\fR
+and all options are well commented for ease of configuration. System\-level
+overrides can be placed in \fI/etc/sysconfig/maldet\fR or
+\fI/etc/default/maldet\fR. Runtime overrides via \fB\-co\fR take
+highest precedence.
+.PP
+The following configuration options relate to scan lifecycle management:
+.TP
+.B scan_meta_cleanup_age
+Hours to retain completed/killed scan.meta files before cleanup.
+Meta files for active/paused/stopped scans are never cleaned.
+Set 0 to disable automatic cleanup. Default: 24.
+.SH FILES
+.TP
+.I $sessdir/scan.meta.$scanid
+Scan lifecycle metadata. Contains process info, state, engine type,
+scan options, and timestamps. Updated throughout the scan lifecycle
+as state transitions occur.
+.TP
+.I $sessdir/session.index
+Append\-only session index for O(1) scan listing. Each line records
+the scan ID, start time, path, and completion status. Used by
+\fB\-\-report list\fR and \fB\-L\fR for fast enumeration without
+scanning the session directory.
+.TP
+.I $sessdir/scan.checkpoint.$scanid
+Stage checkpoint file for \fB\-\-continue\fR. Written by \fB\-\-stop\fR
+with the \fB#LMD_CHECKPOINT:v1\fR format. Contains the last completed
+stage, accumulated hits, config options, and signature version at the
+time of stop.
+.TP
+.I $tmpdir/.abort.$scanid
+Abort sentinel. Created by \fB\-\-kill\fR or \fB\-\-stop\fR. Workers
+check for this file at stage boundaries and during scan loops for
+cooperative shutdown.
+.TP
+.I $tmpdir/.pause.$scanid
+Pause sentinel with epoch timestamp and optional duration. Created by
+\fB\-\-pause\fR. Workers enter a sleep loop while this file exists.
+Removed by \fB\-\-unpause\fR or when the duration expires.
+.TP
+.I $sessdir/session.archive.YYMM.tsv.gz
+Monthly session archive created by \fB\-\-maintenance\fR. Consolidates
+all session TSV files from the given month (YYMM) into a single
+gzip\-compressed archive. The \fB\-\-report\fR command transparently
+resolves sessions from archives when the original session file has
+been archived.
 .SH BUGS
 Report bugs at \fIhttps://github.com/rfxn/linux\-malware\-detect/issues\fR.
 .SH AUTHORS

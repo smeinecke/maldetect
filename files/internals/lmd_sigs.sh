@@ -512,6 +512,10 @@ function compile_wildcards(pat,    ere, i, c, c2, lo, hi, n, gap, pre, post, rep
 
 gensigs() {
 	local _silent="$1"
+	if [ -z "$scanid" ]; then
+		eout "{scan} {error} gensigs called with empty scanid, aborting" 1
+		return 1
+	fi
 	# Clean up previous runtime sig files if re-called (monitor path)
 	rm -f "$runtime_ndb" "$runtime_hdb" "$runtime_hexstrings" "$runtime_md5" \
 		"$runtime_sha256" "$runtime_hsb" \
@@ -521,15 +525,15 @@ gensigs() {
 		2>/dev/null  # vars empty on first call
 	runtime_ndb=""
 	runtime_hdb=""
-	runtime_hexstrings=$(mktemp "$tmpdir/.runtime.hexsigs.XXXXXX")
-	runtime_md5=$(mktemp "$tmpdir/.runtime.md5sigs.XXXXXX")
+	runtime_hexstrings=$(mktemp "$tmpdir/.runtime.hexsigs.$scanid.XXXXXX")
+	runtime_md5=$(mktemp "$tmpdir/.runtime.md5sigs.$scanid.XXXXXX")
 	if [ "$scan_clamscan" == "1" ]; then
-		runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.XXXXXX")
+		runtime_ndb=$(mktemp "$tmpdir/.runtime.user.ndb.$scanid.XXXXXX")
 		ln -fs "$runtime_ndb" "$sigdir/lmd.user.ndb" 2>/dev/null
 	fi
 	# Only create .hdb (ClamAV MD5 DB) when hashtype includes md5
 	if [ "$_effective_hashtype" != "sha256" ]; then
-		runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.XXXXXX")
+		runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.$scanid.XXXXXX")
 		ln -fs "$runtime_hdb" "$sigdir/lmd.user.hdb" 2> /dev/null
 	else
 		rm -f "$sigdir/lmd.user.hdb" 2>/dev/null
@@ -555,7 +559,7 @@ gensigs() {
 	# SHA-256 runtime sigs — conditional on effective hashtype
 	runtime_sha256=""
 	if [ "$_effective_hashtype" == "sha256" ] || [ "$_effective_hashtype" == "both" ]; then
-		runtime_sha256=$(mktemp "$tmpdir/.runtime.sha256sigs.XXXXXX")
+		runtime_sha256=$(mktemp "$tmpdir/.runtime.sha256sigs.$scanid.XXXXXX")
 		if [ -f "$sig_sha256_file" ] && [ -s "$sig_sha256_file" ]; then
 			if [ -s "$sig_user_sha256_file" ]; then
 				grep -h -vE '^\s*$' "$sig_sha256_file" "$sig_user_sha256_file" > "$runtime_sha256"
@@ -599,7 +603,7 @@ gensigs() {
 		# ClamAV .hsb (SHA-256 hash DB) — requires ClamAV >= 0.97
 		runtime_hsb=""
 		if [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ] && [ -n "$_clamav_supports_hsb" ]; then
-			runtime_hsb=$(mktemp "$tmpdir/.runtime.user.hsb.XXXXXX")
+			runtime_hsb=$(mktemp "$tmpdir/.runtime.user.hsb.$scanid.XXXXXX")
 			if [ -s "$sig_user_sha256_file" ]; then
 				sed 's/{SHA256}//' "$sig_user_sha256_file" | grep -vE "^\s*$" > "$runtime_hsb"
 				[ -f "$sig_cav_sha256_file" ] && [ -s "$sig_cav_sha256_file" ] && cat "$sig_cav_sha256_file" >> "$runtime_hsb"
@@ -650,9 +654,9 @@ gensigs() {
 
 	# Build native hex scanner lookup files from runtime_hexstrings.
 	# Format of runtime_hexstrings: HEXPATTERN:{HEX}sig.name.N (colon-delimited)
-	runtime_hex_literal=$(mktemp "$tmpdir/.runtime.hex_literal.XXXXXX")
-	runtime_hex_regex=$(mktemp "$tmpdir/.runtime.hex_regex.XXXXXX")
-	runtime_hex_sigmap=$(mktemp "$tmpdir/.runtime.hex_sigmap.XXXXXX")
+	runtime_hex_literal=$(mktemp "$tmpdir/.runtime.hex_literal.$scanid.XXXXXX")
+	runtime_hex_regex=$(mktemp "$tmpdir/.runtime.hex_regex.$scanid.XXXXXX")
+	runtime_hex_sigmap=$(mktemp "$tmpdir/.runtime.hex_sigmap.$scanid.XXXXXX")
 	# Phase 1: Single awk pass — split, build sigmap, classify literal vs wildcard.
 	# Wildcard detection: ??, (alt|alt), *, nibble ?x/x?, {N-M} bounded gap.
 	# Matches the same wildcard detection regex as _hex_compile_wildcards_awk().
@@ -688,7 +692,7 @@ gensigs() {
 	_gensigs_csig_done=1  # flag: csig compilation attempted (prevents re-trigger loop)
 	if [ "$scan_csig" == "1" ]; then
 		local _runtime_csig
-		_runtime_csig=$(mktemp "$tmpdir/.runtime.csig.XXXXXX")
+		_runtime_csig=$(mktemp "$tmpdir/.runtime.csig.$scanid.XXXXXX")
 		if [ -f "$sig_csig_file" ] && [ -s "$sig_csig_file" ]; then
 			if [ -f "$sig_user_csig_file" ] && [ -s "$sig_user_csig_file" ]; then
 				grep -h -vE '^\s*$' "$sig_csig_file" "$sig_user_csig_file" > "$_runtime_csig"
@@ -709,10 +713,10 @@ gensigs() {
 			rm -f "$_csig_filt"
 		fi
 		if [ -s "$_runtime_csig" ]; then
-			runtime_csig_batch_compiled=$(mktemp "$tmpdir/.runtime.csig_batch_compiled.XXXXXX")
-			runtime_csig_literals=$(mktemp "$tmpdir/.runtime.csig_literals.XXXXXX")
-			runtime_csig_wildcards=$(mktemp "$tmpdir/.runtime.csig_wildcards.XXXXXX")
-			runtime_csig_universals=$(mktemp "$tmpdir/.runtime.csig_universals.XXXXXX")
+			runtime_csig_batch_compiled=$(mktemp "$tmpdir/.runtime.csig_batch_compiled.$scanid.XXXXXX")
+			runtime_csig_literals=$(mktemp "$tmpdir/.runtime.csig_literals.$scanid.XXXXXX")
+			runtime_csig_wildcards=$(mktemp "$tmpdir/.runtime.csig_wildcards.$scanid.XXXXXX")
+			runtime_csig_universals=$(mktemp "$tmpdir/.runtime.csig_universals.$scanid.XXXXXX")
 			_csig_compile_rules "$_runtime_csig"
 		fi
 		rm -f "$_runtime_csig"

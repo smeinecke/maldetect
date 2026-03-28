@@ -75,23 +75,62 @@ _yara_scan_rules() {
 	local yara_stderr="${10}"
 	local yara_rc_file="${11}"
 	local clean_check="${12}"
+	local _y_scanid="${13:-}"
 
 	> "$yara_results"
 	> "$yara_stderr"
 
+	local _yara_pid_file=""
+	if [ -n "$_y_scanid" ]; then
+		_yara_pid_file="$tmpdir/.yara_pid.$_y_scanid"
+	fi
+
 	if [ "$has_scan_list" == "1" ]; then
-		if [ "$yara_type" == "yr" ]; then
-			YARA_RC="$yara_rc_file" $nice_command sh -c '"$@"; echo $? > "$YARA_RC"' -- \
-				"$yara_bin" scan --scan-list $yara_timeout_opts $yara_warn_opts $rules_arg "$file_list" \
-				> "$yara_results" 2> "$yara_stderr"
+		if [ -n "$_yara_pid_file" ]; then
+			# PID capture: run YARA in background inside sh -c, write PID, wait
+			if [ "$yara_type" == "yr" ]; then
+				YARA_RC="$yara_rc_file" YARA_PID_FILE="$_yara_pid_file" \
+					$nice_command sh -c '"$@" & echo $! > "$YARA_PID_FILE"; wait $!; echo $? > "$YARA_RC"' -- \
+					"$yara_bin" scan --scan-list $yara_timeout_opts $yara_warn_opts $rules_arg "$file_list" \
+					> "$yara_results" 2> "$yara_stderr"
+			else
+				YARA_RC="$yara_rc_file" YARA_PID_FILE="$_yara_pid_file" \
+					$nice_command sh -c '"$@" & echo $! > "$YARA_PID_FILE"; wait $!; echo $? > "$YARA_RC"' -- \
+					"$yara_bin" --scan-list $yara_timeout_opts $yara_warn_opts $rules_arg "$file_list" \
+					> "$yara_results" 2> "$yara_stderr"
+			fi
 		else
-			YARA_RC="$yara_rc_file" $nice_command sh -c '"$@"; echo $? > "$YARA_RC"' -- \
-				"$yara_bin" --scan-list $yara_timeout_opts $yara_warn_opts $rules_arg "$file_list" \
-				> "$yara_results" 2> "$yara_stderr"
+			if [ "$yara_type" == "yr" ]; then
+				YARA_RC="$yara_rc_file" $nice_command sh -c '"$@"; echo $? > "$YARA_RC"' -- \
+					"$yara_bin" scan --scan-list $yara_timeout_opts $yara_warn_opts $rules_arg "$file_list" \
+					> "$yara_results" 2> "$yara_stderr"
+			else
+				YARA_RC="$yara_rc_file" $nice_command sh -c '"$@"; echo $? > "$YARA_RC"' -- \
+					"$yara_bin" --scan-list $yara_timeout_opts $yara_warn_opts $rules_arg "$file_list" \
+					> "$yara_results" 2> "$yara_stderr"
+			fi
 		fi
 	else
-		local pf_rc=0 pf_last=0 scan_file
+		local pf_rc=0 pf_last=0 scan_file _sentinel_rc
 		while IFS= read -r scan_file; do
+			# Check lifecycle sentinels at per-file boundary
+			if [ -n "$_y_scanid" ]; then
+				_lifecycle_check_sentinels "$_y_scanid"
+				_sentinel_rc=$?
+				if [ "$_sentinel_rc" -eq 1 ]; then
+					break  # abort
+				fi
+				if [ "$_sentinel_rc" -eq 2 ]; then
+					# Pause: sleep-loop checking abort every 2s
+					while [ -f "$tmpdir/.pause.$_y_scanid" ]; do
+						_lifecycle_check_sentinels "$_y_scanid"
+						[ $? -eq 1 ] && break 2
+						command sleep 2
+					done
+				fi
+				# Check parent liveness — $$ = parent PID (intentional)
+				_lifecycle_check_parent "$$" || break
+			fi
 			if [ ! -f "$scan_file" ]; then
 				continue
 			fi
@@ -104,10 +143,15 @@ _yara_scan_rules() {
 					"$yara_bin" $yara_timeout_opts $yara_warn_opts $rules_arg "$scan_file" \
 					>> "$yara_results" 2>> "$yara_stderr"
 			fi
-			read -r pf_last < "$yara_rc_file" 2>/dev/null || pf_last=0
+			read -r pf_last < "$yara_rc_file" 2>/dev/null || pf_last=0  # safe: file may be empty on fast exit
 			[ "$pf_last" -gt "$pf_rc" ] && pf_rc=$pf_last
 		done < "$file_list"
 		echo "$pf_rc" > "$yara_rc_file"
+	fi
+
+	# Clean up YARA PID file
+	if [ -n "$_yara_pid_file" ]; then
+		command rm -f "$_yara_pid_file"
 	fi
 
 	# Log stderr (filter out expected "could not open/map" from quarantined files)
@@ -167,7 +211,8 @@ _yara_scan_rules() {
 
 scan_stage_yara() {
 	local file_list="$1"
-	local clean_check="$2"
+	local clean_check="${2:-}"
+	local _stg_scanid="${3:-}"
 	if [ ! -f "$file_list" ] || [ ! -s "$file_list" ]; then
 		return
 	fi
@@ -248,6 +293,7 @@ scan_stage_yara() {
 
 	local has_scan_list="$_yara_has_scan_list"
 
+	[ -n "$_stg_scanid" ] && _lifecycle_update_meta "$_stg_scanid" "stage" "yara"
 	eout "{yara} starting native YARA scan stage..."
 
 	local yara_results yara_stderr yara_rc_file rules_file
@@ -260,7 +306,7 @@ scan_stage_yara() {
 		_yara_scan_rules "$rules_file" "$rules_file" \
 			"$yara_bin" "$yara_type" "$has_scan_list" "$file_list" \
 			"$yara_timeout_opts" "$yara_warn_opts" "$yara_results" \
-			"$yara_stderr" "$yara_rc_file" "$clean_check"
+			"$yara_stderr" "$yara_rc_file" "$clean_check" "$_stg_scanid"
 	done < "$yara_rules_list"
 
 	# Scan with compiled rules if available
@@ -268,7 +314,7 @@ scan_stage_yara() {
 		_yara_scan_rules "-C $compiled_rules" "compiled rules" \
 			"$yara_bin" "$yara_type" "$has_scan_list" "$file_list" \
 			"$yara_timeout_opts" "$yara_warn_opts" "$yara_results" \
-			"$yara_stderr" "$yara_rc_file" "$clean_check"
+			"$yara_stderr" "$yara_rc_file" "$clean_check" "$_stg_scanid"
 	fi
 
 	rm -f "$yara_rules_list" "$yara_results" "$yara_stderr" "$yara_rc_file"

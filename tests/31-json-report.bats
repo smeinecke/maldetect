@@ -357,7 +357,7 @@ LEGACY
 @test "--format with invalid value exits with error" {
     run maldet --format xml -e list
     assert_failure
-    assert_output --partial 'ERROR: --format requires text, json, or html'
+    assert_output --partial 'ERROR: --format requires text, json, html, or tsv'
 }
 
 # --- Test 23: --format json position-independent (after -e) ---

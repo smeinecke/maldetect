@@ -133,6 +133,14 @@ setup_file() {
     assert_output --partial "FILES"
 }
 
+@test "man page documents --all flag for -e list" {
+    run zcat "$LMD_INSTALL/maldet.1.gz"
+    assert_success
+    # groff escapes hyphens as \- so match the raw source form
+    assert_output --partial '\-\-all'
+    assert_output --partial "full scan history"
+}
+
 @test "uninstall.sh removes man page symlink" {
     grep -q 'maldet.1.gz' "$LMD_INSTALL/uninstall.sh"
 }

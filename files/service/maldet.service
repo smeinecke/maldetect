@@ -11,8 +11,12 @@ After=network.target
 [Service]
 EnvironmentFile=-/etc/sysconfig/maldet
 EnvironmentFile=-/etc/default/maldet
-ExecStart=/usr/local/maldetect/maldet --monitor ${MONITOR_MODE:-users}
-ExecStop=/usr/local/maldetect/maldet --kill-monitor
+# If MONITOR_MODE is unset, maldet falls back to default_monitor_mode in
+# conf.maldet. If that is also empty, the process exits 0 (no restart).
+ExecStart=/usr/local/maldetect/maldet --monitor ${MONITOR_MODE}
+# No ExecStop — systemd sends SIGTERM to the supervisor directly;
+# the supervisor trap handler performs clean shutdown.
+# maldet -k also delegates to systemctl stop when the service is active.
 Type=simple
 Restart=on-failure
 RestartSec=10

@@ -25,7 +25,9 @@ _hash_batch_worker() {
 	# Arg 3: chunk file (one filepath per line)
 	# Arg 4: runtime sig file (HASH:SIZE:{TYPE}sig.name.N)
 	# Arg 5: progress file (written every 500 files; empty = no progress)
+	# Arg 6: scanid (for lifecycle sentinel checks; empty = no checks)
 	local _hashcmd="$1" _hash_label="$2" _chunk="$3" _sigfile="$4" _progress_file="${5:-}"
+	local _w_scanid="${6:-}"
 	local _hash_out
 	if [ "$os_freebsd" == "1" ]; then
 		# FreeBSD hash -q outputs hash only (no filename); loop to pair them
@@ -58,6 +60,20 @@ _hash_batch_worker() {
 		{ if ($1 in sigs) print $2 "\t" $1 "\t" sigs[$1] }
 		' "$_fbsd_out"
 		rm -f "$_fbsd_out"
+		# Check lifecycle sentinels after FreeBSD hash batch (Phase 5)
+		if [ -n "$_w_scanid" ]; then
+			local _sentinel_rc
+			_lifecycle_check_sentinels "$_w_scanid"
+			_sentinel_rc=$?
+			if [ "$_sentinel_rc" -eq 1 ]; then
+				exit 3  # abort
+			fi
+			if [ "$_sentinel_rc" -eq 4 ]; then
+				exit 4  # stop — stage granularity, no per-chunk checkpoint
+			fi
+			# $$ in subshell = parent PID (intentional)
+			_lifecycle_check_parent "$$" || exit 5  # orphaned
+		fi
 	else
 		# Linux: xargs hashcmd hashes all files in one process
 		_hash_out=$(mktemp "$tmpdir/.${_hash_label}_linux.$$.XXXXXX")
@@ -108,6 +124,20 @@ _hash_batch_worker() {
 		}
 		' "$_hash_out"
 		rm -f "$_hash_out"
+		# Check lifecycle sentinels after Linux hash batch (Phase 5)
+		if [ -n "$_w_scanid" ]; then
+			local _sentinel_rc
+			_lifecycle_check_sentinels "$_w_scanid"
+			_sentinel_rc=$?
+			if [ "$_sentinel_rc" -eq 1 ]; then
+				exit 3  # abort
+			fi
+			if [ "$_sentinel_rc" -eq 4 ]; then
+				exit 4  # stop — stage granularity, no per-chunk checkpoint
+			fi
+			# $$ in subshell = parent PID (intentional)
+			_lifecycle_check_parent "$$" || exit 5  # orphaned
+		fi
 	fi
 }
 
@@ -123,6 +153,18 @@ _hex_csig_batch_worker() {
 	local _csig_batch_compiled="${6:-}" _csig_lit="${7:-}" _csig_wc="${8:-}" _csig_uni="${9:-}"
 	local _progress_file="${10:-}"
 	local _chunk_size="${11:-0}"
+	local _w_scanid="${12:-}"
+	local _chunk_skip="${13:-0}"
+
+	# Derive worker ID from chunk filename suffix (e.g., .hex_chunk.PID.3 → wid=3)
+	local _wid="${_chunk##*.}"
+
+	# Chunk counter for checkpoint tracking and chunk-skip
+	local _chunk_count=0
+
+	# EXIT trap: clean up .hcb temp files on any exit path (normal, abort, orphan)
+	# $$ in subshell = parent PID — intentional (temp files grouped under parent namespace)
+	trap 'command rm -f "$tmpdir"/.hcb.$$.*' EXIT
 
 	# Preload hex sigmap into associative array (eliminates awk fork per HEX hit)
 	# local -A safe here: runs in backgrounded subshell, not sourced-from-function
@@ -179,6 +221,11 @@ _hex_csig_batch_worker() {
 		[ -n "${_loaded_sids[${__sid}:${__linenum}]+set}" ]
 	}
 
+	# Validate chunk-skip is numeric; default to 0 if not
+	if ! [[ "$_chunk_skip" =~ ^[0-9]+$ ]]; then
+		_chunk_skip=0
+	fi
+
 	exec 3< "$_chunk"  # FD 3 reserved for chunk reader — inner pipelines must not use FD 3
 	while :; do
 		_batch_hex=$(mktemp "$tmpdir/.hcb.$$.XXXXXX")
@@ -186,6 +233,26 @@ _hex_csig_batch_worker() {
 		_idx=0
 
 		# --- Phase 1: Batch hex extraction (up to _chunk_size files) ---
+		_chunk_count=$((_chunk_count + 1))
+		if [ "$_chunk_count" -le "$_chunk_skip" ]; then
+			# Chunk-skip: read files from FD to advance position, but skip hex extraction
+			while IFS= read -r _line <&3; do
+				[ -f "$_line" ] && [ -r "$_line" ] || continue
+				_idx=$((_idx + 1))
+				if [ -n "$_progress_file" ] && (((_global_idx + _idx) % 100 == 0)); then
+					echo "$((_global_idx + _idx))" > "$_progress_file"
+				fi
+				[ "$_idx" -ge "$_chunk_size" ] && break
+			done
+			if [ "$_idx" -eq 0 ]; then
+				command rm -f "$_batch_hex"
+				break
+			fi
+			_global_idx=$((_global_idx + _idx))
+			[ -n "$_progress_file" ] && echo "$_global_idx" > "$_progress_file"
+			command rm -f "$_batch_hex"
+			continue
+		fi
 		while IFS= read -r _line <&3; do
 			[ -f "$_line" ] && [ -r "$_line" ] || continue
 			_names[_idx]="$_line"
@@ -438,12 +505,75 @@ _hex_csig_batch_worker() {
 
 	command rm -f "$_batch_hex"
 	_global_idx=$((_global_idx + _idx))
+
+	# Check lifecycle sentinels at micro-chunk boundary (Phase 5 + Phase 14)
+	if [ -n "$_w_scanid" ]; then
+		local _sentinel_rc
+		_lifecycle_check_sentinels "$_w_scanid"
+		_sentinel_rc=$?
+		if [ "$_sentinel_rc" -eq 1 ]; then
+			exit 3  # abort (kill) — no checkpoint
+		fi
+		if [ "$_sentinel_rc" -eq 4 ]; then
+			# Stop: write per-worker checkpoint, then exit 4
+			local _wp_file="$sessdir/scan.wp.$_w_scanid.$_wid"
+			local _wp_tmp="$_wp_file.tmp"
+			command cat > "$_wp_tmp" <<WP_EOF
+#LMD_WP:v1
+chunks_completed=$_chunk_count
+WP_EOF
+			command mv -f "$_wp_tmp" "$_wp_file"
+			exit 4  # stop with checkpoint
+		fi
+		if [ "$_sentinel_rc" -eq 2 ]; then
+			# Pause: sleep-loop checking abort every 2s; auto-resume on duration expiry
+			while [ -f "$tmpdir/.pause.$_w_scanid" ]; do
+				_lifecycle_check_sentinels "$_w_scanid"
+				local _pause_rc=$?
+				if [ "$_pause_rc" -eq 1 ]; then
+					exit 3  # abort during pause
+				fi
+				if [ "$_pause_rc" -eq 4 ]; then
+					# Stop during pause: write checkpoint, then exit
+					local _wp_file_p="$sessdir/scan.wp.$_w_scanid.$_wid"
+					local _wp_tmp_p="$_wp_file_p.tmp"
+					command cat > "$_wp_tmp_p" <<WP_EOF2
+#LMD_WP:v1
+chunks_completed=$_chunk_count
+WP_EOF2
+					command mv -f "$_wp_tmp_p" "$_wp_file_p"
+					exit 4
+				fi
+				# Read duration from sentinel; auto-resume if expired
+				local _p_epoch=0 _p_duration=0 _p_key _p_val
+				while IFS='=' read -r _p_key _p_val; do
+					case "$_p_key" in
+						epoch) _p_epoch="$_p_val" ;;
+						duration) _p_duration="$_p_val" ;;
+					esac
+				done < "$tmpdir/.pause.$_w_scanid" 2>/dev/null  # safe: sentinel may vanish between check and read
+				if [ "$_p_duration" -gt 0 ] 2>/dev/null; then  # safe: non-numeric falls through
+					local _p_now
+					_p_now=$(command date +%s)
+					if [ "$_p_now" -ge $((_p_epoch + _p_duration)) ]; then
+						# Duration expired — auto-resume
+						command rm -f "$tmpdir/.pause.$_w_scanid"
+						break
+					fi
+				fi
+				command sleep 2
+			done
+		fi
+		# Check parent liveness — $$ in subshell = parent PID (intentional)
+		_lifecycle_check_parent "$$" || exit 5  # orphaned
+	fi
+
 	done
 	exec 3<&-
 
 	# Cleanup hoisted CSIG temp files
-	[ -n "$_lit_pats" ] && command rm -f "$_lit_pats"
-	[ -n "$_lit_lkup" ] && command rm -f "$_lit_lkup"
+	if [ -n "$_lit_pats" ]; then command rm -f "$_lit_pats"; fi
+	if [ -n "$_lit_lkup" ]; then command rm -f "$_lit_lkup"; fi
 }
 
 scan_strlen() {

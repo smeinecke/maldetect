@@ -20,6 +20,7 @@ teardown() {
 # Helper: source LMD config stack for unit-level function tests.
 _source_lmd_stack() {
     set +eu
+    trap - ERR  # bash 5.1: BATS ERR trap leaks into sourced files even with set +e
     source "$LMD_INSTALL/internals/internals.conf"
     source "$LMD_INSTALL/conf.maldet"
     source "$LMD_INSTALL/internals/lmd.lib.sh"
@@ -138,15 +139,17 @@ MOCK
     # Capture list output
     run maldet -e list
     assert_success
-    # All data lines should have consistent pipe-delimited fields.
-    # Check that SCANID and RUNTIME labels align: every data line should
-    # have exactly 6 pipe-separated fields (date|scanid|runtime|files|hits|cleaned)
+    # Columnar header row should appear once (DATE | SCANID | ...)
+    assert_output --partial "SCANID"
+    assert_output --partial "RUNTIME"
+    assert_output --partial "FILES"
+    # Count data lines: lines containing a scan ID pattern (NNNNNN.NNNNN)
     local _line _count
     _count=0
     while IFS= read -r _line; do
-        # Skip header/banner lines
+        # Scan IDs are digits.digits (e.g. 260328-1234.12345)
         case "$_line" in
-            *SCANID:*) _count=$((_count + 1)) ;;
+            *[0-9][0-9][0-9][0-9][0-9][0-9]-*) _count=$((_count + 1)) ;;
         esac
     done <<< "$output"
     [ "$_count" -ge 2 ]

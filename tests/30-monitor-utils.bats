@@ -9,6 +9,7 @@ LMD_INSTALL="/usr/local/maldetect"
 # --- Helper: source LMD functions into test scope ---
 _source_lmd_stack() {
     set +eu
+    trap - ERR  # bash 5.1: BATS ERR trap leaks into sourced files even with set +e
     export inspath="$LMD_INSTALL"
     # shellcheck disable=SC1090,SC1091
     source "$LMD_INSTALL/internals/internals.conf"

@@ -231,33 +231,69 @@ trap_exit() {
 		eout "{glob} monitor interrupt by user, shutting down." 1
 		_monitor_shutdown
 	elif [ "$svc" == "a" ] || [ "$svc" == "r" ] || [ "$svc" == "f" ]; then
-		echo
-		# Compute end-time vars before session finalization — scan()
-		# sets these at completion (lmd_scan.sh:792-797) but the trap
-		# fires before reaching that code.
-		if [ -n "$scan_start" ]; then
-			scan_end_hr=$(date +"%b %e %Y %H:%M:%S %z")
-			scan_end=$(date +"%s")
-			scan_et=$((scan_end - scan_start))
-		fi
-		tot_hits="${progress_hits:-0}"
-		tot_cl="${progress_cleaned:-0}"
-		_scan_finalize_session
-		if [ "$tot_hits" != "0" ]; then
-			if [ "$email_ignore_clean" == "1" ] && [ "$tot_hits" != "$tot_cl" ]; then
-				genalert file $nsess
-			elif [ "$email_ignore_clean" == "0" ]; then
-				genalert file $nsess
+		# Re-entry guard: prevent double execution from concurrent kill+trap (R9)
+		[ "${_scan_aborting:-0}" = "1" ] && return 0
+		_scan_aborting=1
+
+		# Detect stop vs kill by reading abort sentinel content
+		local _trap_is_stop=0
+		if [ -n "${scanid:-}" ] && [ -f "$tmpdir/.abort.$scanid" ]; then
+			local _trap_sentinel_type
+			IFS= read -r _trap_sentinel_type < "$tmpdir/.abort.$scanid" 2>/dev/null  # safe: sentinel may vanish
+			if [ "$_trap_sentinel_type" = "stop" ]; then
+				_trap_is_stop=1
 			fi
 		fi
-		_scan_cleanup
-		rm -f "$tmpf" 2>/dev/null
-		eout "{glob} scan interrupt by user, aborting scan..." 1
-		eout "{scan} scan report saved, to view run: maldet --report $datestamp.$$" 1
-		if [ "$quarantine_hits" == "0" ] && [ "$tot_hits" != "0" ]; then
-			eout "{glob} quarantine is disabled! set quarantine_hits=1 in $cnffile or to quarantine results run: maldet -q $datestamp.$$" 1
+
+		echo
+		# Kill background progress ticker before any cleanup
+		_stop_elapsed_timer
+
+		if [ "$_trap_is_stop" -eq 1 ]; then
+			# --- Stop mode: preserve hit state for --continue, skip finalization ---
+			_scan_stop_mode=1
+			wait 2>/dev/null  # safe: collect child worker processes exiting via sentinel
+			if [ -n "${scanid:-}" ]; then
+				if [ -f "$scan_session" ] && [ -s "$scan_session" ]; then
+					command cp "$scan_session" "$sessdir/session.hits.$scanid"
+				fi
+				_lifecycle_update_meta "$scanid" "state" "stopped"
+			fi
+			_scan_cleanup
+			rm -f "$tmpf" 2>/dev/null  # safe: may not exist
+			eout "{glob} scan stopped by operator, checkpoint pending" 1
+			exit 0
+		else
+			# --- Kill mode: existing behavior ---
+			if [ -n "${scanid:-}" ]; then
+				_lifecycle_update_meta "$scanid" "state" "killed"
+			fi
+			# Compute end-time vars before session finalization — scan()
+			# sets these at completion but the trap fires before reaching that code.
+			if [ -n "$scan_start" ]; then
+				scan_end_hr=$(date +"%b %e %Y %H:%M:%S %z")
+				scan_end=$(date +"%s")
+				scan_et=$((scan_end - scan_start))
+			fi
+			tot_hits="${progress_hits:-0}"
+			tot_cl="${progress_cleaned:-0}"
+			_scan_finalize_session
+			if [ "$tot_hits" != "0" ]; then
+				if [ "$email_ignore_clean" == "1" ] && [ "$tot_hits" != "$tot_cl" ]; then
+					genalert file $nsess
+				elif [ "$email_ignore_clean" == "0" ]; then
+					genalert file $nsess
+				fi
+			fi
+			_scan_cleanup
+			rm -f "$tmpf" 2>/dev/null
+			eout "{glob} scan interrupt by user, aborting scan..." 1
+			eout "{scan} scan report saved, to view run: maldet --report $scanid" 1
+			if [ "$quarantine_hits" == "0" ] && [ "$tot_hits" != "0" ]; then
+				eout "{glob} quarantine is disabled! set quarantine_hits=1 in $cnffile or to quarantine results run: maldet -q $scanid" 1
+			fi
+			exit 1
 		fi
-		exit 1
 	fi
 }
 
@@ -273,6 +309,17 @@ clean_exit() {
 		tot_hits="${progress_hits:-${tot_hits:-0}}"
 		tot_cl="${progress_cleaned:-${tot_cl:-0}}"
 		_scan_finalize_session
+	fi
+	# Update lifecycle meta to completed (skip if aborting or no scanid)
+	if [ -n "${scanid:-}" ] && [ "${_scan_aborting:-0}" != "1" ]; then
+		local _end_ts
+		_end_ts=$(command date +%s)
+		_lifecycle_update_meta "$scanid" "state" "completed"
+		_lifecycle_update_meta "$scanid" "completed" "$_end_ts"
+		_lifecycle_update_meta "$scanid" "completed_hr" "$(command date '+%b %d %Y %H:%M:%S %z')"
+		if [ -n "${scan_start:-}" ]; then
+			_lifecycle_update_meta "$scanid" "elapsed" "$(( _end_ts - scan_start ))"
+		fi
 	fi
 	_scan_cleanup
 }
