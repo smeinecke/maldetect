@@ -778,10 +778,15 @@ _lmd_render_json_list() {
 	# Fast path: read from session.index (covers all TSV sessions)
 	if [ -f "$_index_file" ]; then
 		local _ix_scanid _ix_epoch _ix_started_hr _ix_elapsed
-		local _ix_tot_files _ix_tot_hits _ix_tot_cl _ix_path
+		local _ix_tot_files _ix_tot_hits _ix_tot_cl _ix_tot_quar _ix_path
 		while IFS=$'\t' read -r _ix_scanid _ix_epoch _ix_started_hr _ix_elapsed \
-				_ix_tot_files _ix_tot_hits _ix_tot_cl _ix_path; do
+				_ix_tot_files _ix_tot_hits _ix_tot_cl _ix_tot_quar _ix_path; do
 			case "$_ix_scanid" in "#"*|"") continue ;; esac
+			# Backward compat: old 8-field index has path in field 8 (no quar field)
+			if [ -z "$_ix_path" ] && [ -n "$_ix_tot_quar" ]; then
+				_ix_path="$_ix_tot_quar"
+				_ix_tot_quar="0"
+			fi
 			_seen_ids="$_seen_ids $_ix_scanid"
 			if [ "$_first" != "1" ]; then printf ","; fi
 			_first=0
@@ -796,6 +801,9 @@ _lmd_render_json_list() {
 			local _jval="${_ix_tot_cl:-0}"
 			[ "$_jval" = "-" ] && _jval="0"
 			printf '"total_cleaned": %s, ' "$_jval"
+			local _jquar="${_ix_tot_quar:-0}"
+			[ "$_jquar" = "-" ] && _jquar="0"
+			printf '"total_quarantined": %s, ' "$_jquar"
 			if [ "$_ix_elapsed" = "-" ]; then printf '"elapsed_seconds": null'
 			else printf '"elapsed_seconds": %s' "$_ix_elapsed"; fi
 			printf '}'
@@ -828,6 +836,7 @@ _lmd_render_json_list() {
 		local _jval="${tot_cl:-0}"
 		[ -z "$_jval" ] && _jval="0"
 		printf '"total_cleaned": %s, ' "$_jval"
+		printf '"total_quarantined": null, '
 		if [ -z "$scan_et" ]; then printf '"elapsed_seconds": null, '
 		else printf '"elapsed_seconds": %s, ' "$scan_et"; fi
 		printf '"source": "legacy"'

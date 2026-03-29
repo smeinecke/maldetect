@@ -110,6 +110,10 @@ v2.0.1 | Mar 25 2026:
 [Change] -e list redesign: columnar output with header row, 14-entry cap with overflow
          hint, PATH column (truncated 30 chars), index-first rendering, empty state
          message, FreeBSD support
+[New] -e list: QUAR column shows quarantine count per scan in text and JSON list output;
+      session.index expanded to 9 fields; backward compat with old 8-field index
+[Change] Alert text templates: drop "TOTAL" prefix from summary labels for consistency
+         (HITS/CLEANED/QUARANTINED); aligned column spacing across all text templates
 [Change] Active scan heading shows count: Active scans (N):
 [Change] -e list empty state: exits 0 with "No scans found" instead of exit 1 error
 

@@ -119,12 +119,12 @@ teardown() {
     for i in $(seq 1 16); do
         local padded
         padded=$(printf '%02d' "$i")
-        # Fields: scanid epoch started_hr elapsed total_files total_hits total_cleaned path
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        # Fields: scanid epoch started_hr elapsed total_files total_hits total_cleaned total_quar path
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "260328-0100.${padded}" \
             "$((1711584000 + i * 60))" \
             "Mar 28 2026 01:${padded}:00" \
-            "5" "100" "0" "0" "/test/path${i}" >> "$index_file"
+            "5" "100" "0" "0" "0" "/test/path${i}" >> "$index_file"
     done
     run maldet -e list
     assert_success
@@ -143,11 +143,11 @@ teardown() {
     for i in $(seq 1 16); do
         local padded
         padded=$(printf '%02d' "$i")
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "260328-0200.${padded}" \
             "$((1711584000 + i * 60))" \
             "Mar 28 2026 02:${padded}:00" \
-            "3" "50" "0" "0" "/test/all${i}" >> "$index_file"
+            "3" "50" "0" "0" "0" "/test/all${i}" >> "$index_file"
     done
     run maldet -e list --all
     assert_success

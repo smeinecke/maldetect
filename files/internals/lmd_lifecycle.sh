@@ -432,14 +432,15 @@ _lifecycle_render_tsv_active() {
 }
 
 ##
-# _session_index_append(scanid, epoch, started_hr, elapsed, total_files, total_hits, total_cleaned, path)
+# _session_index_append(scanid, epoch, started_hr, elapsed, total_files, total_hits, total_cleaned, total_quarantined, path)
 #   Appends a tab-delimited record to $sessdir/session.index.
 #   Creates file with #LMD_INDEX:v1 header if missing.
 #   Lines are < 200 bytes (under PIPE_BUF for atomic append on all POSIX systems).
 ##
 _session_index_append() {
 	local _scanid="$1" _epoch="$2" _started_hr="$3" _elapsed="$4"
-	local _total_files="$5" _total_hits="$6" _total_cleaned="$7" _path="$8"
+	local _total_files="$5" _total_hits="$6" _total_cleaned="$7"
+	local _total_quar="$8" _path="$9"
 	local _index_file="$sessdir/session.index"
 
 	# Create with header if missing
@@ -448,9 +449,10 @@ _session_index_append() {
 	fi
 
 	# Atomic append (< PIPE_BUF)
-	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 		"$_scanid" "$_epoch" "$_started_hr" "$_elapsed" \
-		"$_total_files" "$_total_hits" "$_total_cleaned" "$_path" >> "$_index_file"
+		"$_total_files" "$_total_hits" "$_total_cleaned" \
+		"$_total_quar" "$_path" >> "$_index_file"
 }
 
 ##
@@ -487,9 +489,13 @@ _session_index_rebuild() {
 			[ -z "$_r_scanid" ] && continue
 			# Compute epoch from started_hr; fall back to file mtime
 			_r_epoch=$(command date -d "$_r_started_hr" "+%s" 2>/dev/null) || _r_epoch=0  # safe: date parse failure falls back to 0
-			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			# Count quarantined hits: lines where field 3 (quarpath) is non-empty and not "-"
+			local _r_tot_quar
+			_r_tot_quar=$(awk -F'\t' '!/^#/ && $3 != "" && $3 != "-" { n++ } END { print n+0 }' "$_tsv_file")
+			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 				"$_r_scanid" "$_r_epoch" "$_r_started_hr" "${_r_elapsed:--}" \
-				"${_r_tot_files:--}" "${_r_tot_hits:--}" "${_r_tot_cl:--}" "${_r_path:--}" \
+				"${_r_tot_files:--}" "${_r_tot_hits:--}" "${_r_tot_cl:--}" \
+				"$_r_tot_quar" "${_r_path:--}" \
 				>> "$_tmp_file"
 		done
 

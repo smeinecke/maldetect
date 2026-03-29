@@ -104,7 +104,7 @@ MOCK
     # Verify --report latest produces output
     run maldet --report latest
     assert_output --partial "SCAN ID:"
-    assert_output --partial "TOTAL FILES:"
+    assert_output --partial "FILES:"
 }
 
 @test "--report newest still works (backward compat)" {

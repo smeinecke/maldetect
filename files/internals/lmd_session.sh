@@ -16,6 +16,42 @@ _LMD_SESSION_LOADED=1
 # shellcheck disable=SC2034
 LMD_SESSION_VERSION="1.0.0"
 
+##
+# _session_fmt_elapsed(value)
+#   Normalizes elapsed time for human-readable list display.
+#   Accepts raw seconds (342), suffixed seconds (342s), or legacy
+#   monitor format (0d:3h:34m:4s). Returns consistent short form:
+#     <60s   → "42s"
+#     <3600s → "5m 42s"
+#     ≥3600s → "3h 34m"
+#   Prints "n/a" for empty, "-", or non-numeric input.
+##
+_session_fmt_elapsed() {
+	local _val="$1" _secs
+	# Strip trailing 's' if present (e.g., "342s" → "342")
+	_val="${_val%s}"
+	# Handle n/a, empty, dash
+	case "$_val" in
+		""|"-"|"n/a"|"n/") printf 'n/a'; return ;;
+	esac
+	# Legacy monitor format: Xd:Xh:Xm:X (trailing s already stripped)
+	local _legacy_pat='^([0-9]+)d:([0-9]+)h:([0-9]+)m:([0-9]+)$'
+	if [[ "$_val" =~ $_legacy_pat ]]; then
+		_secs=$(( ${BASH_REMATCH[1]}*86400 + ${BASH_REMATCH[2]}*3600 + ${BASH_REMATCH[3]}*60 + ${BASH_REMATCH[4]} ))
+	elif [[ "$_val" =~ ^[0-9]+$ ]]; then
+		_secs="$_val"
+	else
+		printf 'n/a'; return
+	fi
+	if [ "$_secs" -lt 60 ]; then
+		printf '%ds' "$_secs"
+	elif [ "$_secs" -lt 3600 ]; then
+		printf '%dm %ds' "$((_secs / 60))" "$((_secs % 60))"
+	else
+		printf '%dh %dm' "$((_secs / 3600))" "$(( (_secs % 3600) / 60 ))"
+	fi
+}
+
 # _session_is_tsv file — returns 0 if file is TSV format (line 1 starts with #LMD:v1)
 _session_is_tsv() {
 	local _file="$1"
@@ -184,9 +220,9 @@ _parse_session_metadata() {
 				# Strip trailing non-numeric (e.g., "1 days" -> "1")
 				days="${_val%% *}"
 				;;
-			"TOTAL FILES")   tot_files="$_val" ;;
-			"TOTAL HITS")    tot_hits="$_val" ;;
-			"TOTAL CLEANED") tot_cl="$_val" ;;
+			"TOTAL FILES"|"FILES")   tot_files="$_val" ;;
+			"TOTAL HITS"|"HITS")     tot_hits="$_val" ;;
+			"TOTAL CLEANED"|"CLEANED") tot_cl="$_val" ;;
 		"HOST")          _hostname="$_val" ;;
 		esac
 	done < "$_sess_file"
@@ -328,28 +364,31 @@ view_report() {
 		if [ -f "$_index_file" ]; then
 			# Fast path: read completed scans from session.index (O(1) vs O(n) per-file)
 			local _ix_scanid _ix_epoch _ix_started_hr _ix_elapsed
-			local _ix_tot_files _ix_tot_hits _ix_tot_cl _ix_path
+			local _ix_tot_files _ix_tot_hits _ix_tot_cl _ix_tot_quar _ix_path
 			while IFS=$'\t' read -r _ix_scanid _ix_epoch _ix_started_hr _ix_elapsed \
-					_ix_tot_files _ix_tot_hits _ix_tot_cl _ix_path; do
+					_ix_tot_files _ix_tot_hits _ix_tot_cl _ix_tot_quar _ix_path; do
 				# Skip header and empty lines
 				case "$_ix_scanid" in "#"*|"") continue ;; esac
+				# Backward compat: old 8-field index has path in field 8 (no quar field)
+				if [ -z "$_ix_path" ] && [ -n "$_ix_tot_quar" ]; then
+					_ix_path="$_ix_tot_quar"
+					_ix_tot_quar="0"
+				fi
 				_seen_ids="$_seen_ids $_ix_scanid"
-				local _time_display _etime _cl _trunc_path
+				local _time_display _etime _cl _quar _trunc_path
 				# Strip timezone offset for column alignment
 				_time_display=$(echo "$_ix_started_hr" | awk '{print $1,$2,$3,$4}')
-				if [ "$_ix_elapsed" = "-" ] || [ -z "$_ix_elapsed" ]; then
-					_etime="n/a"
-				else
-					_etime="${_ix_elapsed}s"
-				fi
+				_etime=$(_session_fmt_elapsed "$_ix_elapsed")
 				_cl="${_ix_tot_cl:-0}"
 				[ "$_cl" = "-" ] && _cl="0"
+				_quar="${_ix_tot_quar:-0}"
+				[ "$_quar" = "-" ] && _quar="0"
 				# Truncate path to 30 chars with ellipsis
 				_trunc_path="${_ix_path:--}"
 				if [ "${#_trunc_path}" -gt 30 ]; then
 					_trunc_path="${_trunc_path:0:27}..."
 				fi
-				echo "$_ix_epoch | $_time_display | $_ix_scanid | $_etime | ${_ix_tot_files:--} | ${_ix_tot_hits:--} | $_cl | $_trunc_path" >> "$tmpf"
+				echo "$_ix_epoch | $_time_display | $_ix_scanid | $_etime | ${_ix_tot_files:--} | ${_ix_tot_hits:--} | $_quar | $_cl | $_trunc_path" >> "$tmpf"
 			done < "$_index_file"
 		fi
 		# Fallback: per-file glob for sessions not in the index
@@ -365,20 +404,18 @@ view_report() {
 				_time_u=$(date -d "$scan_start_hr" "+%s" 2>/dev/null)
 				# Strip timezone offset for consistent column alignment with legacy pass
 				_time_display=$(echo "$scan_start_hr" | awk '{print $1,$2,$3,$4}')
-				# Handle "-" sentinel from interrupted scans (no end-time recorded)
-				if [ "$scan_et" = "-" ] || [ -z "$scan_et" ]; then
-					_etime="n/a"
-				else
-					_etime="${scan_et}s"
-				fi
+				_etime=$(_session_fmt_elapsed "$scan_et")
 				local _cl="${tot_cl:-0}"
 				[ "$_cl" = "-" ] && _cl="0"
+				# Count quarantined from TSV hit records
+				local _quar
+				_quar=$(awk -F'\t' '!/^#/ && $3 != "" && $3 != "-" { n++ } END { print n+0 }' "$file")
 				# Truncate path to 30 chars with ellipsis
 				_trunc_path="${hrspath:--}"
 				if [ "${#_trunc_path}" -gt 30 ]; then
 					_trunc_path="${_trunc_path:0:27}..."
 				fi
-				echo "$_time_u | $_time_display | $scanid | $_etime | ${tot_files:--} | ${tot_hits:--} | $_cl | $_trunc_path" >> "$tmpf"
+				echo "$_time_u | $_time_display | $scanid | $_etime | ${tot_files:--} | ${tot_hits:--} | $_quar | $_cl | $_trunc_path" >> "$tmpf"
 				_seen_ids="$_seen_ids $_sid"
 			fi
 		done
@@ -388,19 +425,16 @@ view_report() {
 			case "$file" in *.tsv.*|*.hits.*) continue ;; esac
 			local _sid="${file##*session.}"
 			case "$_seen_ids" in *" $_sid"*) continue ;; esac
-			_meta=$(command grep -E "^SCAN ID|^TOTAL FILES|^TOTAL HITS|^TOTAL CLEANED|^TIME:|^STARTED:|^ELAPSED|^PATH" "$file")
+			_meta=$(command grep -E "^SCAN ID|^(TOTAL )?FILES|^(TOTAL )?HITS|^(TOTAL )?CLEANED|^TIME:|^STARTED:|^ELAPSED|^PATH" "$file")
 			SCANID=$(command grep "SCAN ID" <<< "$_meta" | command sed 's/SCAN ID: *//')
-			FILES=$(command grep "TOTAL FILES" <<< "$_meta" | command sed 's/TOTAL FILES: *//')
-			HITS=$(command grep "TOTAL HITS" <<< "$_meta" | command sed 's/TOTAL HITS: *//')
-			CLEAN=$(command grep "TOTAL CLEANED" <<< "$_meta" | command sed 's/TOTAL CLEANED: *//')
+			FILES=$(command grep -E "^(TOTAL )?FILES" <<< "$_meta" | command sed -e 's/TOTAL FILES: *//' -e 's/FILES: *//')
+			HITS=$(command grep -E "^(TOTAL )?HITS" <<< "$_meta" | command sed -e 's/TOTAL HITS: *//' -e 's/HITS: *//')
+			CLEAN=$(command grep -E "^(TOTAL )?CLEANED" <<< "$_meta" | command sed -e 's/TOTAL CLEANED: *//' -e 's/CLEANED: *//')
 			TIME=$(command grep -E "^TIME|^STARTED" <<< "$_meta" | command sed -e 's/TIME: //' -e 's/STARTED: //' | awk '{print$1,$2,$3,$4}')
 			TIME_U=$(date -d "$TIME" "+%s" 2>/dev/null)
-			ETIME=$(command grep "ELAPSED" <<< "$_meta" | awk '{print$2}')
+			ETIME_RAW=$(command grep "ELAPSED" <<< "$_meta" | awk '{print$2}')
 			LPATH=$(command grep "^PATH" <<< "$_meta" | command sed 's/PATH: *//')
-			# Empty ETIME or bare "s" (no number) from interrupted scans
-			if [ -z "$ETIME" ] || [ "$ETIME" = "s" ]; then
-				ETIME="n/a"
-			fi
+			ETIME=$(_session_fmt_elapsed "$ETIME_RAW")
 			if [ -z "$CLEAN" ]; then
 				CLEAN="0"
 			fi
@@ -409,7 +443,8 @@ view_report() {
 				if [ "${#_trunc_path}" -gt 30 ]; then
 					_trunc_path="${_trunc_path:0:27}..."
 				fi
-				echo "$TIME_U | $TIME | $SCANID | $ETIME | ${FILES:--} | ${HITS:--} | $CLEAN | $_trunc_path" >> "$tmpf"
+				# Legacy plaintext sessions have no quarantine count — show "-"
+				echo "$TIME_U | $TIME | $SCANID | $ETIME | ${FILES:--} | ${HITS:--} | - | $CLEAN | $_trunc_path" >> "$tmpf"
 			fi
 		done
 		# Display sorted results with section header and cap
@@ -438,19 +473,19 @@ view_report() {
 			local _display
 			if [ "${_list_all:-0}" = "1" ] || [ "$_total" -le 14 ]; then
 				_display=$(
-					printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | CLEANED | PATH"
+					printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | QUAR | CLEANED | PATH"
 					printf '%s\n' "$_sorted"
 				)
 			else
 				if [ "$os_freebsd" == "1" ]; then
 					# FreeBSD ascending: newest are at the end, use tail
 					_display=$(
-						printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | CLEANED | PATH"
+						printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | QUAR | CLEANED | PATH"
 						printf '%s\n' "$_sorted" | command tail -14
 					)
 				else
 					_display=$(
-						printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | CLEANED | PATH"
+						printf ' %s\n' "DATE | SCANID | RUNTIME | FILES | HITS | QUAR | CLEANED | PATH"
 						printf '%s\n' "$_sorted" | command head -14
 					)
 				fi
@@ -714,10 +749,14 @@ _scan_finalize_session() {
 		nsess="$nsess_hits"
 	fi
 
+	# Count quarantined hits from TSV: lines where field 3 (quarpath) is non-empty and not "-"
+	local _tot_quar
+	_tot_quar=$(awk -F'\t' '!/^#/ && $3 != "" && $3 != "-" { n++ } END { print n+0 }' "$nsess_hits")
+
 	# Append to session index (non-hook scans only)
 	_session_index_append "$_sid" "${scan_start:-0}" \
 		"${scan_start_hr:--}" "${scan_et:--}" \
-		"${tot_files:--}" "${tot_hits:--}" "${tot_cl:--}" "${hrspath:--}"
+		"${tot_files:--}" "${tot_hits:--}" "${tot_cl:--}" "$_tot_quar" "${hrspath:--}"
 
 	# Remove in-flight scan_session — all data now in nsess_hits
 	command rm -f "$scan_session"

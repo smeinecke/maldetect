@@ -98,7 +98,7 @@ EOF
     uat_capture "alerting" maldet -e "$scanid"
     assert_success
     assert_output --partial "SCAN ID"
-    assert_output --partial "TOTAL HITS"
+    assert_output --partial "HITS:"
 }
 
 # bats test_tags=uat,uat:alerting
