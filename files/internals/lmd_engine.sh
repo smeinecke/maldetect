@@ -59,7 +59,7 @@ _hash_batch_worker() {
 		}
 		{ if ($1 in sigs) print $2 "\t" $1 "\t" sigs[$1] }
 		' "$_fbsd_out"
-		rm -f "$_fbsd_out"
+		command rm -f "$_fbsd_out"
 		# Check lifecycle sentinels after FreeBSD hash batch (Phase 5)
 		if [ -n "$_w_scanid" ]; then
 			local _sentinel_rc
@@ -123,7 +123,7 @@ _hash_batch_worker() {
 			}
 		}
 		' "$_hash_out"
-		rm -f "$_hash_out"
+		command rm -f "$_hash_out"
 		# Check lifecycle sentinels after Linux hash batch (Phase 5)
 		if [ -n "$_w_scanid" ]; then
 			local _sentinel_rc
@@ -210,7 +210,8 @@ _hex_csig_batch_worker() {
 	fi
 
 	# --- Micro-chunk outer loop ---
-	local _global_idx=0 _batch_hex _idx _line _total_files _names
+	local _global_idx=0 _batch_hex _idx _line _total_files
+	local -a _names=()
 	local -A _loaded_sids=()
 
 	# Helper: check if SID matched on a given file line number
@@ -470,7 +471,7 @@ _hex_csig_batch_worker() {
 					fi
 				done < "$_cand_file"
 
-				rm -f "$tmpdir"/.csig_all."$$".* 2>/dev/null  # safe: temp only exists for all-universal case
+				command rm -f "$tmpdir"/.csig_all."$$".* 2>/dev/null  # safe: temp only exists for all-universal case
 				;;
 
 			or)
@@ -495,7 +496,7 @@ _hex_csig_batch_worker() {
 						_names[$_fidx5]=""
 					done < "$_or_merge"
 				fi
-				rm -f "$_or_merge"
+				command rm -f "$_or_merge"
 				;;
 			esac
 		done < "$_csig_batch_compiled"
@@ -591,11 +592,11 @@ scan_strlen() {
 			_strlen_manifest=$(mktemp "$tmpdir/.strlen_manifest.$$.XXXXXX")
 			printf '%s\t{SA}stat.strlength\n' "$file" > "$_strlen_manifest"
 			_flush_hit_batch "$_strlen_manifest" "strlen"
-			rm -f "$_strlen_manifest"
+			command rm -f "$_strlen_manifest"
 		fi
 	elif [ "$string_length_scan" == "1" ] && [ "$type" == "list" ]; then
 		list=$(mktemp "$tmpdir/.strlen.flist.XXXXXX")
-		cp "$file" "$list"
+		command cp "$file" "$list"
 		xargs -d '\n' $wc -L < "$list" 2> /dev/null | grep -vw total >> "$list.strlen"
 		awk "{if (\$1>=$string_length) print\$2}" "$list.strlen" >> "$list.hits"
 		if [ -s "$list.hits" ]; then
@@ -608,9 +609,9 @@ scan_strlen() {
 				[ -f "$i" ] && printf '%s\t{SA}stat.strlength\n' "$i"
 			done < "$list.hits" > "$_strlen_manifest"
 			_flush_hit_batch "$_strlen_manifest" "strlen"
-			rm -f "$_strlen_manifest"
+			command rm -f "$_strlen_manifest"
 		fi
-		rm -f "$list" "$list.strlen" "$list.hits"
+		command rm -f "$list" "$list.strlen" "$list.hits"
 	fi
 }
 

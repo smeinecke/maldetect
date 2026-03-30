@@ -175,14 +175,14 @@ import_user_sigs() {
 	if [ "$sig_import_md5_url" ]; then
 		get_remote_file "$sig_import_md5_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
-			cp -f "$return_file" "$sig_user_md5_file"
+			command cp -f "$return_file" "$sig_user_md5_file"
 			eout "{importsigs} imported custom signature data from $sig_import_md5_url"
 		fi
 	fi
 	if [ "$sig_import_hex_url" ]; then
 		get_remote_file "$sig_import_hex_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
-			cp -f "$return_file" "$sig_user_hex_file"
+			command cp -f "$return_file" "$sig_user_hex_file"
 			eout "{importsigs} imported custom signature data from $sig_import_hex_url"
 		fi
 	fi
@@ -196,7 +196,7 @@ import_user_sigs() {
 				"$yara" "$return_file" /dev/null > /dev/null 2>&1 || yara_valid=0
 			fi
 			if [ "$yara_valid" == "1" ]; then
-				cp -f "$return_file" "$sig_user_yara_file"
+				command cp -f "$return_file" "$sig_user_yara_file"
 				eout "{importsigs} imported custom YARA rules from $sig_import_yara_url"
 			else
 				eout "{importsigs} WARNING: downloaded YARA rules from $sig_import_yara_url failed syntax check, skipping import"
@@ -206,14 +206,14 @@ import_user_sigs() {
 	if [ "$sig_import_sha256_url" ]; then
 		get_remote_file "$sig_import_sha256_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
-			cp -f "$return_file" "$sig_user_sha256_file"
+			command cp -f "$return_file" "$sig_user_sha256_file"
 			eout "{importsigs} imported custom SHA-256 signature data from $sig_import_sha256_url"
 		fi
 	fi
 	if [ "$sig_import_csig_url" ]; then
 		get_remote_file "$sig_import_csig_url" "importsigs" "1"
 		if [ -f "$return_file" ]; then
-			cp -f "$return_file" "$sig_user_csig_file"
+			command cp -f "$return_file" "$sig_user_csig_file"
 			eout "{importsigs} imported custom compound signature data from $sig_import_csig_url"
 		fi
 	fi
@@ -393,7 +393,7 @@ import_conf() {
 		if [ -z "$import_config_skip" ]; then
 			get_remote_file "$import_config_url" "importconf" "1"
 			if [ -f "$return_file" ]; then
-				cp -f "$return_file" "$sessdir/.import_conf.cache"
+				command cp -f "$return_file" "$sessdir/.import_conf.cache"
 				echo "$current_utime" > "$sessdir/.import_conf.utime"
 			fi
 		fi

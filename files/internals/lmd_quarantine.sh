@@ -69,7 +69,7 @@ _clean_rescan() {
 			"${runtime_csig_batch_compiled:-}" "${runtime_csig_literals:-}" \
 			"${runtime_csig_wildcards:-}" "${runtime_csig_universals:-}" \
 			"" "")
-		rm -f "$_chunk"
+		command rm -f "$_chunk"
 		if [ -n "$_hits" ]; then
 			clean_failed=1
 			unset clean_state
@@ -83,7 +83,7 @@ _clean_rescan() {
 		clean_yara_list=$(mktemp "$tmpdir/.yara_clean.XXXXXX")
 		echo "$_fpath" > "$clean_yara_list"
 		scan_stage_yara "$clean_yara_list" 1 >> /dev/null 2>&1
-		rm -f "$clean_yara_list"
+		command rm -f "$clean_yara_list"
 		if [ "$clean_failed" == "1" ]; then
 			unset clean_state
 			return
@@ -124,7 +124,7 @@ clean() {
 			_clean_rescan "$file_path"
 			if [ "$clean_failed" == "1" ]; then
 				chattr -ia "$file_path" 2>/dev/null
-				mv -f "$file_path" "$file"
+				command mv -f "$file_path" "$file"
 				chmod 000 "$file"
 				chown root:root "$file"
 				eout "{clean} clean failed on $file_path and returned to quarantine" 1
@@ -224,7 +224,7 @@ restore() {
 		fi
 		chown "${file_owner}:${file_group}" "$quardir/$file" >> /dev/null 2>&1
 		chmod $file_mode "$quardir/$file" >> /dev/null 2>&1
-		mv -f "$quardir/$file" "$file_path"
+		command mv -f "$quardir/$file" "$file_path"
 		if [ "$os_freebsd" == "1" ]; then
 			touch -m -t "$(date -r "$file_mtime" +%Y%m%d%H%M.%S)" "$file_path"
 		else
@@ -240,7 +240,7 @@ restore() {
 		fi
 		chown "${file_owner}:${file_group}" "$file" >> /dev/null 2>&1
 		chmod $file_mode "$file" >> /dev/null 2>&1
-		mv -f "$file" "$file_path"
+		command mv -f "$file" "$file_path"
 		if [ "$os_freebsd" == "1" ]; then
 			touch -m -t "$(date -r "$file_mtime" +%Y%m%d%H%M.%S)" "$file_path"
 		else
@@ -417,7 +417,7 @@ _batch_filter_ignore_sigs() {
 		if (keep) print
 	}
 	' "$ignore_sigs" "$_manifest" > "$_filtered"
-	mv "$_filtered" "$_manifest"
+	command mv "$_filtered" "$_manifest"
 }
 
 _batch_stat_gather() {
@@ -435,7 +435,7 @@ _batch_stat_gather() {
 	done > "$_paths"
 
 	if [ ! -s "$_paths" ]; then
-		rm -f "$_paths" "$_stat_out"
+		command rm -f "$_paths" "$_stat_out"
 		: > "$_enriched"
 		return
 	fi
@@ -497,7 +497,7 @@ _batch_stat_gather() {
 	}
 	' "$_stat_out" "$_md5_out" "$_manifest" > "$_enriched"
 
-	rm -f "$_paths" "$_stat_out" "$_md5_needed" "$_md5_out"
+	command rm -f "$_paths" "$_stat_out" "$_md5_needed" "$_md5_out"
 }
 
 _batch_record_hits() {
@@ -569,7 +569,7 @@ _batch_record_hits() {
 		_lmd_elog_event "$ELOG_EVT_THREAT_DETECTED" "warn" "$_hit_count malware hits recorded [$_stage]" "count=$_hit_count" "stage=$_stage"
 	fi
 
-	rm -f "$_hist_block" "$_sess_block"
+	command rm -f "$_hist_block" "$_sess_block"
 }
 
 _batch_quarantine() {
@@ -606,7 +606,7 @@ _batch_quarantine() {
 	_enriched_with_inode=$(mktemp "$tmpdir/.batch_einode.XXXXXX")
 	awk -F'\t' 'NR==FNR {inode[$1]=$2; next} {print $0 "\t" inode[$1]}' \
 		"$_inode_map" "$_enriched" > "$_enriched_with_inode"
-	mv "$_enriched_with_inode" "$_enriched"
+	command mv "$_enriched_with_inode" "$_enriched"
 
 	# Per-file loop: mv (unique src→dest) and .info creation
 	while IFS=$'\t' read -r _fp _sig _hash _own _grp _mode _sz _times _inode; do
@@ -620,7 +620,7 @@ _batch_quarantine() {
 			quarantine_suspend_user "$_fp"
 		fi
 
-		if ! mv "$_fp" "$_dest" 2>/dev/null; then  # file may have vanished between stat and mv
+		if ! command mv "$_fp" "$_dest" 2>/dev/null; then  # file may have vanished between stat and mv
 			continue
 		fi
 
@@ -646,7 +646,7 @@ _batch_quarantine() {
 			xargs -0 chown root:root < "$_quar_dest_paths" 2>/dev/null
 		fi
 		xargs -0 touch --no-create < "$_quar_dest_paths" 2>/dev/null  # suppress errors if flag unsupported
-		rm -f "$_quar_dest_paths"
+		command rm -f "$_quar_dest_paths"
 	fi
 
 	# Update quarantine history and scan_session (overwrite non-quarantine entries)
@@ -700,7 +700,7 @@ _batch_quarantine() {
 		done < "$_enriched"
 	fi
 
-	rm -f "$_quar_hist_block" "$_quar_sess_block" "$_inode_map"
+	command rm -f "$_quar_hist_block" "$_quar_sess_block" "$_inode_map"
 }
 
 _flush_hit_batch() {
@@ -717,7 +717,7 @@ _flush_hit_batch() {
 	_batch_stat_gather "$_manifest" "$_enriched"
 
 	if [ ! -s "$_enriched" ]; then
-		rm -f "$_enriched"
+		command rm -f "$_enriched"
 		return 0
 	fi
 
@@ -734,7 +734,7 @@ _flush_hit_batch() {
 		_batch_quarantine "$_enriched" "$_stage"
 	fi
 
-	rm -f "$_enriched"
+	command rm -f "$_enriched"
 }
 
 _quarantine_file() {
@@ -743,7 +743,7 @@ _quarantine_file() {
 	local rnd
 	rnd=$($stat -c %i "$_file" 2>/dev/null || echo "$$")
 	chattr -ia "$_file" 2>/dev/null
-	if ! mv "$_file" "$quardir/$file_name.$rnd" 2>/dev/null; then
+	if ! command mv "$_file" "$quardir/$file_name.$rnd" 2>/dev/null; then  # stderr suppressed: error handled by if-check
 		eout "{quar} file disappeared before quarantine: '$_file'" $_verbose
 		return 1
 	fi

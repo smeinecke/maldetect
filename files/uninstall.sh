@@ -33,7 +33,7 @@ pkg_uninstall_cron /etc/cron.d/maldet_pub /etc/cron.daily/maldet /etc/cron.weekl
 
 # Remove man page and symlink
 pkg_uninstall_man 1 maldet
-rm -f /usr/local/share/man/man1/maldet.1.gz 2>/dev/null  # safe: symlink may not exist
+command rm -f /usr/local/share/man/man1/maldet.1.gz 2>/dev/null  # safe: symlink may not exist
 
 # Remove binary symlinks
 pkg_symlink_cleanup /usr/local/sbin/maldet /usr/local/sbin/lmd
@@ -44,12 +44,12 @@ pkg_uninstall_sysconfig maldet
 # Remove ClamAV signature symlinks (LMD-specific)
 clamav_paths="/usr/local/cpanel/3rdparty/share/clamav/ /var/lib/clamav/ /var/clamav/ /usr/share/clamav/ /usr/local/share/clamav"
 for cpath in $clamav_paths; do
-	rm -f "$cpath"/rfxn.* "$cpath"/lmd.user.* 2>/dev/null  # safe: files may not exist
+	command rm -f "$cpath"/rfxn.* "$cpath"/lmd.user.* 2>/dev/null  # safe: files may not exist
 done
 
 # Remove install directory and all backups
 pkg_uninstall_files "$inspath"
 # shellcheck disable=SC2086
-rm -rf ${inspath}* 2>/dev/null  # safe: glob matches install dir, backup dirs, and .last symlink
+command rm -rf ${inspath}* 2>/dev/null  # safe: glob matches install dir, backup dirs, and .last symlink
 
 pkg_success "Linux Malware Detect has been uninstalled."

@@ -271,7 +271,7 @@ _resolve_html_for_session() {
 	# Render HTML to temp file — clean scans get celebration, dirty get stat blocks
 	_html=$(mktemp "$tmpdir/.alert_html.XXXXXX")
 	_lmd_render_html "$_manifest" "scan" "$_tpl_dir" > "$_html"
-	rm -f "$_manifest"
+	command rm -f "$_manifest"
 }
 
 view_report() {
@@ -667,7 +667,7 @@ _inotify_trim_log() {
 	tmplog=$(mktemp "${inotify_log}.trim.XXXXXX")
 	tail -n +"$((_trim + 1))" "$inotify_log" > "$tmplog" 2>/dev/null
 	cat "$tmplog" > "$inotify_log" 2>/dev/null
-	rm -f "$tmplog"
+	command rm -f "$tmplog"
 	eout "{mon} inotify log file trimmed"
 }
 

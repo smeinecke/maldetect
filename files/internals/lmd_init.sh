@@ -260,7 +260,7 @@ trap_exit() {
 				_lifecycle_update_meta "$scanid" "state" "stopped"
 			fi
 			_scan_cleanup
-			rm -f "$tmpf" 2>/dev/null  # safe: may not exist
+			command rm -f "$tmpf" 2>/dev/null  # safe: may not exist
 			eout "{glob} scan stopped by operator, checkpoint pending" 1
 			exit 0
 		else
@@ -286,7 +286,7 @@ trap_exit() {
 				fi
 			fi
 			_scan_cleanup
-			rm -f "$tmpf" 2>/dev/null
+			command rm -f "$tmpf" 2>/dev/null  # safe: temp file may not exist
 			eout "{glob} scan interrupt by user, aborting scan..." 1
 			eout "{scan} scan report saved, to view run: maldet --report $scanid" 1
 			if [ "$quarantine_hits" == "0" ] && [ "$tot_hits" != "0" ]; then

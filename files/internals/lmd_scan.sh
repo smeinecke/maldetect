@@ -70,10 +70,10 @@ _scan_cleanup() {
 	# In stop mode, preserve scan_session for checkpoint resume via --continue.
 	# All other runtime temp files are cleaned normally.
 	if [ "${_scan_stop_mode:-0}" != "1" ]; then
-		rm -f "$scan_session" \
+		command rm -f "$scan_session" \
 			2>/dev/null  # safe: file may not exist
 	fi
-	rm -f "$find_results" "$runtime_ndb" "$runtime_hdb" \
+	command rm -f "$find_results" "$runtime_ndb" "$runtime_hdb" \
 		"$runtime_hexstrings" "$runtime_md5" "$runtime_sha256" "$runtime_hsb" \
 		"$clamscan_results" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
@@ -99,7 +99,7 @@ _scan_cleanup() {
 		"$tmpdir"/.hex_wc_tmp."$$".* "$tmpdir"/.clean_chunk."$$".* \
 		"$sessdir"/clean."$$" "$sessdir"/suspend.users."$$" \
 		2>/dev/null  # files may not exist depending on scan path
-	rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* \
+	command rm -rf "$tmpdir"/.md5_progress.* "$tmpdir"/.hex_progress.* "$tmpdir"/.sha256_progress.* \
 		"$tmpdir"/.csig_progress.* "$tmpdir"/.csig_mtx."$$".* 2>/dev/null
 }
 
@@ -133,7 +133,7 @@ _scan_build_filelist() {
 				"sleep $scan_find_timeout" \
 				"touch \"$tmpdir/.find_killed.$scanid\"" \
 				"pkill -f lmd_find_$scanid" \
-				"rm -f \"$lmd_find_sleep\"" > "$lmd_find_sleep"
+				"command rm -f \"$lmd_find_sleep\"" > "$lmd_find_sleep"
 			sh -c "sh \"$lmd_find_sleep\" >> /dev/null 2>&1 &" >> /dev/null 2>&1 &
 			eout "{scan} setting maximum execution time for 'find' file list: ${scan_find_timeout}sec" 1
 		fi
@@ -160,17 +160,17 @@ _scan_build_filelist() {
 		fi
 
 		cd "$tmpdir" || true  # safe: tmpscandir cleanup follows regardless
-		rm -rf "$tmpscandir"
+		command rm -rf "$tmpscandir"
 		if [ "$rscan" = "1" ] && [ "$scan_export_filelist" == "1" ]; then
-			rm -f "$tmpdir"/.find_results.* 2> /dev/null
+			command rm -f "$tmpdir"/.find_results.* 2> /dev/null
 			shared_results=$(mktemp "$tmpdir/.find_results.shared.XXXXXX")
-			cp "$find_results" "$shared_results" 2> /dev/null
+			command cp "$find_results" "$shared_results" 2> /dev/null
 			ln -fs "$shared_results" "$tmpdir/find_results.last" 2> /dev/null
 		fi
 		file_list_end=$(date +"%s")
 		file_list_et=$((file_list_end - file_list_start))
 		if [ -f "$tmpdir/.find_killed.$scanid" ]; then
-			rm -f "$tmpdir/.find_killed.$scanid"
+			command rm -f "$tmpdir/.find_killed.$scanid"
 			echo && eout "{scan} file list 'find' operation reached maximum execution time (${scan_find_timeout}sec) and was terminated" 1
 		else
 			pkill -f lmd_find_sleep >> /dev/null 2>&1
@@ -187,7 +187,7 @@ _run_yara_scan() {
 		_start_elapsed_timer "yara" "$_yara_file_count"
 		scan_stage_yara "$yara_filelist" "" "$scanid"
 		_stop_elapsed_timer
-		rm -f "$yara_filelist"
+		command rm -f "$yara_filelist"
 	fi
 }
 
@@ -322,7 +322,7 @@ _wait_workers_with_progress() {
 			3|4|5) _lifecycle_exit=1 ;;  # 3=abort, 4=stop, 5=orphan
 		esac
 	done
-	rm -rf "$_progress_dir" 2>/dev/null
+	command rm -rf "$_progress_dir" 2>/dev/null  # safe: dir may not exist if scan aborted early
 	return "$_lifecycle_exit"
 }
 
@@ -546,10 +546,10 @@ _scan_run_native() {
 				done
 				if ! _wait_workers_with_progress "md5" "$_md5_file_count" "$_md5_progress_dir" "${_md5_worker_pids[@]}"; then
 					eout "{scan} workers detected lifecycle signal, aborting scan" 1
-					rm -f "$_md5_chunk_prefix".* 2>/dev/null
+					command rm -f "$_md5_chunk_prefix".* 2>/dev/null  # safe: chunks may not exist if worker aborted
 					return 1
 				fi
-				rm -f "$_md5_chunk_prefix".* 2>/dev/null
+				command rm -f "$_md5_chunk_prefix".* 2>/dev/null  # safe: chunks may not exist if single-worker path
 			fi
 			# Merge worker outputs into single manifest and batch-process hits
 			_scan_progress "md5" "processing hits"
@@ -562,9 +562,9 @@ _scan_run_native() {
 				fi
 			done
 			_flush_hit_batch "$_md5_manifest" "md5"
-			rm -f "$_md5_manifest" "$tmpdir"/.md5_worker."$$".* 2>/dev/null
+			command rm -f "$_md5_manifest" "$tmpdir"/.md5_worker."$$".* 2>/dev/null  # safe: files may not exist if no hits
 		fi
-		rm -f "$_md5_batch_flist"
+		command rm -f "$_md5_batch_flist"
 	fi
 
 	# --- Pass 1b: SHA-256 (batch parallel workers) ---
@@ -591,7 +591,7 @@ _scan_run_native() {
 					cat
 				fi
 			} > "$_sha256_batch_flist"
-			rm -f "$_hash_hit_paths"
+			command rm -f "$_hash_hit_paths"
 		else
 			# sha256-only mode: scan all readable files
 			while IFS= read -r rpath; do
@@ -627,10 +627,10 @@ _scan_run_native() {
 				done
 				if ! _wait_workers_with_progress "sha256" "$_sha256_file_count" "$_sha256_progress_dir" "${_sha256_worker_pids[@]}"; then
 					eout "{scan} workers detected lifecycle signal, aborting scan" 1
-					rm -f "$_sha256_chunk_prefix".* 2>/dev/null
+					command rm -f "$_sha256_chunk_prefix".* 2>/dev/null  # safe: chunks may not exist if worker aborted
 					return 1
 				fi
-				rm -f "$_sha256_chunk_prefix".* 2>/dev/null
+				command rm -f "$_sha256_chunk_prefix".* 2>/dev/null  # safe: chunks may not exist if single-worker path
 			fi
 			# Merge worker outputs into single manifest and batch-process hits
 			_scan_progress "sha256" "processing hits"
@@ -643,9 +643,9 @@ _scan_run_native() {
 				fi
 			done
 			_flush_hit_batch "$_sha256_manifest" "sha256"
-			rm -f "$_sha256_manifest" "$tmpdir"/.sha256_worker."$$".* 2>/dev/null
+			command rm -f "$_sha256_manifest" "$tmpdir"/.sha256_worker."$$".* 2>/dev/null  # safe: files may not exist if no hits
 		fi
-		rm -f "$_sha256_batch_flist"
+		command rm -f "$_sha256_batch_flist"
 	fi
 
 	# --- Pass 2: HEX batch (parallel workers) ---
@@ -670,7 +670,7 @@ _scan_run_native() {
 				cat
 			fi
 		} > "$_hex_filelist"
-		rm -f "$_hash_hit_paths"
+		command rm -f "$_hash_hit_paths"
 	else
 		eout "{scan} continue mode: rebuilding file list for post-hex stages" 1
 		# Populate hex filelist for downstream stages (YARA, strlen) even when
@@ -767,7 +767,7 @@ _scan_run_native() {
 		done
 		_flush_hit_batch "$_hex_manifest" "$_hex_stage_label"
 		# Cleanup chunk, worker output, and manifest files
-		rm -f "$_hex_manifest" "$_chunk_prefix".* "$tmpdir"/.hex_worker."$$".* 2>/dev/null
+		command rm -f "$_hex_manifest" "$_chunk_prefix".* "$tmpdir"/.hex_worker."$$".* 2>/dev/null  # safe: files may not exist if no hits
 	fi
 
 	# --- Stage 3: YARA ---
@@ -786,7 +786,7 @@ _scan_run_native() {
 			fi
 		done < "$_hex_filelist"
 	fi
-	rm -f "$_hex_filelist"
+	command rm -f "$_hex_filelist"
 
 	# Final newline after progress ticker
 	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \

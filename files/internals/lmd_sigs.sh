@@ -420,14 +420,6 @@ BEGIN { next_sid = 0 }
 	runtime_csig_count=$($wc -l < "$runtime_csig_batch_compiled" 2>/dev/null || echo 0)  # safe: file absent when no csig rules compiled; zero is valid
 }
 
-_hex_lookup_name() {
-	# DEPRECATED: all callers removed in lmd_engine.sh (G5, v2.0.1). Remove in v2.0.2.
-	# Look up signature name from tab-delimited sigmap file.
-	# Uses exact field match (not substring) via awk.
-	local _pattern="$1" _sigmap="$2"
-	awk -F'\t' -v pat="$_pattern" '$1 == pat { print $2; exit }' "$_sigmap"
-}
-
 _hex_compile_wildcards_awk() {
 	# Compile HEX wildcard patterns to ERE via single awk pass.
 	# Single awk pass replaces per-pattern bash+sed fork loop.
@@ -510,6 +502,18 @@ function compile_wildcards(pat,    ere, i, c, c2, lo, hi, n, gap, pre, post, rep
 }' "$_hex_wc_tmp"
 }
 
+_filter_sigs_inplace() {
+	# Filter a sig file in-place, removing lines matching ignore_sigs patterns.
+	# Uses ERE full-line matching (suitable for colon-delimited sig formats).
+	# Note: mv replaces the inode (atomic rename). Callers must not hold open FDs to _target.
+	local _target="$1"
+	[ -s "$_target" ] || return 0
+	local _tmpf
+	_tmpf=$(mktemp "$tmpdir/.sigfilt.XXXXXX")
+	grep -E -vf "$ignore_sigs" "$_target" > "$_tmpf" || true  # safe: grep exits 1 when all sigs ignored
+	command mv "$_tmpf" "$_target"
+}
+
 gensigs() {
 	local _silent="$1"
 	if [ -z "$scanid" ]; then
@@ -517,7 +521,7 @@ gensigs() {
 		return 1
 	fi
 	# Clean up previous runtime sig files if re-called (monitor path)
-	rm -f "$runtime_ndb" "$runtime_hdb" "$runtime_hexstrings" "$runtime_md5" \
+	command rm -f "$runtime_ndb" "$runtime_hdb" "$runtime_hexstrings" "$runtime_md5" \
 		"$runtime_sha256" "$runtime_hsb" \
 		"$runtime_hex_literal" "$runtime_hex_regex" "$runtime_hex_sigmap" \
 		"$runtime_csig_batch_compiled" "$runtime_csig_literals" \
@@ -536,7 +540,7 @@ gensigs() {
 		runtime_hdb=$(mktemp "$tmpdir/.runtime.user.hdb.$scanid.XXXXXX")
 		ln -fs "$runtime_hdb" "$sigdir/lmd.user.hdb" 2> /dev/null
 	else
-		rm -f "$sigdir/lmd.user.hdb" 2>/dev/null
+		command rm -f "$sigdir/lmd.user.hdb" 2>/dev/null  # safe: file may not exist on fresh install
 	fi
 	if [ ! -f "$sig_user_yara_file" ]; then
 		touch "$sig_user_yara_file"
@@ -597,7 +601,7 @@ gensigs() {
 				sed 's/{MD5}//' "$sig_user_md5_file" | grep -vE "^\s*$" > "$runtime_hdb"
 				cat "$sig_cav_md5_file" >> "$runtime_hdb"
 			else
-				cp "$sig_cav_md5_file" "$runtime_hdb"
+				command cp "$sig_cav_md5_file" "$runtime_hdb"
 			fi
 		fi
 		# ClamAV .hsb (SHA-256 hash DB) — requires ClamAV >= 0.97
@@ -608,7 +612,7 @@ gensigs() {
 				sed 's/{SHA256}//' "$sig_user_sha256_file" | grep -vE "^\s*$" > "$runtime_hsb"
 				[ -f "$sig_cav_sha256_file" ] && [ -s "$sig_cav_sha256_file" ] && cat "$sig_cav_sha256_file" >> "$runtime_hsb"
 			elif [ -f "$sig_cav_sha256_file" ] && [ -s "$sig_cav_sha256_file" ]; then
-				cp "$sig_cav_sha256_file" "$runtime_hsb"
+				command cp "$sig_cav_sha256_file" "$runtime_hsb"
 			else
 				: > "$runtime_hsb"
 			fi
@@ -633,17 +637,9 @@ gensigs() {
 		local _ign_count
 		_ign_count=$($wc -l < "$ignore_sigs")
 		if [ "$_ign_count" != "0" ]; then
-			local _tmpfilt
-			_tmpfilt=$(mktemp "$tmpdir/.sigfilt.XXXXXX")
-			grep -E -vf "$ignore_sigs" "$runtime_hexstrings" > "$_tmpfilt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
-			cat "$_tmpfilt" > "$runtime_hexstrings"
-			grep -E -vf "$ignore_sigs" "$runtime_md5" > "$_tmpfilt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
-			cat "$_tmpfilt" > "$runtime_md5"
-			if [ -n "$runtime_sha256" ] && [ -s "$runtime_sha256" ]; then
-				grep -E -vf "$ignore_sigs" "$runtime_sha256" > "$_tmpfilt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
-				cat "$_tmpfilt" > "$runtime_sha256"
-			fi
-			rm -f "$_tmpfilt"
+			_filter_sigs_inplace "$runtime_hexstrings"
+			_filter_sigs_inplace "$runtime_md5"
+			[ -n "$runtime_sha256" ] && _filter_sigs_inplace "$runtime_sha256"
 			if [ "$_silent" == "1" ] || [ "$hscan" == "1" ]; then
 				eout "{glob} processed $_ign_count signature ignore entries"
 			else
@@ -681,7 +677,7 @@ gensigs() {
 	}' "$runtime_hexstrings"
 	# Phase 2: Compile wildcards to ERE (single awk pass, replaces per-pattern bash+sed loop).
 	_hex_compile_wildcards_awk
-	rm -f "$_hex_wc_tmp"
+	command rm -f "$_hex_wc_tmp"
 
 	# Build compound signature (csig) runtime files
 	runtime_csig_batch_compiled=""
@@ -705,13 +701,7 @@ gensigs() {
 			: > "$_runtime_csig"
 		fi
 		# Apply ignore_sigs filtering to csig
-		if [ -f "$ignore_sigs" ] && [ -s "$ignore_sigs" ] && [ -s "$_runtime_csig" ]; then
-			local _csig_filt
-			_csig_filt=$(mktemp "$tmpdir/.csig_filt.XXXXXX")
-			grep -E -vf "$ignore_sigs" "$_runtime_csig" > "$_csig_filt" || true  # safe: grep exits 1 when all sigs ignored; empty output is valid
-			cat "$_csig_filt" > "$_runtime_csig"
-			rm -f "$_csig_filt"
-		fi
+		[ -f "$ignore_sigs" ] && _filter_sigs_inplace "$_runtime_csig"
 		if [ -s "$_runtime_csig" ]; then
 			runtime_csig_batch_compiled=$(mktemp "$tmpdir/.runtime.csig_batch_compiled.$scanid.XXXXXX")
 			runtime_csig_literals=$(mktemp "$tmpdir/.runtime.csig_literals.$scanid.XXXXXX")
@@ -719,6 +709,6 @@ gensigs() {
 			runtime_csig_universals=$(mktemp "$tmpdir/.runtime.csig_universals.$scanid.XXXXXX")
 			_csig_compile_rules "$_runtime_csig"
 		fi
-		rm -f "$_runtime_csig"
+		command rm -f "$_runtime_csig"
 	fi
 }

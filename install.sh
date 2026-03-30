@@ -23,14 +23,14 @@ source files/internals/pkg_lib.sh
 clamav_linksigs() {
 	local cpath="$1"
 	if [ -d "$cpath" ]; then
-		rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null
-		cp -f "$inspath/sigs/rfxn.ndb" "$inspath/sigs/rfxn.hdb" "$inspath/sigs/rfxn.yara" "$cpath/" 2>/dev/null
+		command rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null  # safe: ClamAV path may not have LMD sigs
+		command cp -f "$inspath/sigs/rfxn.ndb" "$inspath/sigs/rfxn.hdb" "$inspath/sigs/rfxn.yara" "$cpath/" 2>/dev/null  # safe: ClamAV path may not exist
 		[ -f "$inspath/sigs/rfxn.hsb" ] && [ -s "$inspath/sigs/rfxn.hsb" ] && \
-			command cp -f "$inspath/sigs/rfxn.hsb" "$cpath"/ 2>/dev/null
-		rm -f "$cpath"/lmd.user.* 2>/dev/null
-		[ -s "$inspath/sigs/lmd.user.ndb" ] && command cp -f "$inspath/sigs/lmd.user.ndb" "$cpath"/ 2>/dev/null
-		[ -s "$inspath/sigs/lmd.user.hdb" ] && command cp -f "$inspath/sigs/lmd.user.hdb" "$cpath"/ 2>/dev/null
-		[ -s "$inspath/sigs/lmd.user.hsb" ] && command cp -f "$inspath/sigs/lmd.user.hsb" "$cpath"/ 2>/dev/null
+			command cp -f "$inspath/sigs/rfxn.hsb" "$cpath"/ 2>/dev/null  # safe: ClamAV path may not exist
+		command rm -f "$cpath"/lmd.user.* 2>/dev/null  # safe: user sigs may not exist
+		[ -s "$inspath/sigs/lmd.user.ndb" ] && command cp -f "$inspath/sigs/lmd.user.ndb" "$cpath"/ 2>/dev/null  # safe: ClamAV path may not exist
+		[ -s "$inspath/sigs/lmd.user.hdb" ] && command cp -f "$inspath/sigs/lmd.user.hdb" "$cpath"/ 2>/dev/null  # safe: ClamAV path may not exist
+		[ -s "$inspath/sigs/lmd.user.hsb" ] && command cp -f "$inspath/sigs/lmd.user.hsb" "$cpath"/ 2>/dev/null  # safe: ClamAV path may not exist
 	fi
 }
 
@@ -60,7 +60,7 @@ _install_core() {
 	sed -i "s|BASERUN=\"\${BASERUN:-/tmp}\"|BASERUN=\"\${BASERUN:-$inspath/tmp}\"|" "$inspath/internals/tlog"
 	pkg_symlink "$inspath/maldet" /usr/local/sbin/maldet
 	pkg_symlink "$inspath/maldet" /usr/local/sbin/lmd
-	cp -f CHANGELOG COPYING.GPL README "$inspath/"
+	command cp -f CHANGELOG COPYING.GPL README "$inspath/"
 	# Man page: compress in-place at install path, then symlink to system dir
 	mkdir -p /usr/local/share/man/man1/
 	gzip -9 "$inspath/maldet.1"
@@ -136,11 +136,11 @@ _install_cron_service() {
 		# Install sysconfig/default override file
 		if [ "$_PKG_OS_FAMILY" = "rhel" ]; then
 			if [ ! -f "/etc/sysconfig/maldet" ]; then
-				cp -f ./files/service/maldet.sysconfig /etc/sysconfig/maldet
+				command cp -f ./files/service/maldet.sysconfig /etc/sysconfig/maldet
 			fi
 		elif [ "$_PKG_OS_FAMILY" = "debian" ]; then
 			if [ ! -f "/etc/default/maldet" ]; then
-				cp -f ./files/service/maldet.sysconfig /etc/default/maldet
+				command cp -f ./files/service/maldet.sysconfig /etc/default/maldet
 			fi
 			if [ "$_init_system" != "systemd" ]; then
 				update-rc.d -f maldet remove
@@ -158,7 +158,7 @@ _install_cron_service() {
 			fi
 		else
 			if [ ! -f "/etc/sysconfig/maldet" ]; then
-				cp -f ./files/service/maldet.sysconfig /etc/sysconfig/maldet 2>/dev/null  # safe: dir may not exist
+				command cp -f ./files/service/maldet.sysconfig /etc/sysconfig/maldet 2>/dev/null  # safe: dir may not exist
 			fi
 		fi
 		# Apply default_monitor_mode migration now that sysconfig file is guaranteed to exist

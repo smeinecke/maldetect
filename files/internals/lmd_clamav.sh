@@ -327,5 +327,5 @@ _process_clamav_hits() {
 
 	_flush_hit_batch "$_clam_manifest" "clamav"
 	_scan_progress "clamav" "processing hits"
-	rm -f "$_clam_manifest"
+	command rm -f "$_clam_manifest"
 }

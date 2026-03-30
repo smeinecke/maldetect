@@ -192,9 +192,9 @@ _yara_scan_rules() {
 				# Remove manifest lines whose filepath (col 1) matches an existing path
 				awk -F'\t' 'NR==FNR{seen[$0];next} !($1 in seen)' \
 					"$_existing_paths" "$_yara_manifest" > "$_yd"
-				mv "$_yd" "$_yara_manifest"
+				command mv "$_yd" "$_yara_manifest"
 			fi
-			rm -f "$_existing_paths"
+			command rm -f "$_existing_paths"
 		fi
 
 		if [ "$clean_check" == "1" ]; then
@@ -205,7 +205,7 @@ _yara_scan_rules() {
 		else
 			_flush_hit_batch "$_yara_manifest" "yara"
 		fi
-		rm -f "$_yara_manifest"
+		command rm -f "$_yara_manifest"
 	fi
 }
 
@@ -271,7 +271,7 @@ scan_stage_yara() {
 	fi
 
 	if [ ! -s "$yara_rules_list" ] && [ "$has_compiled" == "0" ]; then
-		rm -f "$yara_rules_list"
+		command rm -f "$yara_rules_list"
 		return
 	fi
 
@@ -317,6 +317,6 @@ scan_stage_yara() {
 			"$yara_stderr" "$yara_rc_file" "$clean_check" "$_stg_scanid"
 	fi
 
-	rm -f "$yara_rules_list" "$yara_results" "$yara_stderr" "$yara_rc_file"
+	command rm -f "$yara_rules_list" "$yara_results" "$yara_stderr" "$yara_rc_file"
 	eout "{yara} native YARA scan stage completed"
 }

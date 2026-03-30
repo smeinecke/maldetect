@@ -98,7 +98,7 @@ stop() {
         else
             $inspath/maldet --kill-monitor && success || failure
         fi
-        RETVAL=$?; [ $RETVAL -eq 0 ] && rm -f $LOCKFILE
+        RETVAL=$?; [ $RETVAL -eq 0 ] && command rm -f $LOCKFILE
         echo
         return $RETVAL
 }

@@ -974,7 +974,7 @@ _lmd_render_messaging() {
 				_lmd_elog_event "$ELOG_EVT_ALERT_FAILED" "error" "slack delivery failed" "channel=slack" "error=${_ch_err:-unknown}"
 				rc=1
 			}
-			rm -f "$_slack_payload"
+			command rm -f "$_slack_payload"
 		fi
 	fi
 
@@ -990,7 +990,7 @@ _lmd_render_messaging() {
 				_lmd_elog_event "$ELOG_EVT_ALERT_FAILED" "error" "telegram delivery failed" "channel=telegram" "error=${_ch_err:-unknown}"
 				rc=1
 			}
-			rm -f "$_tg_payload"
+			command rm -f "$_tg_payload"
 		fi
 	fi
 
@@ -1006,7 +1006,7 @@ _lmd_render_messaging() {
 				_lmd_elog_event "$ELOG_EVT_ALERT_FAILED" "error" "discord delivery failed" "channel=discord" "error=${_ch_err:-unknown}"
 				rc=1
 			}
-			rm -f "$_dc_payload"
+			command rm -f "$_dc_payload"
 		fi
 	fi
 
@@ -1026,7 +1026,7 @@ trim_log() {
 			tmplog=$(mktemp "${log}.trim.XXXXXX")
 			tail -n +"$((trim + 1))" "$log" > "$tmplog" 2>/dev/null
 			cat "$tmplog" > "$log" 2>/dev/null
-			rm -f "$tmplog"
+			command rm -f "$tmplog"
 		fi
 	elif [ ! -f "$log" ] && [ "$3" == "1" ]; then
 		touch "$log" ; chmod 640 "$log"
@@ -1053,7 +1053,7 @@ _genalert_messaging() {
 		if [ -s "$_msg_manifest" ]; then
 			_lmd_render_messaging "$_msg_manifest" "${slack_subj:-$email_subj}" "$_tpl_dir" "$_file"
 		fi
-		rm -f "$_msg_manifest"
+		command rm -f "$_msg_manifest"
 	fi
 }
 
@@ -1214,7 +1214,7 @@ _genalert_panel() {
 		fi
 		# Clean up fallback temp if used
 		if [ "$_panel_tmp" = "1" ]; then
-			rm -f "$_panel_src"
+			command rm -f "$_panel_src"
 		fi
 		# Sort cleaned files too
 		if [ "$quarantine_clean" == "1" ] && [ -f "$sessdir/clean.$$" ]; then
@@ -1264,12 +1264,12 @@ _genalert_panel() {
 				ALERT_SMTP_FROM="$email_panel_from" \
 				ALERT_EMAIL_REPLY_TO="$email_panel_replyto" \
 				_alert_deliver_email "$contact_emails" "$email_panel_alert_subj" "$_user_text" "$_user_html" "$_fmt"
-				rm -f "$_user_manifest" "$_user_text" "$_user_html"
+				command rm -f "$_user_manifest" "$_user_text" "$_user_html"
 			done
 		fi
-		rm -f "$tmpdir/.panel_alert.hits" "$tmpdir/.panel_alert.clean"
+		command rm -f "$tmpdir/.panel_alert.hits" "$tmpdir/.panel_alert.clean"
 		for sys_user in $user_list; do
-			rm -f "$tmpdir/.${sys_user}.hits" "$tmpdir/.${sys_user}.clean"
+			command rm -f "$tmpdir/.${sys_user}.hits" "$tmpdir/.${sys_user}.clean"
 		done
 	fi
 }
@@ -1366,7 +1366,7 @@ _genalert_digest() {
 		inotify_run_time="-"
 	fi
 
-	rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
+	command rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
 
 	scanid="$datestamp.$$"
 
@@ -1399,7 +1399,7 @@ _genalert_digest() {
 
 	# Bail if no new data from any source
 	if [ "$tot_hits" -eq 0 ] && [ "$_hook_hit_count" -eq 0 ]; then
-		rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
+		command rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
 		return 0
 	fi
 
@@ -1484,8 +1484,8 @@ _genalert_digest() {
 		# Alias for outer cleanup guard: _digest_text is scoped inside the if-block
 		digest_tmpf="$_digest_text"
 
-		rm -f "$_digest_manifest" "$_digest_html"
-		rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
+		command rm -f "$_digest_manifest" "$_digest_html"
+		command rm -f "$tmpdir/.digest.alert.hits" "$tmpdir/.digest.clean.hits" "$tmpdir/.digest.monitor.alert" "$tmpdir/.digest.susp.hits" "$tmpdir/.digest.hook.hits"
 
 		# Messaging dispatch must run before digest temp file cleanup
 		_genalert_messaging "$_digest_text" "$_tpl_dir"
@@ -1493,7 +1493,7 @@ _genalert_digest() {
 
 	# Clean up digest report temp file if generated
 	if [ -n "$digest_tmpf" ] && [ -f "$digest_tmpf" ]; then
-		rm -f "$digest_tmpf"
+		command rm -f "$digest_tmpf"
 	fi
 }
 
