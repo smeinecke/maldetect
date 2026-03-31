@@ -101,6 +101,8 @@ override_dh_auto_install:
 	install -m 644 files/service/maldet.service.pkg $(CURDIR)/debian/maldet/lib/systemd/system/maldet.service
 	mkdir -p $(CURDIR)/debian/maldet/etc/default
 	install -m 640 files/service/maldet.sysconfig.pkg $(CURDIR)/debian/maldet/etc/default/maldet
+	mkdir -p $(CURDIR)/debian/maldet/etc/logrotate.d
+	install -m 644 files/logrotate.maldet $(CURDIR)/debian/maldet/etc/logrotate.d/maldet
 	mkdir -p $(CURDIR)/debian/maldet/etc/cron.daily
 	install -m 755 cron.daily.pkg $(CURDIR)/debian/maldet/etc/cron.daily/maldet
 	mkdir -p $(CURDIR)/debian/maldet/etc/cron.d

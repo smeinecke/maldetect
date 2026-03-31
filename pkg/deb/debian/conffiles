@@ -14,4 +14,5 @@
 /usr/lib/maldet/cron/conf.maldet.cron
 /usr/lib/maldet/cron/custom.cron
 /etc/default/maldet
+/etc/logrotate.d/maldet
 /etc/cron.d/maldet-sigup

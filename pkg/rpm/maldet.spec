@@ -175,6 +175,10 @@ install -m 755 files/service/maldet.sh.pkg %{buildroot}/etc/init.d/maldet
 mkdir -p %{buildroot}/etc/sysconfig
 install -m 640 files/service/maldet.sysconfig.pkg %{buildroot}/etc/sysconfig/maldet
 
+# --- Logrotate ---
+mkdir -p %{buildroot}/etc/logrotate.d
+install -m 644 files/logrotate.maldet %{buildroot}/etc/logrotate.d/maldet
+
 # --- Cron jobs ---
 mkdir -p %{buildroot}/etc/cron.daily
 install -m 755 cron.daily.pkg %{buildroot}/etc/cron.daily/maldet
@@ -385,6 +389,9 @@ fi
 %attr(755,root,root) /etc/init.d/maldet
 %endif
 %config(noreplace) %attr(640,root,root) /etc/sysconfig/maldet
+
+# Logrotate
+%config(noreplace) %attr(644,root,root) /etc/logrotate.d/maldet
 
 # Cron
 %attr(755,root,root) /etc/cron.daily/maldet
