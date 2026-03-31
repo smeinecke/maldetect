@@ -302,11 +302,11 @@ _lifecycle_render_text_active() {
 
 	printf 'Active scans (%s):\n' "$_count"
 	if [ "$_verbose" = "1" ]; then
-		printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-8s %-12s %-12s %s\n' \
-			"SCANID" "STATE" "PID" "ENGINE" "FILES" "HITS" "ELAPSED" "WORKERS" "SIG_VER" "PROGRESS" "PATH"
+		printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %-8s %-12s %-12s %s\n' \
+			"SCANID" "STATE" "PID" "ENGINE" "FILES" "HITS" "ELAPSED" "ETA" "WORKERS" "SIG_VER" "PROGRESS" "PATH"
 	else
-		printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %s\n' \
-			"SCANID" "STATE" "PID" "ENGINE" "FILES" "HITS" "ELAPSED" "PATH"
+		printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %s\n' \
+			"SCANID" "STATE" "PID" "ENGINE" "FILES" "HITS" "ELAPSED" "ETA" "PATH"
 	fi
 
 	while IFS= read -r _scanid; do
@@ -316,30 +316,39 @@ _lifecycle_render_text_active() {
 
 		# For running/paused scans, compute elapsed live from started epoch;
 		# completed/killed/stale scans have _meta_elapsed already set.
+		local _elapsed_secs=0
 		if [ -n "$_meta_elapsed" ] && [ "$_meta_elapsed" != "0" ]; then
-			_elapsed_str=$(_lifecycle_format_elapsed "$_meta_elapsed")
+			_elapsed_secs="$_meta_elapsed"
 		elif [ -n "$_meta_started" ] && [ "$_meta_started" != "0" ]; then
-			_elapsed_str=$(_lifecycle_format_elapsed "$(( $(command date +%s) - _meta_started ))")
-		else
-			_elapsed_str=$(_lifecycle_format_elapsed "0")
+			_elapsed_secs="$(( $(command date +%s) - _meta_started ))"
+		fi
+		_elapsed_str=$(_lifecycle_format_elapsed "$_elapsed_secs")
+
+		# ETA: (elapsed * total / processed) - elapsed; requires active progress
+		local _eta_str="-"
+		local _pos="${_meta_progress_pos:-0}" _tot="${_meta_progress_total:-0}"
+		[ "$_pos" = "-" ] && _pos=0
+		[ "$_tot" = "-" ] && _tot=0
+		if [ "$_pos" -gt 0 ] && [ "$_tot" -gt 0 ] && [ "$_elapsed_secs" -gt 0 ]; then
+			local _eta_secs=$(( (_elapsed_secs * _tot / _pos) - _elapsed_secs ))
+			_eta_str="~$(_lifecycle_format_elapsed "$_eta_secs")"
 		fi
 
 		if [ "$_verbose" = "1" ]; then
 			local _progress_str="-"
-			if [ -n "$_meta_progress_pos" ] && [ -n "$_meta_progress_total" ] && \
-			   [ "$_meta_progress_total" != "0" ] && [ "$_meta_progress_total" != "-" ]; then
-				_progress_str="${_meta_progress_pos}/${_meta_progress_total}"
+			if [ "$_pos" -gt 0 ] && [ "$_tot" -gt 0 ]; then
+				_progress_str="${_pos}/${_tot}"
 			fi
-			printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-8s %-12s %-12s %s\n' \
+			printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %-8s %-12s %-12s %s\n' \
 				"$_scanid" "$_state" "${_meta_pid:-?}" \
 				"${_meta_engine:--}" "${_meta_total_files:--}" "${_meta_hits:-0}" \
-				"$_elapsed_str" "${_meta_workers:--}" "${_meta_sig_version:--}" "$_progress_str" \
+				"$_elapsed_str" "$_eta_str" "${_meta_workers:--}" "${_meta_sig_version:--}" "$_progress_str" \
 				"${_meta_path:--}"
 		else
-			printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %s\n' \
+			printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %s\n' \
 				"$_scanid" "$_state" "${_meta_pid:-?}" \
 				"${_meta_engine:--}" "${_meta_total_files:--}" "${_meta_hits:-0}" \
-				"$_elapsed_str" "${_meta_path:--}"
+				"$_elapsed_str" "$_eta_str" "${_meta_path:--}"
 		fi
 	done <<< "$_ids"
 
@@ -409,6 +418,12 @@ _lifecycle_render_json_active() {
 		printf '      "total_files": %s,\n' "$_i_total"
 		printf '      "hits": %s,\n' "$_i_hits"
 		printf '      "elapsed": %s,\n' "$_i_elapsed"
+		# ETA: (elapsed * total / processed) - elapsed
+		local _i_eta=0
+		if [ "$_i_prog_pos" -gt 0 ] && [ "$_i_prog_total" -gt 0 ] && [ "$_i_elapsed" -gt 0 ]; then
+			_i_eta=$(( (_i_elapsed * _i_prog_total / _i_prog_pos) - _i_elapsed ))
+		fi
+		printf '      "eta": %s,\n' "$_i_eta"
 		printf '      "workers": %s,\n' "$_i_workers"
 		printf '      "stages": "%s",\n' "$_j_stages"
 		printf '      "sig_version": "%s",\n' "$_j_sig"
@@ -433,7 +448,7 @@ _lifecycle_render_tsv_active() {
 	local _scanid _state
 
 	printf '#LMD_SCANLIST:v1\n'
-	printf 'scanid\tstate\tpid\tpath\tengine\ttotal_files\thits\telapsed\n'
+	printf 'scanid\tstate\tpid\tpath\tengine\ttotal_files\thits\telapsed\teta\n'
 
 	while IFS= read -r _scanid; do
 		[ -z "$_scanid" ] && continue
@@ -445,10 +460,18 @@ _lifecycle_render_tsv_active() {
 		if [ "$_tsv_elapsed" = "0" ] && [ -n "$_meta_started" ] && [ "$_meta_started" != "0" ]; then
 			_tsv_elapsed="$(( $(command date +%s) - _meta_started ))"
 		fi
-		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		# ETA
+		local _tsv_eta=0
+		local _tp="${_meta_progress_pos:-0}" _tt="${_meta_progress_total:-0}"
+		[ "$_tp" = "-" ] && _tp=0
+		[ "$_tt" = "-" ] && _tt=0
+		if [ "$_tp" -gt 0 ] && [ "$_tt" -gt 0 ] && [ "$_tsv_elapsed" -gt 0 ]; then
+			_tsv_eta=$(( (_tsv_elapsed * _tt / _tp) - _tsv_elapsed ))
+		fi
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$_scanid" "$_state" "${_meta_pid:--}" "${_meta_path:--}" \
 			"${_meta_engine:--}" "${_meta_total_files:--}" "${_meta_hits:-0}" \
-			"$_tsv_elapsed"
+			"$_tsv_elapsed" "$_tsv_eta"
 	done <<< "$_ids"
 
 	return 0
