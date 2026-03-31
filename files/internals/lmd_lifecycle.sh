@@ -653,6 +653,11 @@ _lifecycle_kill() {
 	_lifecycle_update_meta "$_scanid" "state" "killed"
 
 	eout "{lifecycle} scan $_scanid killed" 1
+	# Native engine workers check the abort sentinel at chunk boundaries;
+	# they may take several seconds to exit after the parent is signaled.
+	if [ "${_meta_engine:-}" = "native" ] && [ "${_meta_workers:-1}" != "1" ]; then
+		eout "{lifecycle} note: native engine workers may take up to 10s to exit cleanly" 1
+	fi
 
 	return 0
 }
