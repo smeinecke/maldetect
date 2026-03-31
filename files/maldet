@@ -786,38 +786,44 @@ else
 				_rotate_histories
 				# Clean up old meta files
 				_lifecycle_cleanup_stale_metas
-				# Compress completed sessions older than 1 hour (60 minutes)
-				_maint_compress_age_min=60
-				for _maint_tsv in "$sessdir"/session.tsv.[0-9]*; do
-					[ -f "$_maint_tsv" ] || continue
-					# Skip already-compressed (.gz) files — glob won't match them
-					# but guard against session.tsv.SCANID.gz naming confusion
-					case "$_maint_tsv" in *.gz) continue ;; esac
-					if [ -n "$($find "$_maint_tsv" -maxdepth 0 -mmin +"$_maint_compress_age_min" 2>/dev/null)" ]; then  # safe: find may warn on race-deleted files
-						_maint_sid="${_maint_tsv##*session.tsv.}"
-						_session_compress "$_maint_sid"
-						eout "{lifecycle} compressed session: $_maint_sid" 1
-					fi
-				done
-				# Archive sessions older than 30 days into monthly bundles (43200 minutes)
-				_maint_archive_age_min=$((30 * 24 * 60))
-				_maint_seen_months=""
-				for _maint_sess in "$sessdir"/session.tsv.[0-9]*; do
-					[ -f "$_maint_sess" ] || continue
-					# Skip monthly archives
-					case "$_maint_sess" in *session.archive.*) continue ;; esac
-					if [ -n "$($find "$_maint_sess" -maxdepth 0 -mmin +"$_maint_archive_age_min" 2>/dev/null)" ]; then  # safe: find may warn on race-deleted files
-						# Extract YYMM from filename: session.tsv.YYMMDD-HHMM.PID[.gz]
-						_maint_basename="${_maint_sess##*/session.tsv.}"
-						_maint_month="${_maint_basename:0:4}"
-						# Deduplicate: only archive each month once
-						case "$_maint_seen_months" in
-							*" $_maint_month "*) continue ;;
-						esac
-						_maint_seen_months="$_maint_seen_months $_maint_month "
-						_session_archive_month "$_maint_month"
-					fi
-				done
+				# Compress completed sessions older than maint_compress_age days
+				_maint_compress_age_days="${maint_compress_age:-30}"
+				if [ "$_maint_compress_age_days" != "0" ]; then
+					_maint_compress_age_min=$((_maint_compress_age_days * 24 * 60))
+					for _maint_tsv in "$sessdir"/session.tsv.[0-9]*; do
+						[ -f "$_maint_tsv" ] || continue
+						# Skip already-compressed (.gz) files — glob won't match them
+						# but guard against session.tsv.SCANID.gz naming confusion
+						case "$_maint_tsv" in *.gz) continue ;; esac
+						if [ -n "$($find "$_maint_tsv" -maxdepth 0 -mmin +"$_maint_compress_age_min" 2>/dev/null)" ]; then  # safe: find may warn on race-deleted files
+							_maint_sid="${_maint_tsv##*session.tsv.}"
+							_session_compress "$_maint_sid"
+							eout "{lifecycle} compressed session: $_maint_sid" 1
+						fi
+					done
+				fi
+				# Archive sessions older than maint_archive_age days into monthly bundles
+				_maint_archive_age_days="${maint_archive_age:-90}"
+				if [ "$_maint_archive_age_days" != "0" ]; then
+					_maint_archive_age_min=$((_maint_archive_age_days * 24 * 60))
+					_maint_seen_months=""
+					for _maint_sess in "$sessdir"/session.tsv.[0-9]*; do
+						[ -f "$_maint_sess" ] || continue
+						# Skip monthly archives
+						case "$_maint_sess" in *session.archive.*) continue ;; esac
+						if [ -n "$($find "$_maint_sess" -maxdepth 0 -mmin +"$_maint_archive_age_min" 2>/dev/null)" ]; then  # safe: find may warn on race-deleted files
+							# Extract YYMM from filename: session.tsv.YYMMDD-HHMM.PID[.gz]
+							_maint_basename="${_maint_sess##*/session.tsv.}"
+							_maint_month="${_maint_basename:0:4}"
+							# Deduplicate: only archive each month once
+							case "$_maint_seen_months" in
+								*" $_maint_month "*) continue ;;
+							esac
+							_maint_seen_months="$_maint_seen_months $_maint_month "
+							_session_archive_month "$_maint_month"
+						fi
+					done
+				fi
 				eout "{lifecycle} maintenance complete" 1
 				exit 0
 			;;

@@ -128,8 +128,8 @@ _yara_scan_rules() {
 						command sleep 2
 					done
 				fi
-				# Check parent liveness — $$ = parent PID (intentional)
-				_lifecycle_check_parent "$$" || break
+				# Check parent liveness — _scan_pid = actual scan PID (BASHPID); safe in background mode
+				_lifecycle_check_parent "${_scan_pid:-$$}" || break
 			fi
 			if [ ! -f "$scan_file" ]; then
 				continue

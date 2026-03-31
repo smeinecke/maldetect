@@ -986,8 +986,9 @@ e.g: maldet \fB\-\-continue\fR 260327\-1509.25279
 Run maintenance tasks: rotate oversized history files (hits.hist,
 quarantine.hist, monitor.scanned.hist, inotify_log), clean up stale
 scan meta files older than \fBscan_meta_cleanup_age\fR hours, compress
-completed session files older than 1 hour, and archive sessions older
-than 30 days into monthly bundles (\fIsession.archive.YYMM.tsv.gz\fR).
+completed session files older than \fBmaint_compress_age\fR days, and
+archive sessions older than \fBmaint_archive_age\fR days into monthly
+bundles (\fIsession.archive.YYMM.tsv.gz\fR).
 Intended for cron or manual housekeeping.
 .br
 e.g: maldet \fB\-\-maintenance\fR
@@ -1008,9 +1009,19 @@ highest precedence.
 The following configuration options relate to scan lifecycle management:
 .TP
 .B scan_meta_cleanup_age
-Hours to retain completed/killed scan.meta files before cleanup.
+Hours to retain completed/killed/stale scan.meta files before cleanup.
 Meta files for active/paused/stopped scans are never cleaned.
-Set 0 to disable automatic cleanup. Default: 24.
+Set 0 to disable automatic cleanup. Default: 48.
+.TP
+.B maint_compress_age
+Days before completed session files are compressed (gzipped).
+Sessions younger than this age are never compressed.
+Set 0 to disable automatic compression. Default: 30.
+.TP
+.B maint_archive_age
+Days before compressed session files are bundled into monthly archives.
+Sessions younger than this age are never archived.
+Set 0 to disable automatic archival. Default: 90.
 .SH FILES
 .TP
 .I $sessdir/scan.meta.$scanid

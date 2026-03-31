@@ -107,8 +107,18 @@ v2.0.1 | Mar 25 2026:
 [Change] -e list redesign: columnar output with header row, 14-entry cap with overflow
          hint, PATH column (truncated 30 chars), index-first rendering, active count in
          heading, empty state exits 0, JSON active array, FreeBSD sort support
+[Change] --maintenance: session compression age raised from 1 hour to 30 days;
+         archive age raised from 30 days to 90 days; scan_meta_cleanup_age default
+         raised from 24 to 48 hours; new config variables maint_compress_age,
+         maint_archive_age (both disableable with 0)
 
   -- Bug Fixes --
+
+[Fix] Background scans (-b): scan process recorded parent shell PID ($$) instead
+      of actual forked PID (BASHPID) in scan.meta; caused -L/--list-active and
+      -e list to show running scans as stale, --kill/--pause/--stop to target
+      wrong process, and workers to exit as orphaned; scan.meta now stores
+      ns_pid (temp file namespace) separately from pid (liveness/signal target)
 
 [Fix] JSON report list hang: index-first hybrid eliminates O(N) per-file glob on servers
       without session.index; legacy plaintext sessions preserved

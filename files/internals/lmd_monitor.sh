@@ -645,7 +645,7 @@ monitor_init() {
 
 	# --- Supervisor state initialization ---
 	TLOG_FLOCK=1
-	echo "$$" > "$tmpdir/monitor.pid"
+	echo "${BASHPID:-$$}" > "$tmpdir/monitor.pid"
 	_monitor_stopping=0
 	_last_log_size=0
 	_cur_log_size=0

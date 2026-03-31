@@ -40,9 +40,13 @@ _lifecycle_write_meta() {
 	fi
 	[ -z "$_sig_ver" ] && _sig_ver="unknown"
 
+	# ns_pid: namespace PID used for temp file grouping ($$ — always the
+	# top-level shell PID, even in background forks).  Separate from pid
+	# (which is BASHPID — the real process for liveness/signal checks).
 	command cat > "$_tmp_file" <<EOF
 #LMD_META:v1
 pid=$_pid
+ns_pid=$$
 ppid=$_ppid
 started=$_started
 started_hr=$_started_hr
@@ -85,6 +89,7 @@ _lifecycle_read_meta() {
 
 	# Initialize all meta variables to empty (caller scope — no local)
 	_meta_pid=""
+	_meta_ns_pid=""
 	_meta_ppid=""
 	_meta_started=""
 	_meta_started_hr=""
@@ -115,6 +120,7 @@ _lifecycle_read_meta() {
 		esac
 		case "$_key" in
 			pid)             _meta_pid="$_value" ;;
+			ns_pid)          _meta_ns_pid="$_value" ;;
 			ppid)            _meta_ppid="$_value" ;;
 			started)         _meta_started="$_value" ;;
 			started_hr)      _meta_started_hr="$_value" ;;
@@ -633,7 +639,9 @@ _lifecycle_orphan_sweep() {
 			_lifecycle_update_meta "$_scanid" "state" "stale"
 			eout "{lifecycle} orphan sweep: scan $_scanid marked stale (process $_meta_pid dead)" 1
 			# Clean orphaned PID-scoped and scanid-scoped temp files
-			local _stale_pid="$_meta_pid"
+			# ns_pid is the temp-file namespace PID ($$ at scan time);
+			# falls back to pid for metas written before ns_pid existed.
+			local _stale_pid="${_meta_ns_pid:-$_meta_pid}"
 			command rm -f \
 				"$tmpdir"/.hcb."$_stale_pid".* \
 				"$tmpdir"/.hex_worker."$_stale_pid".* "$tmpdir"/.hex_chunk."$_stale_pid".* \

@@ -840,6 +840,9 @@ scan() {
 	done <<< "$spaths_str"
 	days="$2"
 	scanid="$datestamp.$$"
+	# Actual process PID — in background mode (-b), $$ is the dead parent;
+	# BASHPID reflects the real forked child PID for lifecycle liveness checks.
+	_scan_pid="${BASHPID:-$$}"
 	# Continue mode: use checkpoint scanid instead of fresh one
 	if [ -n "${_continue_scanid:-}" ]; then
 		scanid="$_continue_scanid"
@@ -1003,7 +1006,7 @@ scan() {
 		if [ "${string_length_scan:-0}" == "1" ]; then
 			_scan_stages="${_scan_stages},strlen"
 		fi
-		_lifecycle_write_meta "$scanid" "$$" "$PPID" "$hrspath" \
+		_lifecycle_write_meta "$scanid" "$_scan_pid" "$PPID" "$hrspath" \
 			"$tot_files" "${scan_workers:-auto}" "$_engine_type" \
 			"$_effective_hashtype" "$_scan_stages" \
 			"scan_clamscan=$scan_clamscan,scan_yara=$scan_yara,quarantine_hits=$quarantine_hits"

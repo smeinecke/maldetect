@@ -71,8 +71,8 @@ _hash_batch_worker() {
 			if [ "$_sentinel_rc" -eq 4 ]; then
 				exit 4  # stop — stage granularity, no per-chunk checkpoint
 			fi
-			# $$ in subshell = parent PID (intentional)
-			_lifecycle_check_parent "$$" || exit 5  # orphaned
+			# _scan_pid = actual scan process PID (BASHPID); safe in background mode
+			_lifecycle_check_parent "${_scan_pid:-$$}" || exit 5  # orphaned
 		fi
 	else
 		# Linux: xargs hashcmd hashes all files in one process
@@ -135,8 +135,8 @@ _hash_batch_worker() {
 			if [ "$_sentinel_rc" -eq 4 ]; then
 				exit 4  # stop — stage granularity, no per-chunk checkpoint
 			fi
-			# $$ in subshell = parent PID (intentional)
-			_lifecycle_check_parent "$$" || exit 5  # orphaned
+			# _scan_pid = actual scan process PID (BASHPID); safe in background mode
+			_lifecycle_check_parent "${_scan_pid:-$$}" || exit 5  # orphaned
 		fi
 	fi
 }
@@ -565,8 +565,8 @@ WP_EOF2
 				command sleep 2
 			done
 		fi
-		# Check parent liveness — $$ in subshell = parent PID (intentional)
-		_lifecycle_check_parent "$$" || exit 5  # orphaned
+		# Check parent liveness — _scan_pid = actual scan PID (BASHPID); safe in background mode
+		_lifecycle_check_parent "${_scan_pid:-$$}" || exit 5  # orphaned
 	fi
 
 	done
