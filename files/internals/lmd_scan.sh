@@ -231,6 +231,28 @@ _bg_progress_interval="${scan_progress_log_interval:-60}"
 [[ "$_bg_progress_interval" =~ ^[0-9]+$ ]] || _bg_progress_interval=60  # sanitize non-numeric to default
 _bg_progress_last=0
 
+_meta_progress_interval=10  # seconds between meta progress updates
+_meta_progress_last=0
+
+_scan_progress_meta() {
+	# Update scan.meta with current progress for -L/--list-active ETA display.
+	# Rate-limited to _meta_progress_interval to avoid excessive file appends.
+	# Args: stage processed file_count elapsed
+	[ "$_in_scan_context" != "1" ] && return
+	[ -z "${scanid:-}" ] && return
+	local _now=$SECONDS
+	if [ $((_now - _meta_progress_last)) -lt "$_meta_progress_interval" ]; then
+		return
+	fi
+	_meta_progress_last=$_now
+	local _stage="$1" _processed="$2" _file_count="$3" _elapsed="$4"
+	_lifecycle_update_meta "$scanid" "stage" "$_stage"
+	_lifecycle_update_meta "$scanid" "progress_pos" "$_processed"
+	_lifecycle_update_meta "$scanid" "progress_total" "$_file_count"
+	_lifecycle_update_meta "$scanid" "elapsed" "$_elapsed"
+	_lifecycle_update_meta "$scanid" "hits" "${progress_hits:-0}"
+}
+
 _scan_progress_log() {
 	# Log a progress checkpoint to event_log during background scans.
 	# Called from worker poll loops; rate-limited to _bg_progress_interval.
@@ -305,6 +327,7 @@ _wait_workers_with_progress() {
 		if [ "$_processed" -gt 0 ]; then
 			_scan_progress "$_stage" "${_processed}/${_file_count} files" "$_elapsed" "$_processed" "$_file_count"
 			_scan_progress_log "$_stage" "$_processed" "$_file_count" "$_elapsed"
+			_scan_progress_meta "$_stage" "$_processed" "$_file_count" "$_elapsed"
 		else
 			_scan_progress "$_stage" "$_file_count files" "$_elapsed"
 		fi
