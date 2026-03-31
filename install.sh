@@ -10,7 +10,7 @@
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
 lmd_version="2.0.1"
 inspath=/usr/local/maldetect
-logf=$inspath/logs/event_log
+logf=/var/log/maldet/event_log
 
 # Source shared packaging library
 PKG_BACKUP_SYMLINK="maldetect.last"
@@ -88,6 +88,35 @@ _read_conf_value() {
 		_val="${_val:-$_default}"
 	fi
 	echo "$_val"
+}
+
+# --- FHS log migration ---
+
+_migrate_logs() {
+	# FHS log migration: /var/log/maldet/ is the authoritative log location.
+	# $inspath/logs becomes a symlink for backward compat.
+	# Must run AFTER _install_core() — pkg_copy_tree may overwrite a prior symlink
+	# with a real directory from the source tree.
+	command mkdir -p /var/log/maldet
+	command chmod 750 /var/log/maldet
+
+	if [ -d "$inspath/logs" ] && [ ! -L "$inspath/logs" ]; then
+		# Real directory — migrate contents then replace with symlink
+		command cp -a "$inspath/logs/"* /var/log/maldet/ 2>/dev/null  # safe: dir may be empty on fresh install
+		command rm -rf "$inspath/logs"
+		command ln -sf /var/log/maldet "$inspath/logs"
+	elif [ -L "$inspath/logs" ]; then
+		# Already a symlink — verify target, re-create if wrong
+		local _target
+		_target=$(readlink "$inspath/logs")
+		if [ "$_target" != "/var/log/maldet" ]; then
+			command rm -f "$inspath/logs"
+			command ln -sf /var/log/maldet "$inspath/logs"
+		fi
+	else
+		# Does not exist — create symlink
+		command ln -sf /var/log/maldet "$inspath/logs"
+	fi
 }
 
 # --- Cron & service installation ---
@@ -182,6 +211,12 @@ _install_cron_service() {
 	mkdir -p "$inspath/logs" && touch "$logf"
 	pkg_symlink "$logf" "$inspath/event_log"
 	"$inspath/maldet" --alert-daily 2>/dev/null  # safe: primes digest state; no-op if no monitor running
+
+	# Logrotate config — install only if logrotate is available
+	if command -v logrotate >/dev/null 2>&1; then
+		command cp -f ./files/logrotate.maldet /etc/logrotate.d/maldet
+		command chmod 644 /etc/logrotate.d/maldet
+	fi
 }
 
 # --- Installation summary ---
@@ -254,6 +289,7 @@ if [ -d "$inspath" ] && [ -d "files" ]; then
 
 	pkg_section "Installing files"
 	_install_core
+	_migrate_logs
 	_install_cron_service
 
 	pkg_section "Importing configuration"
@@ -282,6 +318,7 @@ elif [ -d "files" ]; then
 
 	pkg_section "Installing files"
 	_install_core
+	_migrate_logs
 	# Create empty monitor_paths.extra if not restored from backup
 	if [ ! -f "$inspath/monitor_paths.extra" ]; then
 		touch "$inspath/monitor_paths.extra"

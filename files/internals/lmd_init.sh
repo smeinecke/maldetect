@@ -397,8 +397,8 @@ _lmd_elog_init() {
 
 	# Audit trail — disabled for non-root users
 	if [ "$(id -u)" -eq 0 ]; then
-		ELOG_AUDIT_FILE="/var/log/maldet/audit.log"
-		[ -d "/var/log/maldet" ] || mkdir -m 750 "/var/log/maldet" 2>/dev/null  # safe: dir may exist from concurrent run
+		ELOG_AUDIT_FILE="$logdir/audit.log"
+		[ -d "$logdir" ] || command mkdir -m 750 "$logdir" 2>/dev/null  # safe: dir may exist from concurrent run
 	else
 		unset ELOG_AUDIT_FILE
 	fi

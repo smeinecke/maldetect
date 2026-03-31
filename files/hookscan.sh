@@ -323,8 +323,8 @@ if [ -f "${elog_lib:-}" ]; then
 	ELOG_APP="maldet"
 	ELOG_STDOUT="never"
 	if [ "$(id -u)" -eq 0 ]; then
-		ELOG_AUDIT_FILE="/var/log/maldet/audit.log"
-		[ -d "/var/log/maldet" ] || mkdir -m 750 "/var/log/maldet" 2>/dev/null  # safe: dir may exist
+		ELOG_AUDIT_FILE="$logdir/audit.log"
+		[ -d "$logdir" ] || command mkdir -m 750 "$logdir" 2>/dev/null  # safe: dir may exist
 	else
 		ELOG_AUDIT_FILE=""
 	fi
