@@ -231,6 +231,23 @@ _bg_progress_interval="${scan_progress_log_interval:-60}"
 [[ "$_bg_progress_interval" =~ ^[0-9]+$ ]] || _bg_progress_interval=60  # sanitize non-numeric to default
 _bg_progress_last=0
 
+# _bg_backoff_interval elapsed base_interval
+# Logarithmic backoff for event_log progress lines. Returns the effective
+# interval via stdout. Early progress stays frequent; long scans taper off
+# to avoid log spam with low-value repeated lines.
+_bg_backoff_interval() {
+	local _elapsed="$1" _base="$2"
+	if [ "$_elapsed" -ge 3600 ]; then
+		echo 1800   # 60m+: every 30 minutes
+	elif [ "$_elapsed" -ge 900 ]; then
+		echo 900    # 15-60m: every 15 minutes
+	elif [ "$_elapsed" -ge 300 ]; then
+		echo 300    # 5-15m: every 5 minutes
+	else
+		echo "$_base"  # 0-5m: configured interval
+	fi
+}
+
 _meta_progress_interval=10  # seconds between meta progress updates
 _meta_progress_last=0
 
@@ -255,15 +272,16 @@ _scan_progress_meta() {
 
 _scan_progress_log() {
 	# Log a progress checkpoint to event_log during background scans.
-	# Called from worker poll loops; rate-limited to _bg_progress_interval.
+	# Called from worker poll loops; rate-limited with logarithmic backoff.
 	# Args: stage processed file_count elapsed
 	[ "$set_background" != "1" ] && return
 	[ "$_in_scan_context" != "1" ] && return
 	[ "$_bg_progress_interval" -le 0 ] 2>/dev/null && return  # safe: sanitized at init; suppresses edge-case comparison error
 	local _stage="$1" _processed="$2" _file_count="$3" _elapsed="$4"
-	local _now _pct _eta _eta_str
+	local _now _pct _eta _eta_str _effective_interval
 	_now=$SECONDS
-	if [ $((_now - _bg_progress_last)) -lt "$_bg_progress_interval" ]; then
+	_effective_interval=$(_bg_backoff_interval "$_elapsed" "$_bg_progress_interval")
+	if [ $((_now - _bg_progress_last)) -lt "$_effective_interval" ]; then
 		return
 	fi
 	_bg_progress_last=$_now
@@ -350,28 +368,42 @@ _wait_workers_with_progress() {
 }
 
 _start_elapsed_timer() {
-	# Start a background elapsed-time progress ticker for single-process stages.
+	# Start a background elapsed-time progress ticker for single-process stages
+	# (ClamAV, YARA) where per-file progress is unavailable.
 	# Usage: _start_elapsed_timer <stage> <file_count>
 	# Sets _timer_pid to the background process PID.
 	# Caller must call _stop_elapsed_timer when the stage completes.
-	# In foreground: console progress every 2s. In background: log checkpoint only.
+	# In foreground: console progress every 2s (unchanged).
+	# In background: watchdog log with logarithmic backoff — subshell cannot
+	# see parent's progress vars, so these are liveness checks, not progress.
 	_timer_pid=""
-	local _stage="$1" _file_count="$2" _start_ts _poll _paused_accum=0
+	local _stage="$1" _file_count="$2" _start_ts _base_poll _paused_accum=0
 	_start_ts=$SECONDS
 	if [ "$set_background" == "1" ]; then
-		_poll="${_bg_progress_interval:-60}"
-		[[ "$_poll" =~ ^[0-9]+$ ]] || _poll=60  # sanitize non-numeric to default
-		[ "$_poll" -le 0 ] && return
+		_base_poll="${_bg_progress_interval:-60}"
+		[[ "$_base_poll" =~ ^[0-9]+$ ]] || _base_poll=60  # sanitize non-numeric to default
+		[ "$_base_poll" -le 0 ] && return
+		local _elapsed _sleep_dur _eh _em _es _efmt
 		while true; do
-			sleep "$_poll"
-			# Suppress progress while scan is paused
+			_elapsed=$(( SECONDS - _start_ts - _paused_accum ))
+			_sleep_dur=$(_bg_backoff_interval "$_elapsed" "$_base_poll")
+			sleep "$_sleep_dur"
+			# Suppress while scan is paused
 			if [ -n "${scanid:-}" ] && [ -f "$tmpdir/.pause.$scanid" ]; then
-				_paused_accum=$((_paused_accum + _poll))
+				_paused_accum=$((_paused_accum + _sleep_dur))
 				continue
 			fi
-			# Note: subshell cannot see parent's progress_hits/progress_cleaned updates;
-			# report elapsed time only — accurate hit counts come from _scan_progress_log
-			eout "{scan} [$_stage] $_file_count files | elapsed $(( SECONDS - _start_ts - _paused_accum ))s"
+			_elapsed=$(( SECONDS - _start_ts - _paused_accum ))
+			# Format elapsed as human-readable
+			_eh=$((_elapsed / 3600)) _em=$(((_elapsed % 3600) / 60)) _es=$((_elapsed % 60))
+			if [ "$_eh" -gt 0 ]; then
+				_efmt="${_eh}h ${_em}m"
+			elif [ "$_em" -gt 0 ]; then
+				_efmt="${_em}m ${_es}s"
+			else
+				_efmt="${_es}s"
+			fi
+			eout "{watchdog} [$_stage] $_file_count files | running ${_efmt}"
 		done &
 		_timer_pid=$!
 	else

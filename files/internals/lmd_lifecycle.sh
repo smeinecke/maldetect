@@ -324,15 +324,22 @@ _lifecycle_render_text_active() {
 		fi
 		_elapsed_str=$(_lifecycle_format_elapsed "$_elapsed_secs")
 
-		# ETA: (elapsed * total / processed) - elapsed; requires active progress
+		# ETA: (elapsed * total / processed) - elapsed; requires per-file progress.
+		# ClamAV and YARA run as opaque single-process engines — per-file progress
+		# is structurally unavailable, so ETA is always n/a for those engines.
 		local _eta_str="-"
 		local _pos="${_meta_progress_pos:-0}" _tot="${_meta_progress_total:-0}"
 		[ "$_pos" = "-" ] && _pos=0
 		[ "$_tot" = "-" ] && _tot=0
-		if [ "$_pos" -gt 0 ] && [ "$_tot" -gt 0 ] && [ "$_elapsed_secs" -gt 0 ]; then
-			local _eta_secs=$(( (_elapsed_secs * _tot / _pos) - _elapsed_secs ))
-			_eta_str="~$(_lifecycle_format_elapsed "$_eta_secs")"
-		fi
+		case "${_meta_engine:-}" in
+			clamav|clamdscan|yara) _eta_str="n/a" ;;
+			*)
+				if [ "$_pos" -gt 0 ] && [ "$_tot" -gt 0 ] && [ "$_elapsed_secs" -gt 0 ]; then
+					local _eta_secs=$(( (_elapsed_secs * _tot / _pos) - _elapsed_secs ))
+					_eta_str="~$(_lifecycle_format_elapsed "$_eta_secs")"
+				fi
+				;;
+		esac
 
 		if [ "$_verbose" = "1" ]; then
 			local _progress_str="-"
@@ -418,12 +425,18 @@ _lifecycle_render_json_active() {
 		printf '      "total_files": %s,\n' "$_i_total"
 		printf '      "hits": %s,\n' "$_i_hits"
 		printf '      "elapsed": %s,\n' "$_i_elapsed"
-		# ETA: (elapsed * total / processed) - elapsed
-		local _i_eta=0
-		if [ "$_i_prog_pos" -gt 0 ] && [ "$_i_prog_total" -gt 0 ] && [ "$_i_elapsed" -gt 0 ]; then
-			_i_eta=$(( (_i_elapsed * _i_prog_total / _i_prog_pos) - _i_elapsed ))
-		fi
-		printf '      "eta": %s,\n' "$_i_eta"
+		# ETA: null for engines without per-file progress (clamav, yara);
+		# computed for native engine when progress data is available
+		local _eta_val="0"
+		case "${_meta_engine:-}" in
+			clamav|clamdscan|yara) _eta_val="null" ;;
+			*)
+				if [ "$_i_prog_pos" -gt 0 ] && [ "$_i_prog_total" -gt 0 ] && [ "$_i_elapsed" -gt 0 ]; then
+					_eta_val=$(( (_i_elapsed * _i_prog_total / _i_prog_pos) - _i_elapsed ))
+				fi
+				;;
+		esac
+		printf '      "eta": %s,\n' "$_eta_val"
 		printf '      "workers": %s,\n' "$_i_workers"
 		printf '      "stages": "%s",\n' "$_j_stages"
 		printf '      "sig_version": "%s",\n' "$_j_sig"
@@ -460,14 +473,19 @@ _lifecycle_render_tsv_active() {
 		if [ "$_tsv_elapsed" = "0" ] && [ -n "$_meta_started" ] && [ "$_meta_started" != "0" ]; then
 			_tsv_elapsed="$(( $(command date +%s) - _meta_started ))"
 		fi
-		# ETA
+		# ETA: -1 for engines without per-file progress (clamav, clamdscan, yara)
 		local _tsv_eta=0
 		local _tp="${_meta_progress_pos:-0}" _tt="${_meta_progress_total:-0}"
 		[ "$_tp" = "-" ] && _tp=0
 		[ "$_tt" = "-" ] && _tt=0
-		if [ "$_tp" -gt 0 ] && [ "$_tt" -gt 0 ] && [ "$_tsv_elapsed" -gt 0 ]; then
-			_tsv_eta=$(( (_tsv_elapsed * _tt / _tp) - _tsv_elapsed ))
-		fi
+		case "${_meta_engine:-}" in
+			clamav|clamdscan|yara) _tsv_eta=-1 ;;
+			*)
+				if [ "$_tp" -gt 0 ] && [ "$_tt" -gt 0 ] && [ "$_tsv_elapsed" -gt 0 ]; then
+					_tsv_eta=$(( (_tsv_elapsed * _tt / _tp) - _tsv_elapsed ))
+				fi
+				;;
+		esac
 		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$_scanid" "$_state" "${_meta_pid:--}" "${_meta_path:--}" \
 			"${_meta_engine:--}" "${_meta_total_files:--}" "${_meta_hits:-0}" \
