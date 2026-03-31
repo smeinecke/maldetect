@@ -119,6 +119,9 @@ v2.0.1 | Mar 25 2026:
       -e list to show running scans as stale, --kill/--pause/--stop to target
       wrong process, and workers to exit as orphaned; scan.meta now stores
       ns_pid (temp file namespace) separately from pid (liveness/signal target)
+[Fix] -L/--list-active: elapsed time showed 0h 00m for running scans; now
+      computed live from scan start epoch instead of reading the completed-only
+      meta field
 
 [Fix] JSON report list hang: index-first hybrid eliminates O(N) per-file glob on servers
       without session.index; legacy plaintext sessions preserved

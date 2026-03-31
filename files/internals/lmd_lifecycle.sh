@@ -314,7 +314,15 @@ _lifecycle_render_text_active() {
 		_state=$(_lifecycle_detect_state "$_scanid" 2>/dev/null) || continue  # safe: skip unreadable meta
 		_lifecycle_read_meta "$_scanid" || continue
 
-		_elapsed_str=$(_lifecycle_format_elapsed "${_meta_elapsed:-0}")
+		# For running/paused scans, compute elapsed live from started epoch;
+		# completed/killed/stale scans have _meta_elapsed already set.
+		if [ -n "$_meta_elapsed" ] && [ "$_meta_elapsed" != "0" ]; then
+			_elapsed_str=$(_lifecycle_format_elapsed "$_meta_elapsed")
+		elif [ -n "$_meta_started" ] && [ "$_meta_started" != "0" ]; then
+			_elapsed_str=$(_lifecycle_format_elapsed "$(( $(command date +%s) - _meta_started ))")
+		else
+			_elapsed_str=$(_lifecycle_format_elapsed "0")
+		fi
 
 		if [ "$_verbose" = "1" ]; then
 			local _progress_str="-"
@@ -374,7 +382,11 @@ _lifecycle_render_json_active() {
 		local _i_pid="${_meta_pid:-0}"
 		local _i_total="${_meta_total_files:-0}"
 		local _i_hits="${_meta_hits:-0}"
+		# Live elapsed for running scans; completed scans use recorded value
 		local _i_elapsed="${_meta_elapsed:-0}"
+		if [ "$_i_elapsed" = "0" ] && [ -n "$_meta_started" ] && [ "$_meta_started" != "0" ]; then
+			_i_elapsed="$(( $(command date +%s) - _meta_started ))"
+		fi
 		local _i_workers="${_meta_workers:-0}"
 		local _i_prog_pos="${_meta_progress_pos:-0}"
 		local _i_prog_total="${_meta_progress_total:-0}"
@@ -428,10 +440,15 @@ _lifecycle_render_tsv_active() {
 		_state=$(_lifecycle_detect_state "$_scanid" 2>/dev/null) || continue  # safe: skip unreadable meta
 		_lifecycle_read_meta "$_scanid" || continue
 
+		# Live elapsed for running scans; completed scans use recorded value
+		local _tsv_elapsed="${_meta_elapsed:-0}"
+		if [ "$_tsv_elapsed" = "0" ] && [ -n "$_meta_started" ] && [ "$_meta_started" != "0" ]; then
+			_tsv_elapsed="$(( $(command date +%s) - _meta_started ))"
+		fi
 		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$_scanid" "$_state" "${_meta_pid:--}" "${_meta_path:--}" \
 			"${_meta_engine:--}" "${_meta_total_files:--}" "${_meta_hits:-0}" \
-			"${_meta_elapsed:-0}"
+			"$_tsv_elapsed"
 	done <<< "$_ids"
 
 	return 0
