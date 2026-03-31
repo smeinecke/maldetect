@@ -43,8 +43,8 @@ _setup_ratelimit_env() {
     chmod 755 "$_fake" "$_fake/internals" "$_fake/sess" "$_fake/hookscan.sh" "$_fake/maldet"
     chmod 644 "$_fake/internals/internals.conf" "$_fake/internals/elog_lib.sh"
     # Patch audit paths for non-root: redirect to test dir, enable for non-root
-    sed -i "s|ELOG_AUDIT_FILE=\"/var/log/maldet/audit.log\"|ELOG_AUDIT_FILE=\"$_audit_dir/audit.log\"|g" "$_fake/hookscan.sh"
-    sed -i "s|/var/log/maldet|$_audit_dir|g" "$_fake/hookscan.sh"
+    sed -i 's|ELOG_AUDIT_FILE="\$logdir/audit\.log"|ELOG_AUDIT_FILE="'"$_audit_dir"'/audit.log"|g' "$_fake/hookscan.sh"
+    sed -i 's|\$logdir|'"$_audit_dir"'|g' "$_fake/hookscan.sh"
     sed -i 's|ELOG_AUDIT_FILE=""|ELOG_AUDIT_FILE="'"$_audit_dir"'/audit.log"|' "$_fake/hookscan.sh"
     # Pre-seed counter at limit
     printf '%s %s\n' "$(date +%s)" "60" > "$_fake/tmp/.hook_rate_${_nobody_uid}"

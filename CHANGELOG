@@ -68,6 +68,11 @@ v2.0.1 | Mar 25 2026:
       entry points (--kill, --pause, --unpause, --stop, --continue)
 [New] -e list: --all flag shows full scan history (default: recent 14 entries);
       QUAR column with quarantine count per scan; pager (${PAGER:-less}) when --all on TTY
+[New] Logrotate config: /etc/logrotate.d/maldet rotates event_log, clamscan_log, and
+      audit.log weekly (12 rotations); inotify_log excluded (managed by --maintenance);
+      installed only when logrotate is available; RPM/DEB: %config(noreplace)
+[Change] cron.daily: run --maintenance after sigup/versionup for automated history
+         rotation and session cleanup; hardcoded log paths replaced with $maldet_log
 
   -- Changes --
 
@@ -104,6 +109,9 @@ v2.0.1 | Mar 25 2026:
 [Change] scan_hexdepth default reduced from 524288 (512 KB) to 262144 (256 KB); covers
          98.9% of HEX patterns with YARA backstop for remaining 1.1%; importconf migration
          for old default
+[Change] FHS log path: /var/log/maldet/ is now the authoritative log directory for all
+         install methods; $inspath/logs is a backward-compatible symlink; install.sh
+         migrates existing logs on upgrade (cp -a, preserves timestamps/permissions)
 [Change] -e list redesign: columnar output with header row, 14-entry cap with overflow
          hint, PATH column (truncated 30 chars), index-first rendering, active count in
          heading, empty state exits 0, JSON active array, FreeBSD sort support

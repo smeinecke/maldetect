@@ -478,7 +478,8 @@ teardown() {
     run_cron_daily
 
     if [ -f "$CRON_MALDET_LOG" ]; then
-        run grep -c "MALDET_CALL:" "$CRON_MALDET_LOG"
+        # --maintenance is housekeeping (always runs); verify no update calls (-d, -u)
+        run bash -c "grep -cE ' -(d|u) ' '$CRON_MALDET_LOG'"
         [ "$output" = "0" ]
     fi
 }

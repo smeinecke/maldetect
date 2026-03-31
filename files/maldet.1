@@ -248,8 +248,22 @@ TSV\-format scan session data files containing a 19\-field metadata header
 and 11\-field hit records.
 Canonical format as of v2.0.1.
 .TP
-.I /usr/local/maldetect/logs/event_log
-Event log.
+.I /var/log/maldet/
+Log directory (FHS). Contains
+.IR event_log ,
+.IR clamscan_log ,
+.IR inotify_log ,
+and
+.IR audit.log .
+.I /usr/local/maldetect/logs
+is a backward\-compatible symlink to this directory.
+.TP
+.I /etc/logrotate.d/maldet
+Logrotate configuration for event_log, clamscan_log, and audit.log.
+Installed only when
+.BR logrotate (8)
+is available. Does not rotate inotify_log (managed internally by
+.BR \-\-maintenance ).
 .TP
 .I /etc/cron.daily/maldet
 Daily cron job for automated scanning and updates.

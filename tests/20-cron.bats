@@ -134,9 +134,9 @@ teardown() {
     lmd_set_config cron_daily_scan 0
     run bash /etc/cron.daily/maldet
     assert_success
-    # No maldet scan call should appear
+    # No scan calls should appear (--maintenance is housekeeping, always runs)
     if [ -f "$CRON_MALDET_LOG" ]; then
-        run grep -c "MALDET_CALL" "$CRON_MALDET_LOG"
+        run grep -c -- ' -b ' "$CRON_MALDET_LOG"
         [ "$output" = "0" ]
     fi
 }

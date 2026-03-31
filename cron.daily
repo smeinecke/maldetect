@@ -78,23 +78,27 @@ fi
 
 if [ "$autoupdate_version" == "1" ]; then
 	# check for new release version
-	$inspath/maldet -d 1 2>&1 | tail -20 >> "$inspath/logs/event_log"
+	$inspath/maldet -d 1 2>&1 | tail -20 >> "$maldet_log"
 	if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-		echo "$(date) cron.daily: maldet -d (version update) failed" >> "$inspath/logs/event_log"
+		echo "$(date) cron.daily: maldet -d (version update) failed" >> "$maldet_log"
 	fi
 fi
 
 if [ "$autoupdate_signatures" == "1" ]; then
 	# check for new definition set
-	$inspath/maldet -u 1 2>&1 | tail -20 >> "$inspath/logs/event_log"
+	$inspath/maldet -u 1 2>&1 | tail -20 >> "$maldet_log"
 	if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-		echo "$(date) cron.daily: maldet -u (signature update) failed" >> "$inspath/logs/event_log"
+		echo "$(date) cron.daily: maldet -u (signature update) failed" >> "$maldet_log"
 	fi
 fi
 
+# Maintenance: rotate oversized history files, clean stale scan metadata,
+# compress/archive old sessions
+$inspath/maldet --maintenance >> /dev/null 2>&1  # safe: maintenance output logged internally
+
 # Hook scan digest — fire if hook.hits.log has content since last sweep
 if [ "${cron_digest_hook:-1}" == "1" ] && [ -f "$sessdir/hook.hits.log" ] && [ -s "$sessdir/hook.hits.log" ]; then
-	echo "$(date) cron.daily: hook digest: checking for new detections" >> "$inspath/logs/event_log"
+	echo "$(date) cron.daily: hook digest: checking for new detections" >> "$maldet_log"
 	$inspath/maldet --digest >> /dev/null 2>&1
 fi
 
