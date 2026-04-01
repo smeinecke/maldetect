@@ -191,6 +191,18 @@ _run_yara_scan() {
 	fi
 }
 
+_progress_line_active=0
+
+_scan_progress_clear() {
+	# Emit a newline to terminate an active TTY progress line before
+	# non-progress output (eout, echo).  No-op when no line is active
+	# or when not on a TTY.
+	if [ "$_progress_line_active" == "1" ] && [ -t 1 ]; then
+		echo
+	fi
+	_progress_line_active=0
+}
+
 _scan_progress() {
 	# Unified scan progress line for all engines and stages.
 	# Gated by _in_scan_context to prevent output in monitor/clean paths.
@@ -219,6 +231,7 @@ _scan_progress() {
 		if [ -t 1 ]; then
 			# TTY: overwrite current line with cursor-to-column-1 and erase-to-EOL
 			printf '\033[%sG\033[K%s' "$res_col" "$_line"
+			_progress_line_active=1
 		else
 			# Non-TTY (cron, pipe, docker exec): plain newline-terminated output
 			echo "$_line"
@@ -449,6 +462,7 @@ _scan_run_clamav() {
 	_clamd_retry_scan "$find_results" "$clamscan_results" "$_clam_pid_file"
 	command rm -f "$_clam_pid_file"
 	_stop_elapsed_timer
+	_scan_progress_clear
 	if [ "$clamscan_return" == "2" ]; then
 		if [ "$quarantine_on_error" == "0" ] || [ -z "$quarantine_on_error" ]; then
 			quarantine_hits=0
@@ -472,11 +486,7 @@ _scan_run_clamav() {
 		fi
 	fi
 
-	# Final newline after progress ticker
-	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
-	   [ "$set_background" != "1" ] && [ -z "$single_filescan" ]; then
-		echo
-	fi
+	_scan_progress_clear
 }
 
 _resolve_worker_count() {
@@ -600,6 +610,7 @@ _scan_run_native() {
 					_w=$((_w + 1))
 				done
 				if ! _wait_workers_with_progress "md5" "$_md5_file_count" "$_md5_progress_dir" "${_md5_worker_pids[@]}"; then
+					_scan_progress_clear
 					eout "{scan} workers detected lifecycle signal, aborting scan" 1
 					command rm -f "$_md5_chunk_prefix".* 2>/dev/null  # safe: chunks may not exist if worker aborted
 					return 1
@@ -681,6 +692,7 @@ _scan_run_native() {
 					_w=$((_w + 1))
 				done
 				if ! _wait_workers_with_progress "sha256" "$_sha256_file_count" "$_sha256_progress_dir" "${_sha256_worker_pids[@]}"; then
+					_scan_progress_clear
 					eout "{scan} workers detected lifecycle signal, aborting scan" 1
 					command rm -f "$_sha256_chunk_prefix".* 2>/dev/null  # safe: chunks may not exist if worker aborted
 					return 1
@@ -808,6 +820,7 @@ _scan_run_native() {
 		done
 		# Wait for all workers with progress updates
 		if ! _wait_workers_with_progress "$_hex_stage_label" "$_hex_file_count" "$_hex_progress_dir" "${_worker_pids[@]}"; then
+			_scan_progress_clear
 			eout "{scan} workers detected lifecycle signal, aborting scan" 1
 			return 1
 		fi
@@ -843,11 +856,7 @@ _scan_run_native() {
 	fi
 	command rm -f "$_hex_filelist"
 
-	# Final newline after progress ticker
-	if [ "$_in_scan_context" == "1" ] && [ -z "$hscan" ] && \
-	   [ "$set_background" != "1" ] && [ -z "$single_filescan" ]; then
-		echo
-	fi
+	_scan_progress_clear
 }
 
 _hook_escalate_check() {

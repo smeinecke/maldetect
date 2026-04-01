@@ -711,6 +711,9 @@ _flush_hit_batch() {
 		return 0
 	fi
 
+	# Clear TTY progress line before eout writes hit summary
+	_scan_progress_clear
+
 	# Enrich with stat + md5
 	local _enriched
 	_enriched=$(mktemp "$tmpdir/.batch_enriched.XXXXXX")

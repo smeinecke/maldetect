@@ -325,7 +325,7 @@ _process_clamav_hits() {
 	# Bulk ignore_sigs filter
 	_batch_filter_ignore_sigs "$_clam_manifest"
 
-	_flush_hit_batch "$_clam_manifest" "clamav"
 	_scan_progress "clamav" "processing hits"
+	_flush_hit_batch "$_clam_manifest" "clamav"
 	command rm -f "$_clam_manifest"
 }
