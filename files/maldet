@@ -637,7 +637,7 @@ else
 					eout "{mon} not currently supported under FreeBSD" 1
 				elif [ "$_mon_mode" == "reload" ] || [ "$_mon_mode" == "RELOAD" ]; then
 					eout "{mon} queued monitor for configuration reload" 1
-					touch $inspath/reload_monitor
+					command touch "$inspath/reload_monitor"
 				else
 					svc=m
 					if [ "$set_background" = "1" ]; then

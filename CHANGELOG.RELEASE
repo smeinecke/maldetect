@@ -104,7 +104,9 @@ v2.0.1 | Mar 25 2026:
          (strlen runs last); bulk awk HEX classifier
 [Change] gensigs: awk compiler replaces bash+sed wildcard/csig loops; dead helpers removed
 [Change] _scan_progress(): plain newline-terminated output in non-TTY contexts;
-         ANSI escape sequences gated behind TTY check
+         ANSI escape sequences gated behind TTY check; logarithmic backoff reduces
+         progress I/O on non-native engines (ClamAV, YARA); watchdog semantics for
+         engine health monitoring
 [Change] install.sh: delegate config/state migration to importconf
 [Change] scan_hexdepth default reduced from 524288 (512 KB) to 262144 (256 KB); covers
          98.9% of HEX patterns with YARA backstop for remaining 1.1%; importconf migration
@@ -113,8 +115,9 @@ v2.0.1 | Mar 25 2026:
          install methods; $inspath/logs is a backward-compatible symlink; install.sh
          migrates existing logs on upgrade (cp -a, preserves timestamps/permissions)
 [Change] -e list redesign: columnar output with header row, 14-entry cap with overflow
-         hint, PATH column (truncated 30 chars), index-first rendering, active count in
-         heading, empty state exits 0, JSON active array, FreeBSD sort support
+         hint, full PATH column, consistent 1-space indent across active scans and scan
+         history, index-first rendering, active count in heading, empty state exits 0,
+         JSON active array, FreeBSD sort support
 [Change] --maintenance: session compression age raised from 1 hour to 30 days;
          archive age raised from 30 days to 90 days; scan_meta_cleanup_age default
          raised from 24 to 48 hours; new config variables maint_compress_age,
@@ -127,6 +130,8 @@ v2.0.1 | Mar 25 2026:
       -e list to show running scans as stale, --kill/--pause/--stop to target
       wrong process, and workers to exit as orphaned; scan.meta now stores
       ns_pid (temp file namespace) separately from pid (liveness/signal target)
+[Fix] Scan progress: clear TTY progress line before stage-transition output to
+      prevent overwritten/garbled text when scan moves between stages
 [Fix] -L/--list-active: elapsed time showed 0h 00m for running scans; now
       computed live from scan start epoch instead of reading the completed-only
       meta field
