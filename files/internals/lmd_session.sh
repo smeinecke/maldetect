@@ -375,7 +375,7 @@ view_report() {
 					_ix_tot_quar="0"
 				fi
 				_seen_ids="$_seen_ids $_ix_scanid"
-				local _time_display _etime _cl _quar _trunc_path
+				local _time_display _etime _cl _quar
 				# Strip timezone offset for column alignment
 				_time_display=$(echo "$_ix_started_hr" | awk '{print $1,$2,$3,$4}')
 				_etime=$(_session_fmt_elapsed "$_ix_elapsed")
@@ -383,12 +383,7 @@ view_report() {
 				[ "$_cl" = "-" ] && _cl="0"
 				_quar="${_ix_tot_quar:-0}"
 				[ "$_quar" = "-" ] && _quar="0"
-				# Truncate path to 30 chars with ellipsis
-				_trunc_path="${_ix_path:--}"
-				if [ "${#_trunc_path}" -gt 30 ]; then
-					_trunc_path="${_trunc_path:0:27}..."
-				fi
-				echo "$_ix_epoch | $_time_display | $_ix_scanid | $_etime | ${_ix_tot_files:--} | ${_ix_tot_hits:--} | $_quar | $_cl | $_trunc_path" >> "$tmpf"
+				echo "$_ix_epoch | $_time_display | $_ix_scanid | $_etime | ${_ix_tot_files:--} | ${_ix_tot_hits:--} | $_quar | $_cl | ${_ix_path:--}" >> "$tmpf"
 			done < "$_index_file"
 		fi
 		# Fallback: per-file glob for sessions not in the index
@@ -400,7 +395,7 @@ view_report() {
 			case "$_seen_ids" in *" $_sid"*) continue ;; esac
 			_session_read_meta "$file"
 			if [ -n "$scanid" ] && [ "$scan_start_hr" != "-" ]; then
-				local _time_u _etime _time_display _trunc_path
+				local _time_u _etime _time_display
 				_time_u=$(date -d "$scan_start_hr" "+%s" 2>/dev/null)
 				# Strip timezone offset for consistent column alignment with legacy pass
 				_time_display=$(echo "$scan_start_hr" | awk '{print $1,$2,$3,$4}')
@@ -410,12 +405,7 @@ view_report() {
 				# Count quarantined from TSV hit records
 				local _quar
 				_quar=$(awk -F'\t' '!/^#/ && $3 != "" && $3 != "-" { n++ } END { print n+0 }' "$file")
-				# Truncate path to 30 chars with ellipsis
-				_trunc_path="${hrspath:--}"
-				if [ "${#_trunc_path}" -gt 30 ]; then
-					_trunc_path="${_trunc_path:0:27}..."
-				fi
-				echo "$_time_u | $_time_display | $scanid | $_etime | ${tot_files:--} | ${tot_hits:--} | $_quar | $_cl | $_trunc_path" >> "$tmpf"
+				echo "$_time_u | $_time_display | $scanid | $_etime | ${tot_files:--} | ${tot_hits:--} | $_quar | $_cl | ${hrspath:--}" >> "$tmpf"
 				_seen_ids="$_seen_ids $_sid"
 			fi
 		done
@@ -439,12 +429,8 @@ view_report() {
 				CLEAN="0"
 			fi
 			if [ -n "$SCANID" ] && [ -n "$TIME" ]; then
-				local _trunc_path="${LPATH:--}"
-				if [ "${#_trunc_path}" -gt 30 ]; then
-					_trunc_path="${_trunc_path:0:27}..."
-				fi
 				# Legacy plaintext sessions have no quarantine count — show "-"
-				echo "$TIME_U | $TIME | $SCANID | $ETIME | ${FILES:--} | ${HITS:--} | - | $CLEAN | $_trunc_path" >> "$tmpf"
+				echo "$TIME_U | $TIME | $SCANID | $ETIME | ${FILES:--} | ${HITS:--} | - | $CLEAN | ${LPATH:--}" >> "$tmpf"
 			fi
 		done
 		# Display sorted results with section header and cap

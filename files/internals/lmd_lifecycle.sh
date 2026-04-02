@@ -302,10 +302,10 @@ _lifecycle_render_text_active() {
 
 	printf 'Active scans (%s):\n' "$_count"
 	if [ "$_verbose" = "1" ]; then
-		printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %-8s %-12s %-12s %s\n' \
+		printf ' %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %-8s %-12s %-12s %s\n' \
 			"SCANID" "STATE" "PID" "ENGINE" "FILES" "HITS" "ELAPSED" "ETA" "WORKERS" "SIG_VER" "PROGRESS" "PATH"
 	else
-		printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %s\n' \
+		printf ' %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %s\n' \
 			"SCANID" "STATE" "PID" "ENGINE" "FILES" "HITS" "ELAPSED" "ETA" "PATH"
 	fi
 
@@ -346,13 +346,13 @@ _lifecycle_render_text_active() {
 			if [ "$_pos" -gt 0 ] && [ "$_tot" -gt 0 ]; then
 				_progress_str="${_pos}/${_tot}"
 			fi
-			printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %-8s %-12s %-12s %s\n' \
+			printf ' %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %-8s %-12s %-12s %s\n' \
 				"$_scanid" "$_state" "${_meta_pid:-?}" \
 				"${_meta_engine:--}" "${_meta_total_files:--}" "${_meta_hits:-0}" \
 				"$_elapsed_str" "$_eta_str" "${_meta_workers:--}" "${_meta_sig_version:--}" "$_progress_str" \
 				"${_meta_path:--}"
 		else
-			printf '  %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %s\n' \
+			printf ' %-22s %-10s %-7s %-8s %-10s %-6s %-10s %-10s %s\n' \
 				"$_scanid" "$_state" "${_meta_pid:-?}" \
 				"${_meta_engine:--}" "${_meta_total_files:--}" "${_meta_hits:-0}" \
 				"$_elapsed_str" "$_eta_str" "${_meta_path:--}"
