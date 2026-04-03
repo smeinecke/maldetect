@@ -102,7 +102,13 @@ clamav_linksigs() {
 			command rm -f "$cpath"/rfxn.{hdb,ndb,yara,hsb} 2>/dev/null
 			command rm -f "$cpath"/lmd.user.* 2>/dev/null
 			command cp -f "$_staging"/* "$cpath"/ 2>/dev/null
-			# Match ownership/perms to ClamAV data dir so clamd can read sigs
+			# Signatures deployed to partner scanner paths must be 644 —
+			# scanner daemons run as non-root and need read access
+			for _sf in "$cpath"/rfxn.* "$cpath"/lmd.user.*; do
+				[ -f "$_sf" ] || continue
+				command chmod 644 "$_sf" 2>/dev/null  # enforce world-readable for scanner daemon
+			done
+			# Match ownership to ClamAV data dir when it runs as non-root
 			local _cpath_owner _cpath_group
 			if [ "$os_freebsd" == "1" ]; then
 				_cpath_owner=$(stat -f '%Su' "$cpath" 2>/dev/null)
@@ -115,13 +121,6 @@ clamav_linksigs() {
 				for _sf in "$cpath"/rfxn.* "$cpath"/lmd.user.*; do
 					[ -f "$_sf" ] || continue
 					command chown "${_cpath_owner}:${_cpath_group}" "$_sf" 2>/dev/null
-					command chmod 644 "$_sf" 2>/dev/null
-				done
-			else
-				# Root-owned dir: just ensure world-readable for any clamd user
-				for _sf in "$cpath"/rfxn.* "$cpath"/lmd.user.*; do
-					[ -f "$_sf" ] || continue
-					command chmod 644 "$_sf" 2>/dev/null
 				done
 			fi
 			command rm -rf "$_staging"
