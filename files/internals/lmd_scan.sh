@@ -1167,6 +1167,11 @@ scan() {
 		fi
 	fi
 
+	# --- Post-scan hook dispatch (non-hook scans only) ---
+	if [ -z "$hscan" ] && [ -n "${_LMD_HOOK_LOADED:-}" ]; then
+		_scan_hook_dispatch "post" "cli"
+	fi
+
 	# --- Hook escalation check ---
 	if [ "$tot_hits" != "0" ] && [ -n "$hscan" ]; then
 		_hook_escalate_check

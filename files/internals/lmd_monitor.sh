@@ -261,6 +261,10 @@ _monitor_housekeeping() {
 		if [ "$_now" -ge "$_next_digest_time" ]; then
 			eout "{mon} firing periodic digest alert (interval=${digest_interval})" 1
 			genalert digest
+			# Post-scan hook (digest): monitor always forces async
+			if [ -n "${_LMD_HOOK_LOADED:-}" ]; then
+				_scan_hook_dispatch "post" "digest"
+			fi
 			# Rotate session
 			scanid="$datestamp.$$"
 			scan_session="$sessdir/session.tsv.$scanid"
@@ -418,6 +422,10 @@ _monitor_cycle_tick() {
 	if [ "${digest_escalate_hits:-0}" -gt 0 ] && [ "$_cycle_hits" -ge "$digest_escalate_hits" ]; then
 		eout "{mon} escalation threshold reached ($_cycle_hits hits >= $digest_escalate_hits), firing immediate alert" 1
 		genalert file "$scan_session"
+		# Post-scan hook (escalation): monitor always forces async
+		if [ -n "${_LMD_HOOK_LOADED:-}" ]; then
+			_scan_hook_dispatch "post" "escalation"
+		fi
 	fi
 
 	command rm -f "$_filtered_list"
