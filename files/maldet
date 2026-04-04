@@ -161,7 +161,7 @@ for (( _i=0; _i<${#_all_args[@]}; _i++ )); do
 				echo "ERROR: -co/--config-option requires a VAR=VAL argument" >&2
 				exit 1
 			fi
-			_apply_cli_co "${_all_args[$_i]}"
+			_apply_cli_co "${_all_args[$_i]}" || exit 1
 		;;
 		--all)
 			_list_all=1
@@ -540,17 +540,17 @@ else
 				shift
 				user="$1"
 				if [ -z "$user" ]; then
-					echo "ERROR: --user requires a username argument"
+					echo "ERROR: --user requires a username argument" >&2
 					exit 1
 				fi
 				case "$user" in
 					*..* | */* )
-						echo "ERROR: --user value contains invalid characters"
+						echo "ERROR: --user value contains invalid characters" >&2
 						exit 1
 					;;
 				esac
 				if ! id "$user" > /dev/null 2>&1; then
-					echo "ERROR: user '$user' does not exist"
+					echo "ERROR: user '$user' does not exist" >&2
 					exit 1
 				fi
 				if [ -z "$_qd_override" ]; then
@@ -985,7 +985,7 @@ else
 				header
 				shift
 				if [ -z "$1" ]; then
-					echo "ERROR: -s/--restore requires a SCANID or file argument"
+					echo "ERROR: -s/--restore requires a SCANID or file argument" >&2
 					exit 1
 				fi
 				if [ -f "$sessdir/session.tsv.$1" ] || [ -f "$sessdir/session.hits.$1" ]; then
@@ -998,7 +998,7 @@ else
 				header
 				shift
 				if [ -z "$1" ]; then
-					echo "ERROR: -q/--quarantine requires a SCANID argument"
+					echo "ERROR: -q/--quarantine requires a SCANID argument" >&2
 					exit 1
 				fi
 				quar_hitlist "$1"
@@ -1007,7 +1007,7 @@ else
 				header
 				shift
 				if [ -z "$1" ]; then
-					echo "ERROR: -n/--clean requires a SCANID argument"
+					echo "ERROR: -n/--clean requires a SCANID argument" >&2
 					exit 1
 				fi
 				clean_hitlist "$1"
@@ -1021,7 +1021,7 @@ else
 			;;
 			*)
 				header
-				echo "maldet: unrecognized option '$1'"
+				echo "maldet: unrecognized option '$1'" >&2
 				usage_short
 				exit 1
 			;;

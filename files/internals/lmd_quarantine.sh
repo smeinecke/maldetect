@@ -260,6 +260,7 @@ restore_hitlist() {
 	hitlist=$(_session_resolve "$1")
 	[ -z "$hitlist" ] && hitlist="$sessdir/session.hits.$1"
 	local is_autoquar quar_file
+	local _restore_fail=0
 	if [ -f "$hitlist" ]; then
 		if _session_is_tsv "$hitlist"; then
 			# TSV format: field 2=filepath, field 3=quarpath ("-" if not quarantined)
@@ -271,7 +272,7 @@ restore_hitlist() {
 					[[ "$_sig" == "#"* ]] && continue
 					[ "$_qp" = "-" ] && continue
 					if [ -f "$_qp" ]; then
-						restore "$_qp"
+						restore "$_qp" || _restore_fail=1
 					fi
 				done < "$hitlist"
 			else
@@ -279,7 +280,7 @@ restore_hitlist() {
 					[ -z "$_sig" ] && continue
 					[[ "$_sig" == "#"* ]] && continue
 					quar_file=$(grep -F "$_fp" "$quar_history" | awk -F':' '{print $NF}' | tail -n1)
-					restore "$quar_file"
+					restore "$quar_file" || _restore_fail=1
 				done < "$hitlist"
 			fi
 		else
@@ -288,17 +289,18 @@ restore_hitlist() {
 			if [ "$is_autoquar" ]; then
 				while IFS= read -r file; do
 					if [ -f "$file" ]; then
-						restore "$file"
+						restore "$file" || _restore_fail=1
 					fi
 				done < <(cut -d':' -f2- "$hitlist" | cut -d'>' -f2 | sed 's/.//')
 			else
 				while IFS= read -r file; do
 					quar_file=$(grep -F "$file" "$quar_history" | awk -F':' '{print $NF}' | tail -n1)
-					restore "$quar_file"
+					restore "$quar_file" || _restore_fail=1
 				done < <(cut -d':' -f2- "$hitlist" | sed 's/.//')
 			fi
 			lbreakifs unset
 		fi
+		return "$_restore_fail"
 	else
 		eout "{restore} could not find a valid hit list to restore." 1
 		return 1

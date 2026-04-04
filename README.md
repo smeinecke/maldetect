@@ -274,7 +274,7 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `scan_ignore_group` | Skip files owned by specific groups | — |
 | `scan_user_access` | Allow non-root users to run scans | `0` |
 | `scan_user_access_minuid` | Minimum UID for --mkpubpaths user directory creation | `100` |
-| `scan_find_timeout` | Timeout for find file list generation (0=disabled, min 60s) | `0` |
+| `scan_find_timeout` | Timeout for find file list generation (0=disabled, min 60s, 14400=4hr recommended) | `0` |
 | `scan_export_filelist` | Save find results to tmp/find_results.last | `0` |
 | `scan_tmpdir_paths` | World-writable temp paths included in -a/-r scans | `/tmp /var/tmp /dev/shm /var/fcgi_ipc` |
 | `string_length_scan` | Enable statistical string-length analysis | `0` |

@@ -82,9 +82,10 @@ put "$i" "$storename.ascii"
 bye
 EOT
 		done < "$tmpf"
+	else
+		eout "{checkout} $file not found" 1
+		return 1
 	fi
-
-
 }
 
 _verify_download() {

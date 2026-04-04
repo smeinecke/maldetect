@@ -493,7 +493,11 @@ _alert_deliver_email() {
 		local from="${ALERT_SMTP_FROM:-root@$(hostname -f 2>/dev/null || hostname)}"
 		local text_body html_body
 		text_body=$(cat "$text_file")
-		html_body=$(cat "$html_file")
+		if [ -n "$html_file" ] && [ -f "$html_file" ]; then
+			html_body=$(cat "$html_file")
+		else
+			html_body=""
+		fi
 		local msg_file
 		msg_file=$(mktemp "${ALERT_TMPDIR}/alert_relay_msg.XXXXXX")
 		{

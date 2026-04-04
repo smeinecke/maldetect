@@ -139,6 +139,13 @@ v2.0.1 | Mar 25 2026:
       -co allowlist; rejects PATH, IFS, LD_PRELOAD from tampered checkpoint files
 [New] -e list: stopped/checkpointed scans now visible between active and history
       sections (text and JSON); shows stage, hits, workers, stopped time, resume hint
+[Fix] CLI error messages (--user, -s, -q, -n, unrecognized option) now write to
+      stderr; -co validation failure now exits instead of continuing silently
+[Fix] restore_hitlist: partial restore failures now propagate non-zero exit code
+[Fix] checkout: returns error when file/directory not found (was silent return 0)
+[Fix] smtp-relay: guard html_file before cat on text-format emails (was cat "")
+[Fix] Man page FILES: added pkg_lib.sh; README scan_find_timeout synced with
+      conf.maldet recommendation (14400=4hr)
 
 [Fix] JSON report list hang: index-first hybrid eliminates O(N) per-file glob on servers
       without session.index; legacy plaintext sessions preserved
