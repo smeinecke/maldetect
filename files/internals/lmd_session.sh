@@ -354,6 +354,10 @@ view_report() {
 		if _lifecycle_list_active "text" "0" 2>/dev/null; then
 			echo
 		fi
+		# Show stopped/checkpointed scans that can be resumed
+		if _lifecycle_list_stopped 2>/dev/null; then  # safe: stderr "No stopped scans." suppressed on empty result
+			echo
+		fi
 		tmpf=$(mktemp "$tmpdir/.areps.XXXXXX")
 		local _index_file="$sessdir/session.index"
 		local _seen_ids=""

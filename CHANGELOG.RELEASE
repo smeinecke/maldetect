@@ -135,6 +135,10 @@ v2.0.1 | Mar 25 2026:
 [Fix] -L/--list-active: elapsed time showed 0h 00m for running scans; now
       computed live from scan start epoch instead of reading the completed-only
       meta field
+[Fix] Checkpoint resume: eval replaced with printf -v and options gated through
+      -co allowlist; rejects PATH, IFS, LD_PRELOAD from tampered checkpoint files
+[New] -e list: stopped/checkpointed scans now visible between active and history
+      sections (text and JSON); shows stage, hits, workers, stopped time, resume hint
 
 [Fix] JSON report list hang: index-first hybrid eliminates O(N) per-file glob on servers
       without session.index; legacy plaintext sessions preserved

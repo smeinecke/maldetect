@@ -363,6 +363,59 @@ _lifecycle_render_text_active() {
 }
 
 ##
+# _lifecycle_list_stopped()
+#   Enumerates stopped scans that have a valid checkpoint (resumable).
+#   Returns 0 if any found (and prints text table), 1 if none.
+#   Stopped scans are those with scan.meta.* state=stopped AND a matching
+#   scan.checkpoint.* file — these can be resumed with --continue.
+##
+_lifecycle_list_stopped() {
+	local _scanid _state _found=0
+	local _stopped_ids=""
+
+	local _meta_file
+	for _meta_file in "$sessdir"/scan.meta.*; do
+		[ -f "$_meta_file" ] || continue
+		_scanid="${_meta_file##*scan.meta.}"
+		case "$_scanid" in *.tmp) continue ;; esac
+		_state=$(_lifecycle_detect_state "$_scanid" 2>/dev/null) || continue  # safe: skip unreadable meta
+		if [ "$_state" = "stopped" ] && [ -f "$sessdir/scan.checkpoint.$_scanid" ]; then
+			if [ -z "$_stopped_ids" ]; then
+				_stopped_ids="$_scanid"
+			else
+				_stopped_ids="$_stopped_ids"$'\n'"$_scanid"
+			fi
+			_found=1
+		fi
+	done
+
+	if [ "$_found" -eq 0 ]; then
+		return 1
+	fi
+
+	local _count
+	_count=$(printf '%s\n' "$_stopped_ids" | command grep -c '^.' || echo 0)
+	printf 'Stopped scans (%s):\n' "$_count"
+	printf ' %-22s %-10s %-10s %-6s %-6s %-20s %s\n' \
+		"SCANID" "STAGE" "FILES" "HITS" "WKRS" "STOPPED" "PATH"
+
+	while IFS= read -r _scanid; do
+		[ -z "$_scanid" ] && continue
+		_lifecycle_read_meta "$_scanid" || continue
+
+		local _stopped_display
+		_stopped_display=$(echo "${_meta_stopped_hr:-unknown}" | awk '{print $1,$2,$3,$4}')
+		printf ' %-22s %-10s %-10s %-6s %-6s %-20s %s\n' \
+			"$_scanid" "${_meta_stage:--}" "${_meta_total_files:--}" \
+			"${_meta_hits:-0}" "${_meta_workers:--}" \
+			"$_stopped_display" "${_meta_path:--}"
+	done <<< "$_stopped_ids"
+
+	printf '  (resume: maldet --continue SCANID)\n'
+	return 0
+}
+
+##
 # _lifecycle_render_json_active(scanids_newline_separated)
 #   JSON array output. Build manually with printf (no jq dependency).
 #   Integers are unquoted. Strings are JSON-escaped.
@@ -1410,9 +1463,10 @@ _lifecycle_continue() {
 		eout "{lifecycle} warning: signature version changed since checkpoint (was: $_ckpt_sig_version, now: $_cur_sig_ver)" 1
 	fi
 
-	# Apply checkpoint options as config overrides
+	# Apply checkpoint options as config overrides (gated by -co allowlist)
 	if [ -n "$_ckpt_options" ]; then
-		local _opt
+		local _opt _co_allowed_pat
+		_build_co_allowed_pattern _co_allowed_pat
 		local _saved_ifs="$IFS"
 		IFS=','
 		for _opt in $_ckpt_options; do
@@ -1420,9 +1474,11 @@ _lifecycle_continue() {
 			# Each _opt is "key=value" — apply to shell environment
 			local _opt_key="${_opt%%=*}"
 			local _opt_val="${_opt#*=}"
-			# Validate key is a safe identifier (word chars only) to prevent eval injection
-			if [ -n "$_opt_key" ] && [[ "$_opt_key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
-				eval "$_opt_key=\"\$_opt_val\""
+			# Validate key against -co allowlist (rejects PATH, IFS, LD_PRELOAD, etc.)
+			if [ -n "$_opt_key" ] && [[ "$_opt_key" =~ $_co_allowed_pat ]]; then
+				printf -v "$_opt_key" '%s' "$_opt_val"
+			else
+				eout "{lifecycle} warning: rejected unknown checkpoint option: $_opt_key" 1
 			fi
 		done
 		IFS="$_saved_ifs"

@@ -692,3 +692,58 @@ _source_lmd_stack() {
     found=$(grep -A5 '_engine_type="clamav"' "$scan_src" | grep -c 'clamdscan' || echo 0)
     [ "$found" -gt 0 ]
 }
+
+# ========================================================================
+# _lifecycle_continue — allowlist rejection (security)
+# ========================================================================
+
+@test "lifecycle_continue: rejects PATH in checkpoint options" {
+    _source_lmd_stack
+    local scanid="260328-4050.$$"
+    printf '#LMD_CHECKPOINT:v1\nscanid=%s\nstage=hex\nsig_version=2026032601\nworkers=4\ntotal_files=100\nhits_so_far=0\noptions=PATH=/evil/bin,scan_yara=0\nstopped=1774588200\nstopped_hr=Mar 27 2026 20:30:00 +0000\n' "$scanid" > "$sessdir/scan.checkpoint.$scanid"
+    echo "2026032601" > "$sigdir/maldet.sigs.ver"
+    run _lifecycle_continue "$scanid"
+    [ "$status" -eq 0 ]
+    assert_output --partial "rejected unknown checkpoint option: PATH"
+}
+
+@test "lifecycle_continue: rejects IFS in checkpoint options" {
+    _source_lmd_stack
+    local scanid="260328-4051.$$"
+    printf '#LMD_CHECKPOINT:v1\nscanid=%s\nstage=hex\nsig_version=2026032601\nworkers=4\ntotal_files=100\nhits_so_far=0\noptions=IFS=x,scan_clamscan=0\nstopped=1774588200\nstopped_hr=Mar 27 2026 20:30:00 +0000\n' "$scanid" > "$sessdir/scan.checkpoint.$scanid"
+    echo "2026032601" > "$sigdir/maldet.sigs.ver"
+    run _lifecycle_continue "$scanid"
+    [ "$status" -eq 0 ]
+    assert_output --partial "rejected unknown checkpoint option: IFS"
+}
+
+@test "lifecycle_continue: rejects LD_PRELOAD in checkpoint options" {
+    _source_lmd_stack
+    local scanid="260328-4052.$$"
+    printf '#LMD_CHECKPOINT:v1\nscanid=%s\nstage=hex\nsig_version=2026032601\nworkers=4\ntotal_files=100\nhits_so_far=0\noptions=LD_PRELOAD=/evil.so,quarantine_hits=1\nstopped=1774588200\nstopped_hr=Mar 27 2026 20:30:00 +0000\n' "$scanid" > "$sessdir/scan.checkpoint.$scanid"
+    echo "2026032601" > "$sigdir/maldet.sigs.ver"
+    run _lifecycle_continue "$scanid"
+    [ "$status" -eq 0 ]
+    assert_output --partial "rejected unknown checkpoint option: LD_PRELOAD"
+}
+
+@test "lifecycle_continue: rejects inspath in checkpoint options" {
+    _source_lmd_stack
+    local scanid="260328-4053.$$"
+    printf '#LMD_CHECKPOINT:v1\nscanid=%s\nstage=hex\nsig_version=2026032601\nworkers=4\ntotal_files=100\nhits_so_far=0\noptions=inspath=/tmp/evil\nstopped=1774588200\nstopped_hr=Mar 27 2026 20:30:00 +0000\n' "$scanid" > "$sessdir/scan.checkpoint.$scanid"
+    echo "2026032601" > "$sigdir/maldet.sigs.ver"
+    run _lifecycle_continue "$scanid"
+    [ "$status" -eq 0 ]
+    assert_output --partial "rejected unknown checkpoint option: inspath"
+}
+
+@test "lifecycle_continue: accepts allowlisted option alongside rejected one" {
+    _source_lmd_stack
+    local scanid="260328-4054.$$"
+    printf '#LMD_CHECKPOINT:v1\nscanid=%s\nstage=hex\nsig_version=2026032601\nworkers=4\ntotal_files=100\nhits_so_far=0\noptions=scan_clamscan=1,BASH_ENV=/evil,quarantine_hits=0\nstopped=1774588200\nstopped_hr=Mar 27 2026 20:30:00 +0000\n' "$scanid" > "$sessdir/scan.checkpoint.$scanid"
+    echo "2026032601" > "$sigdir/maldet.sigs.ver"
+    run _lifecycle_continue "$scanid"
+    [ "$status" -eq 0 ]
+    assert_output --partial "rejected unknown checkpoint option: BASH_ENV"
+    assert_output --partial "resuming scan"
+}

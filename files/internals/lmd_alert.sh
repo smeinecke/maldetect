@@ -765,6 +765,29 @@ _lmd_render_json_list() {
 		esac
 	done
 
+	printf '\n  ],\n  "stopped": ['
+
+	# Enumerate stopped scans with valid checkpoints (resumable)
+	local _first_stopped=1 _jl_stopped_meta _jl_stopped_sid _jl_stopped_state
+	for _jl_stopped_meta in "$sessdir"/scan.meta.*; do
+		[ -f "$_jl_stopped_meta" ] || continue
+		_jl_stopped_sid="${_jl_stopped_meta##*scan.meta.}"
+		case "$_jl_stopped_sid" in *.tmp) continue ;; esac
+		_jl_stopped_state=$(_lifecycle_detect_state "$_jl_stopped_sid" 2>/dev/null) || continue  # safe: skip unreadable
+		if [ "$_jl_stopped_state" = "stopped" ] && [ -f "$sessdir/scan.checkpoint.$_jl_stopped_sid" ]; then
+			_lifecycle_read_meta "$_jl_stopped_sid" || continue
+			[ "$_first_stopped" != "1" ] && printf ","
+			_first_stopped=0
+			local _jl_sp="${_meta_path//\\/\\\\}"
+			_jl_sp="${_jl_sp//\"/\\\"}"
+			local _jl_sfiles="${_meta_total_files:-0}"; [ "$_jl_sfiles" = "-" ] && _jl_sfiles=0
+			local _jl_shits="${_meta_hits:-0}"; [ "$_jl_shits" = "-" ] && _jl_shits=0
+			printf '\n    {"scan_id": "%s", "stage": "%s", "total_files": %s, "hits": %s, "workers": "%s", "stopped_hr": "%s", "path": "%s"}' \
+				"$_jl_stopped_sid" "${_meta_stage:--}" "$_jl_sfiles" "$_jl_shits" \
+				"${_meta_workers:--}" "${_meta_stopped_hr:-unknown}" "$_jl_sp"
+		fi
+	done
+
 	printf '\n  ],\n  "reports": ['
 	local _first=1
 	local _index_file="$sessdir/session.index"

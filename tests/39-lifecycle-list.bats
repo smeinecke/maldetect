@@ -449,3 +449,71 @@ EOF
     first_line=$(echo "$output" | head -1)
     [[ "$first_line" == Active* ]]
 }
+
+# ========================================================================
+# _lifecycle_list_stopped — no stopped scans
+# ========================================================================
+
+@test "lifecycle list_stopped: returns 1 when no meta files exist" {
+    _source_lmd_stack
+    rm -f "$sessdir"/scan.meta.* "$sessdir"/scan.checkpoint.*
+    run _lifecycle_list_stopped
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+}
+
+@test "lifecycle list_stopped: returns 1 when only running scans exist" {
+    _source_lmd_stack
+    rm -f "$sessdir"/scan.meta.* "$sessdir"/scan.checkpoint.*
+    _create_meta_file "260328-1900.$$" "$$" "running" "/home"
+    run _lifecycle_list_stopped
+    [ "$status" -eq 1 ]
+}
+
+@test "lifecycle list_stopped: returns 1 when stopped scan has no checkpoint file" {
+    _source_lmd_stack
+    rm -f "$sessdir"/scan.meta.* "$sessdir"/scan.checkpoint.*
+    _create_meta_file "260328-1901.99999" "99999" "stopped" "/home"
+    # No checkpoint file created — should not appear
+    run _lifecycle_list_stopped
+    [ "$status" -eq 1 ]
+}
+
+# ========================================================================
+# _lifecycle_list_stopped — with stopped scans
+# ========================================================================
+
+@test "lifecycle list_stopped: shows stopped scan with checkpoint" {
+    _source_lmd_stack
+    rm -f "$sessdir"/scan.meta.* "$sessdir"/scan.checkpoint.*
+    local scanid="260328-1910.99999"
+    _create_meta_file "$scanid" "99999" "stopped" "/home/user" "5000" "4"
+    # Add stopped metadata
+    echo "stopped=$(date +%s)" >> "$sessdir/scan.meta.$scanid"
+    echo "stopped_hr=$(date '+%b %d %Y %H:%M:%S %z')" >> "$sessdir/scan.meta.$scanid"
+    echo "stage=hex" >> "$sessdir/scan.meta.$scanid"
+    # Create checkpoint file
+    printf '#LMD_CHECKPOINT:v1\nscanid=%s\nstage=hex\n' "$scanid" > "$sessdir/scan.checkpoint.$scanid"
+    run _lifecycle_list_stopped
+    [ "$status" -eq 0 ]
+    assert_output --partial "Stopped scans (1):"
+    assert_output --partial "$scanid"
+    assert_output --partial "resume: maldet --continue"
+}
+
+@test "lifecycle list_stopped: shows correct column headers" {
+    _source_lmd_stack
+    rm -f "$sessdir"/scan.meta.* "$sessdir"/scan.checkpoint.*
+    local scanid="260328-1911.99999"
+    _create_meta_file "$scanid" "99999" "stopped" "/var/www"
+    echo "stage=md5" >> "$sessdir/scan.meta.$scanid"
+    printf '#LMD_CHECKPOINT:v1\nscanid=%s\nstage=md5\n' "$scanid" > "$sessdir/scan.checkpoint.$scanid"
+    run _lifecycle_list_stopped
+    [ "$status" -eq 0 ]
+    assert_output --partial "SCANID"
+    assert_output --partial "STAGE"
+    assert_output --partial "FILES"
+    assert_output --partial "HITS"
+    assert_output --partial "STOPPED"
+    assert_output --partial "PATH"
+}
