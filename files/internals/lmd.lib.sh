@@ -60,6 +60,14 @@ ELOG_EVT_UPDATE_COMPLETED="update_completed"
 ELOG_EVT_UPDATE_FAILED="update_failed"
 # shellcheck disable=SC2034
 ELOG_EVT_UPDATE_STARTED="update_started"
+# shellcheck disable=SC2034
+ELOG_EVT_HOOK_STARTED="hook_started"
+# shellcheck disable=SC2034
+ELOG_EVT_HOOK_COMPLETED="hook_completed"
+# shellcheck disable=SC2034
+ELOG_EVT_HOOK_FAILED="hook_failed"
+# shellcheck disable=SC2034
+ELOG_EVT_HOOK_TIMEOUT="hook_timeout"
 
 ## --- Shared utility functions ---
 # These are used across multiple sub-libraries and must be defined before
@@ -268,6 +276,11 @@ else
 	header
 	echo "maldet($$): {glob} lmd_scan.sh not found, aborting." >&2
 	exit 1
+fi
+
+# lmd_hook.sh is optional — hook feature degrades gracefully if absent
+if [ -f "$_internals_dir/lmd_hook.sh" ]; then
+	source "$_internals_dir/lmd_hook.sh"
 fi
 
 if [ -f "$_internals_dir/lmd_monitor.sh" ]; then
