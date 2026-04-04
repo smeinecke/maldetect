@@ -68,11 +68,11 @@ _scan_hook_validate() {
 	if [ -n "$stat" ]; then
 		# Check 3 & 4: root-owned, not world-writable
 		if [ "$os_freebsd" = "1" ]; then
-			_owner=$("$stat" -f '%Su' "$_hook_path" 2>/dev/null) || _owner=""
-			_perms=$("$stat" -f '%Lp' "$_hook_path" 2>/dev/null) || _perms=""
+			_owner=$("$stat" -f '%Su' "$_hook_path" 2>/dev/null) || _owner="" # stat may fail on broken symlinks; fallback handled below
+			_perms=$("$stat" -f '%Lp' "$_hook_path" 2>/dev/null) || _perms="" # stat may fail on broken symlinks; fallback handled below
 		else
-			_owner=$("$stat" -c '%U' "$_hook_path" 2>/dev/null) || _owner=""
-			_perms=$("$stat" -c '%a' "$_hook_path" 2>/dev/null) || _perms=""
+			_owner=$("$stat" -c '%U' "$_hook_path" 2>/dev/null) || _owner="" # stat may fail on broken symlinks; fallback handled below
+			_perms=$("$stat" -c '%a' "$_hook_path" 2>/dev/null) || _perms="" # stat may fail on broken symlinks; fallback handled below
 		fi
 
 		if [ "$_owner" != "root" ]; then
@@ -97,9 +97,9 @@ _scan_hook_validate() {
 	fi
 	if [ -n "$stat" ] && [ -d "$_parent" ]; then
 		if [ "$os_freebsd" = "1" ]; then
-			_parent_perms=$("$stat" -f '%Lp' "$_parent" 2>/dev/null) || _parent_perms=""
+			_parent_perms=$("$stat" -f '%Lp' "$_parent" 2>/dev/null) || _parent_perms="" # stat may fail if parent was removed; safe to skip check
 		else
-			_parent_perms=$("$stat" -c '%a' "$_parent" 2>/dev/null) || _parent_perms=""
+			_parent_perms=$("$stat" -c '%a' "$_parent" 2>/dev/null) || _parent_perms="" # stat may fail if parent was removed; safe to skip check
 		fi
 		local _parent_last="${_parent_perms##*[0-9][0-9]}"
 		case "$_parent_last" in
@@ -113,9 +113,9 @@ _scan_hook_validate() {
 	# Check 6: if symlink, resolve target ownership
 	if [ -L "$_hook_path" ] && [ -n "$stat" ]; then
 		if [ "$os_freebsd" = "1" ]; then
-			_target_owner=$("$stat" -f '%Su' "$_hook_path" 2>/dev/null) || _target_owner=""
+			_target_owner=$("$stat" -f '%Su' "$_hook_path" 2>/dev/null) || _target_owner="" # stat may fail on broken symlink target; fallback handled below
 		else
-			_target_owner=$("$stat" -c '%U' "$_hook_path" 2>/dev/null) || _target_owner=""
+			_target_owner=$("$stat" -c '%U' "$_hook_path" 2>/dev/null) || _target_owner="" # stat may fail on broken symlink target; fallback handled below
 		fi
 		if [ "$_target_owner" != "root" ]; then
 			eout "{hook} ERROR: post_scan_hook '$_hook_path' failed validation: symlink target not owned by root (owner: ${_target_owner:-unknown})"
@@ -223,7 +223,9 @@ _scan_hook_build_env() {
 	export LMD_MONITOR_UPTIME="0"
 	export LMD_HOOK_HITS="$_hits"
 
-	# Clear sensitive credential variables — must not reach the hook process
+	# Clear sensitive credential variables — must not reach the hook process.
+	# ORDERING: in sync mode, unset runs in the main process and is permanent.
+	# Call sites MUST fire after genalert() completes — alerting needs these vars.
 	unset slack_token smtp_pass smtp_user telegram_bot_token
 	unset discord_webhook_url elk_host ALERT_SMTP_PASS ALERT_SMTP_USER
 }
@@ -374,7 +376,7 @@ _scan_hook_exec_sync() {
 	local _stderr_tmp
 	# shellcheck disable=SC2154
 	# $tmpdir is a global from internals.conf
-	_stderr_tmp=$(command mktemp "$tmpdir/.hook_err.XXXXXX" 2>/dev/null) || _stderr_tmp=""
+	_stderr_tmp=$(command mktemp "$tmpdir/.hook_err.XXXXXX" 2>/dev/null) || _stderr_tmp="" # mktemp may fail if tmpdir is full; fallback to empty (skip stderr capture)
 
 	local _hook_rc=0
 
