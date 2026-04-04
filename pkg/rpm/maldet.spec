@@ -130,6 +130,7 @@ install -m 750 files/internals/lmd_quarantine.sh %{buildroot}/usr/lib/maldet/int
 install -m 750 files/internals/lmd_session.sh %{buildroot}/usr/lib/maldet/internals/lmd_session.sh
 install -m 750 files/internals/lmd_lifecycle.sh %{buildroot}/usr/lib/maldet/internals/lmd_lifecycle.sh
 install -m 750 files/internals/lmd_scan.sh %{buildroot}/usr/lib/maldet/internals/lmd_scan.sh
+install -m 750 files/internals/lmd_hook.sh %{buildroot}/usr/lib/maldet/internals/lmd_hook.sh
 install -m 750 files/internals/lmd_monitor.sh %{buildroot}/usr/lib/maldet/internals/lmd_monitor.sh
 install -m 750 files/internals/lmd_update.sh %{buildroot}/usr/lib/maldet/internals/lmd_update.sh
 install -m 750 files/internals/lmd_alert.sh %{buildroot}/usr/lib/maldet/internals/lmd_alert.sh
@@ -233,6 +234,7 @@ ln -sf /usr/lib/maldet/internals/lmd_quarantine.sh %{buildroot}/usr/local/maldet
 ln -sf /usr/lib/maldet/internals/lmd_session.sh %{buildroot}/usr/local/maldetect/internals/lmd_session.sh
 ln -sf /usr/lib/maldet/internals/lmd_lifecycle.sh %{buildroot}/usr/local/maldetect/internals/lmd_lifecycle.sh
 ln -sf /usr/lib/maldet/internals/lmd_scan.sh %{buildroot}/usr/local/maldetect/internals/lmd_scan.sh
+ln -sf /usr/lib/maldet/internals/lmd_hook.sh %{buildroot}/usr/local/maldetect/internals/lmd_hook.sh
 ln -sf /usr/lib/maldet/internals/lmd_monitor.sh %{buildroot}/usr/local/maldetect/internals/lmd_monitor.sh
 ln -sf /usr/lib/maldet/internals/lmd_update.sh %{buildroot}/usr/local/maldetect/internals/lmd_update.sh
 ln -sf /usr/lib/maldet/internals/lmd_alert.sh %{buildroot}/usr/local/maldetect/internals/lmd_alert.sh
@@ -343,6 +345,7 @@ fi
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_session.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_lifecycle.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_scan.sh
+%attr(750,root,root) /usr/lib/maldet/internals/lmd_hook.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_monitor.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_update.sh
 %attr(750,root,root) /usr/lib/maldet/internals/lmd_alert.sh
@@ -441,6 +444,7 @@ fi
 /usr/local/maldetect/internals/lmd_session.sh
 /usr/local/maldetect/internals/lmd_lifecycle.sh
 /usr/local/maldetect/internals/lmd_scan.sh
+/usr/local/maldetect/internals/lmd_hook.sh
 /usr/local/maldetect/internals/lmd_monitor.sh
 /usr/local/maldetect/internals/lmd_update.sh
 /usr/local/maldetect/internals/lmd_alert.sh

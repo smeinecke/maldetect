@@ -37,6 +37,7 @@ usr/lib/maldet/internals/lmd_quarantine.sh usr/local/maldetect/internals/lmd_qua
 usr/lib/maldet/internals/lmd_session.sh usr/local/maldetect/internals/lmd_session.sh
 usr/lib/maldet/internals/lmd_lifecycle.sh usr/local/maldetect/internals/lmd_lifecycle.sh
 usr/lib/maldet/internals/lmd_scan.sh usr/local/maldetect/internals/lmd_scan.sh
+usr/lib/maldet/internals/lmd_hook.sh usr/local/maldetect/internals/lmd_hook.sh
 usr/lib/maldet/internals/lmd_monitor.sh usr/local/maldetect/internals/lmd_monitor.sh
 usr/lib/maldet/internals/lmd_update.sh usr/local/maldetect/internals/lmd_update.sh
 usr/lib/maldet/internals/lmd_alert.sh usr/local/maldetect/internals/lmd_alert.sh
