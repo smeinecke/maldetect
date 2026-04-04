@@ -72,7 +72,7 @@ v2.0.1 | Mar 25 2026:
       audit.log weekly (12 rotations); inotify_log excluded (managed by --maintenance);
       installed only when logrotate is available; RPM/DEB: %config(noreplace)
 [New] post-scan hook: configurable script execution after scan completion;
-      supports summary/tsv/json output formats, sync/async execution, timeout
+      supports args/file/json output tiers, sync/async execution, timeout
       with SIGTERM/SIGKILL, elog audit trail, min_hits threshold, scan type filter
 [Change] cron.daily: run --maintenance after sigup/versionup for automated history
          rotation and session cleanup; hardcoded log paths replaced with $maldet_log

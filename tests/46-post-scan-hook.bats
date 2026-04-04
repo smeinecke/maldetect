@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # 46-post-scan-hook.bats — Tests for post-scan hook dispatch (lmd_hook.sh)
 #
-# Covers: config/disable gates, path validation, format tiers (summary/tsv/json),
+# Covers: config/disable gates, path validation, format tiers (args/file/json),
 # security (env clearing), lifecycle (failure, timeout, sync/async), elog audit
 # events, monitor dispatch (digest), min_hits threshold, edge cases.
 
@@ -190,13 +190,13 @@ HEOF
     [ "${hits_val:-0}" -ge 1 ]
 }
 
-@test "F-02: hook receives LMD_SESSION_FILE when format=tsv" {
+@test "F-02: hook receives LMD_SESSION_FILE when format=file" {
     local scan_dir
     scan_dir=$(mktemp -d)
     cp "$SAMPLES_DIR/eicar.com" "$scan_dir/"
     lmd_set_config post_scan_hook "$HOOK_SCRIPT"
     lmd_set_config post_scan_hook_exec "sync"
-    lmd_set_config post_scan_hook_format "tsv"
+    lmd_set_config post_scan_hook_format "file"
     lmd_set_config post_scan_hook_min_hits "1"
     run maldet -co scan_hashtype=md5 -a "$scan_dir"
     rm -rf "$scan_dir"
@@ -414,7 +414,7 @@ AEOF
     post_scan_hook="$HOOK_SCRIPT"
     post_scan_hook_on="all"
     post_scan_hook_exec="sync"  # dispatcher will override to async for digest
-    post_scan_hook_format="summary"
+    post_scan_hook_format="args"
     post_scan_hook_min_hits="0"
     post_scan_hook_timeout="60"
     # Create a minimal fake session TSV with 2 hit lines
@@ -439,7 +439,7 @@ AEOF
     post_scan_hook="$HOOK_SCRIPT"
     post_scan_hook_on="all"
     post_scan_hook_exec="sync"
-    post_scan_hook_format="summary"
+    post_scan_hook_format="args"
     post_scan_hook_min_hits="0"
     post_scan_hook_timeout="60"
     tot_hits=0
@@ -459,7 +459,7 @@ AEOF
     post_scan_hook="$HOOK_SCRIPT"
     post_scan_hook_on="all"
     post_scan_hook_exec="sync"
-    post_scan_hook_format="summary"
+    post_scan_hook_format="args"
     post_scan_hook_min_hits="5"
     post_scan_hook_timeout="60"
     tot_hits=2

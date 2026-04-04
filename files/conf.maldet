@@ -561,12 +561,12 @@ maint_archive_age="90"
 # NOTE: This variable cannot be overridden via -co for security.
 post_scan_hook=""
 
-# Output format tier for the hook script.
-# summary = positional args + LMD_* env vars only
-# tsv     = summary + LMD_SESSION_FILE pointing to TSV session file
-# json    = summary + tsv + JSON blob piped to stdin
-# [ summary | tsv | json ]
-post_scan_hook_format="summary"
+# Output tier for the hook script (each tier includes all previous tiers).
+# args = positional args ($1-$5) + LMD_* env vars only
+# file = args + LMD_SESSION_FILE pointing to TSV session file
+# json = file + JSON blob piped to stdin
+# [ args | file | json ]
+post_scan_hook_format="args"
 
 # Execution mode for the hook script.
 # async = fork into background (default, non-blocking)

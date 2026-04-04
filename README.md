@@ -345,7 +345,7 @@ logged, not fatal. See `maldet(1)` for the full hook contract.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `post_scan_hook` | Path to hook script (root-owned, not world-writable). Cannot be set via `-co` | `""` |
-| `post_scan_hook_format` | Output format: `summary`, `tsv`, `json` | `summary` |
+| `post_scan_hook_format` | Output tier: `args`, `file`, `json` (cumulative) | `args` |
 | `post_scan_hook_exec` | Execution mode: `async` (non-blocking), `sync` (wait) | `async` |
 | `post_scan_hook_timeout` | Seconds before SIGTERM (0=disabled, min 5) | `60` |
 | `post_scan_hook_on` | Scan type filter: `all`, `cli`, `digest` | `all` |

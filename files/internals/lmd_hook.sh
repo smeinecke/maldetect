@@ -184,11 +184,11 @@ _scan_hook_build_env() {
 	_exit_code=0
 	[ "${_hits:-0}" -gt 0 ] && _exit_code=2
 
-	_fmt="${post_scan_hook_format:-summary}"
+	_fmt="${post_scan_hook_format:-args}"
 
-	# Resolve session file for tsv/json formats
+	# Resolve session file for file/json formats
 	_session_file=""
-	if [ "$_fmt" = "tsv" ] || [ "$_fmt" = "json" ]; then
+	if [ "$_fmt" = "file" ] || [ "$_fmt" = "json" ]; then
 		# shellcheck disable=SC2154
 		# $scanid, $sessdir are globals set by scan() at scan start
 		if [ -n "${scanid:-}" ]; then
@@ -395,7 +395,7 @@ _scan_hook_exec_sync() {
 			_hook_rc=$?
 		fi
 	else
-		# summary/tsv format: no stdin
+		# args/file format: no stdin
 		if [ -n "$_timeout_cmd" ] && [ "$_timeout" -gt 0 ]; then
 			"$_timeout_cmd" --signal=TERM -k 5 "$_timeout" \
 				"$_hook_path" "${_hook_args[@]}" \
@@ -461,7 +461,7 @@ _scan_hook_exec_async() {
 	local _snap_engine
 	local _snap_session=""
 	local _snap_version="${lmd_version:-}"
-	local _snap_fmt="${post_scan_hook_format:-summary}"
+	local _snap_fmt="${post_scan_hook_format:-args}"
 
 	# Resolve hits and elapsed by scan_type
 	case "$_scan_type" in
@@ -500,7 +500,7 @@ _scan_hook_exec_async() {
 	# Resolve session file path before fork
 	# shellcheck disable=SC2154
 	# $scanid, $sessdir are globals from scan() context
-	if [ "$_snap_fmt" = "tsv" ] || [ "$_snap_fmt" = "json" ]; then
+	if [ "$_snap_fmt" = "file" ] || [ "$_snap_fmt" = "json" ]; then
 		if [ -n "${scanid:-}" ]; then
 			if [ -f "$sessdir/session.tsv.$scanid" ]; then
 				_snap_session="$sessdir/session.tsv.$scanid"
@@ -633,7 +633,7 @@ _scan_hook_dispatch() {
 	fi
 
 	# --- Build optional JSON for json format tier ---
-	local _format="${post_scan_hook_format:-summary}"
+	local _format="${post_scan_hook_format:-args}"
 	local _json_stdin=""
 	if [ "$_format" = "json" ]; then
 		_json_stdin=$(_scan_hook_build_json "$_scan_type")

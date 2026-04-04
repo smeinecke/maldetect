@@ -674,9 +674,10 @@ This variable cannot be overridden via \fB\-co\fR for security.
 Default: "" (disabled).
 .PP
 .B post_scan_hook_format
-controls the output format tier: \fBsummary\fR (argv + env only),
-\fBtsv\fR (adds LMD_SESSION_FILE), or \fBjson\fR (adds JSON blob on stdin).
-Default: summary.
+controls the output tier (each tier includes all previous tiers):
+\fBargs\fR (positional args + env only),
+\fBfile\fR (adds LMD_SESSION_FILE), or \fBjson\fR (adds JSON blob on stdin).
+Default: args.
 .PP
 .B post_scan_hook_exec
 controls execution mode: \fBasync\fR (fork, non\-blocking) or
