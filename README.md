@@ -60,10 +60,11 @@ See [CHANGELOG](CHANGELOG) for full details.
   - [3.4 YARA Scanning](#34-yara-scanning)
   - [3.5 Quarantine Options](#35-quarantine-options)
   - [3.6 Monitoring Options](#36-monitoring-options)
-  - [3.7 ClamAV Integration](#37-clamav-integration)
-  - [3.8 Remote ClamAV](#38-remote-clamav)
-  - [3.9 ELK Integration](#39-elk-integration)
-  - [3.10 Configuration Loading Order](#310-configuration-loading-order)
+  - [3.7 Post-Scan Hooks](#37-post-scan-hooks)
+  - [3.8 ClamAV Integration](#38-clamav-integration)
+  - [3.9 Remote ClamAV](#39-remote-clamav)
+  - [3.10 ELK Integration](#310-elk-integration)
+  - [3.11 Configuration Loading Order](#311-configuration-loading-order)
 - [4. Usage](#4-usage)
 - [5. Ignore Options](#5-ignore-options)
 - [6. Cron Daily](#6-cron-daily)
@@ -334,7 +335,23 @@ maldet -co scan_yara=1 -a /home/?/public_html
 | `cron_digest_hook` | Enable cron.daily hook digest sweep (fires digest if new hook detections exist) | `1` |
 | `monitor_paths_extra` | Path to a line-separated file of additional inotify watch paths | `/usr/local/maldetect/monitor_paths.extra` |
 
-### 3.7 ClamAV Integration
+### 3.7 Post-Scan Hooks
+
+A configurable hook script can be invoked after scan completion, receiving
+scan results via positional arguments, `LMD_*` environment variables, and
+optionally JSON on stdin. The hook never breaks scanning — failures are
+logged, not fatal. See `maldet(1)` for the full hook contract.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `post_scan_hook` | Path to hook script (root-owned, not world-writable). Cannot be set via `-co` | `""` |
+| `post_scan_hook_format` | Output format: `summary`, `tsv`, `json` | `summary` |
+| `post_scan_hook_exec` | Execution mode: `async` (non-blocking), `sync` (wait) | `async` |
+| `post_scan_hook_timeout` | Seconds before SIGTERM (0=disabled, min 5) | `60` |
+| `post_scan_hook_on` | Scan type filter: `all`, `cli`, `digest` | `all` |
+| `post_scan_hook_min_hits` | Minimum hits to fire (0=always) | `1` |
+
+### 3.8 ClamAV Integration
 
 When ClamAV scanning is enabled (`scan_clamscan=1` or `auto` with a detected binary), LMD selects the best available ClamAV engine in priority order:
 
@@ -351,7 +368,7 @@ LMD signatures are automatically symlinked to ClamAV data directories by `instal
 |----------|---------|---------|
 | `scan_clamscan` | Enable ClamAV as scan engine: `auto` (detect binary at runtime), `0` (disabled), `1` (enabled) | `auto` |
 
-### 3.8 Remote ClamAV
+### 3.9 Remote ClamAV
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -360,7 +377,7 @@ LMD signatures are automatically symlinked to ClamAV data directories by `instal
 | `remote_clamd_max_retry` | Max retries on remote clamd failure | `5` |
 | `remote_clamd_retry_sleep` | Seconds between retries | `3` |
 
-### 3.9 ELK Integration
+### 3.10 ELK Integration
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -369,7 +386,7 @@ LMD signatures are automatically symlinked to ClamAV data directories by `instal
 | `elk_port` | TCP port for ELK input | — |
 | `elk_index` | Elasticsearch index name | — |
 
-### 3.10 Configuration Loading Order
+### 3.11 Configuration Loading Order
 
 Later sources override earlier values:
 
@@ -903,11 +920,11 @@ Connecting LMD with external tools, automation pipelines, and third-party scanne
 
 ### ClamAV
 
-LMD signatures are automatically symlinked to ClamAV data directories by `install.sh`, providing dual-engine coverage. Set `scan_clamscan=auto` (default) for automatic ClamAV detection. See [3.7 ClamAV Integration](#37-clamav-integration) for engine selection and signature validation.
+LMD signatures are automatically symlinked to ClamAV data directories by `install.sh`, providing dual-engine coverage. Set `scan_clamscan=auto` (default) for automatic ClamAV detection. See [3.8 ClamAV Integration](#38-clamav-integration) for engine selection and signature validation.
 
 ### ELK Stack
 
-Enable `enable_statistic=1` with `elk_host`, `elk_port`, and `elk_index` to stream scan events to Elasticsearch. See [3.9 ELK Integration](#39-elk-integration).
+Enable `enable_statistic=1` with `elk_host`, `elk_port`, and `elk_index` to stream scan events to Elasticsearch. See [3.10 ELK Integration](#310-elk-integration).
 
 ### Alerting Channels
 

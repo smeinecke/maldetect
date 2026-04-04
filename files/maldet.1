@@ -655,6 +655,52 @@ Default: 1048576 (1 MB).
 sets the maximum number of entries accepted from a file list or stdin pipe.
 Default: 10000.
 .PP
+.B Post\-Scan Hooks:
+.BR post_scan_hook ,
+.BR post_scan_hook_format ,
+.BR post_scan_hook_exec ,
+.BR post_scan_hook_timeout ,
+.BR post_scan_hook_on ,
+.BR post_scan_hook_min_hits .
+.PP
+.B post_scan_hook
+is the path to an executable script invoked after scan completion.
+The hook receives scan results via positional arguments
+(\fI$1\fR=SCANID, \fI$2\fR=HITS, \fI$3\fR=FILES, \fI$4\fR=EXIT_CODE,
+\fI$5\fR=SCAN_TYPE, \fI$6\fR=PATH) and \fBLMD_*\fR environment variables.
+The script must be owned by root and not world\-writable.
+Leave empty to disable.
+This variable cannot be overridden via \fB\-co\fR for security.
+Default: "" (disabled).
+.PP
+.B post_scan_hook_format
+controls the output format tier: \fBsummary\fR (argv + env only),
+\fBtsv\fR (adds LMD_SESSION_FILE), or \fBjson\fR (adds JSON blob on stdin).
+Default: summary.
+.PP
+.B post_scan_hook_exec
+controls execution mode: \fBasync\fR (fork, non\-blocking) or
+\fBsync\fR (wait for completion).
+Monitor mode always forces async regardless of this setting.
+Default: async.
+.PP
+.B post_scan_hook_timeout
+sets the timeout in seconds before SIGTERM, followed by SIGKILL after
+a 5\-second grace period.
+Set to 0 to disable.
+Values 1\-4 are clamped to 5.
+Default: 60.
+.PP
+.B post_scan_hook_on
+filters which scan types trigger the hook: \fBall\fR, \fBcli\fR, or
+\fBdigest\fR.
+Default: all.
+.PP
+.B post_scan_hook_min_hits
+sets the minimum malware hit count to trigger the hook.
+Set to 0 to fire on every scan including clean ones.
+Default: 1.
+.PP
 See
 .I conf.maldet
 for the full list with descriptions.
