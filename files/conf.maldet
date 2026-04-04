@@ -549,3 +549,47 @@ maint_compress_age="30"
 # Set 0 to disable automatic archival.
 # [ default = 90 ]
 maint_archive_age="90"
+
+##
+# [ POST-SCAN HOOKS ]
+##
+# Path to an executable script invoked after scan completion.
+# The hook receives scan results via positional arguments, LMD_*
+# environment variables, and optionally JSON on stdin.
+# Leave empty to disable. The script must be root-owned and not
+# world-writable. See maldet(1) for the full hook contract.
+# NOTE: This variable cannot be overridden via -co for security.
+post_scan_hook=""
+
+# Output format tier for the hook script.
+# summary = positional args + LMD_* env vars only
+# tsv     = summary + LMD_SESSION_FILE pointing to TSV session file
+# json    = summary + tsv + JSON blob piped to stdin
+# [ summary | tsv | json ]
+post_scan_hook_format="summary"
+
+# Execution mode for the hook script.
+# async = fork into background (default, non-blocking)
+# sync  = wait for hook to complete before returning
+# NOTE: monitor mode always forces async regardless of this setting.
+# [ async | sync ]
+post_scan_hook_exec="async"
+
+# Timeout in seconds before the hook is sent SIGTERM.
+# After SIGTERM, a 5-second grace period is given before SIGKILL.
+# Set to 0 to disable timeout (hook runs indefinitely).
+# Minimum effective value is 5 (values 1-4 are clamped to 5).
+# [ 0 = disabled, default = 60 ]
+post_scan_hook_timeout="60"
+
+# Filter which scan types trigger the hook.
+# all     = fire on CLI scans, digest alerts, and escalation alerts
+# cli     = fire only on CLI scans (-a, -r, -k, --continue)
+# digest  = fire only on monitor digest and escalation alerts
+# [ all | cli | digest ]
+post_scan_hook_on="all"
+
+# Minimum number of malware hits required to trigger the hook.
+# Set to 0 to fire the hook even on clean scans.
+# [ 0 = always fire, default = 1 ]
+post_scan_hook_min_hits="1"

@@ -253,6 +253,7 @@ _build_co_allowed_pattern() {
 	_pat="${_pat}|session_legacy_compat"
 	_pat="${_pat}|scan_progress_log_interval|scan_meta_cleanup_age"
 	_pat="${_pat}|maint_compress_age|maint_archive_age"
+	_pat="${_pat}|post_scan_hook_format|post_scan_hook_exec|post_scan_hook_timeout|post_scan_hook_on|post_scan_hook_min_hits"
 	_pat="${_pat})\$"
 	printf -v "$1" '%s' "$_pat"
 }
