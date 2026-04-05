@@ -1,69 +1,123 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 830 160" width="830" height="160">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#0d1117"/>
-      <stop offset="100%" stop-color="#07080a"/>
+      <stop offset="100%" stop-color="#0a0e14"/>
     </linearGradient>
-    <linearGradient id="scan-fill" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#4ade80" stop-opacity="0.18"/>
+    <linearGradient id="pipeline" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4ade80" stop-opacity="0.06"/>
+      <stop offset="50%" stop-color="#4ade80" stop-opacity="0.03"/>
       <stop offset="100%" stop-color="#4ade80" stop-opacity="0"/>
     </linearGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+    <linearGradient id="hit-glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f85149" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#f85149" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
       <feComposite in="SourceGraphic" in2="blur" operator="over"/>
     </filter>
   </defs>
   <rect width="830" height="160" fill="url(#bg)" rx="8"/>
 
-  <!-- Top bar: magnifying glass + tagline -->
-  <g transform="translate(40, 14)">
-    <!-- Magnifying glass icon (small) -->
-    <circle cx="16" cy="18" r="10" fill="none" stroke="#4ade80" stroke-width="1.5" opacity="0.7"/>
-    <line x1="23" y1="25" x2="30" y2="32" stroke="#4ade80" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
-    <!-- Scan lines inside -->
-    <line x1="10" y1="15" x2="22" y2="15" stroke="#4ade80" stroke-width="1" opacity="0.5"/>
-    <line x1="10" y1="19" x2="22" y2="19" stroke="#4ade80" stroke-width="1" opacity="0.6"/>
-    <line x1="10" y1="23" x2="22" y2="23" stroke="#4ade80" stroke-width="1" opacity="0.5"/>
+  <!-- Tagline bar -->
+  <g transform="translate(32, 16)">
+    <!-- Virus/scan icon: crosshair with file -->
+    <rect x="4" y="6" width="16" height="20" rx="2" fill="none" stroke="#4ade80" stroke-width="1.2" opacity="0.6"/>
+    <line x1="7" y1="6" x2="7" y2="11" stroke="#4ade80" stroke-width="1.2" opacity="0.6"/>
+    <line x1="7" y1="11" x2="12" y2="11" stroke="#4ade80" stroke-width="1.2" opacity="0.6"/>
+    <line x1="8" y1="16" x2="17" y2="16" stroke="#f85149" stroke-width="1" opacity="0.5"/>
+    <line x1="8" y1="19" x2="15" y2="19" stroke="#4ade80" stroke-width="1" opacity="0.4"/>
+    <line x1="8" y1="22" x2="16" y2="22" stroke="#4ade80" stroke-width="1" opacity="0.4"/>
+    <!-- Crosshair overlay -->
+    <circle cx="17" cy="14" r="6" fill="none" stroke="#f85149" stroke-width="0.8" opacity="0.5"/>
+    <line x1="17" y1="9" x2="17" y2="19" stroke="#f85149" stroke-width="0.6" opacity="0.4"/>
+    <line x1="12" y1="14" x2="22" y2="14" stroke="#f85149" stroke-width="0.6" opacity="0.4"/>
 
-    <!-- Tagline -->
-    <text x="44" y="28" fill="#8b949e" font-family="ui-monospace,'Cascadia Code','Source Code Pro',Consolas,monospace" font-size="13">Multi-engine threat detection for Linux</text>
+    <text x="38" y="22" fill="#8b949e" font-family="ui-monospace,'Cascadia Code','Source Code Pro',Consolas,monospace" font-size="13" letter-spacing="0.3">Multi-engine malware detection for Linux</text>
   </g>
 
-  <!-- Threat name tickers (top right, faded) -->
-  <g font-family="ui-monospace,monospace" font-size="9" opacity="0.25">
-    <text x="600" y="22" fill="#f85149">&#x26a0; php.backdoor.shell.183</text>
-    <text x="620" y="36" fill="#f85149">&#x26a0; base64.inject.unclassed</text>
-    <text x="640" y="50" fill="#f85149">&#x26a0; perl.ircbot.gen.b</text>
+  <!-- Signature tickers (top right, cascading) -->
+  <g font-family="ui-monospace,monospace" font-size="8.5" opacity="0.2">
+    <text x="588" y="20" fill="#f85149">{HEX}php.backdoor.shell.183</text>
+    <text x="604" y="32" fill="#f85149">{MD5}base64.inject.unclassed</text>
+    <text x="620" y="44" fill="#f85149">{YARA}perl.ircbot.gen.b</text>
   </g>
 
   <!-- Divider -->
-  <line x1="40" y1="58" x2="790" y2="58" stroke="#8b949e" stroke-width="0.5" opacity="0.15"/>
+  <line x1="32" y1="50" x2="798" y2="50" stroke="#8b949e" stroke-width="0.3" opacity="0.15"/>
 
-  <!-- Scan activity chart (bottom region) -->
-  <g transform="translate(40, 148)" filter="url(#glow)">
-    <!-- Baseline -->
-    <line x1="0" y1="0" x2="750" y2="0" stroke="#8b949e" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.3"/>
+  <!-- Multi-stage scan pipeline -->
+  <g transform="translate(32, 62)">
+    <!-- Pipeline track -->
+    <rect x="0" y="30" width="766" height="30" rx="4" fill="url(#pipeline)" stroke="#4ade80" stroke-width="0.4" opacity="0.5"/>
 
-    <!-- Filled area (files scanned over time) -->
-    <polygon points="0,0 30,-5 60,-8 90,-12 120,-10 150,-15 180,-20 210,-18 240,-14 270,-22 300,-28 330,-35 360,-30 390,-25 420,-32 450,-40 480,-55 510,-48 540,-35 570,-28 600,-20 630,-15 670,-10 710,-6 750,0"
-             fill="url(#scan-fill)"/>
+    <!-- Stage labels -->
+    <g font-family="ui-monospace,monospace" font-size="9" fill="#8b949e" opacity="0.5">
+      <text x="20" y="18">MD5</text>
+      <text x="150" y="18">SHA256</text>
+      <text x="300" y="18">HEX</text>
+      <text x="460" y="18">YARA</text>
+      <text x="620" y="18">STRING</text>
+    </g>
 
-    <!-- Scan rate line -->
-    <polyline points="0,0 30,-5 60,-8 90,-12 120,-10 150,-15 180,-20 210,-18 240,-14 270,-22 300,-28 330,-35 360,-30 390,-25 420,-32 450,-40 480,-55 510,-48 540,-35 570,-28 600,-20 630,-15 670,-10 710,-6 750,0"
-              fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- Stage divider ticks -->
+    <g stroke="#8b949e" stroke-width="0.5" opacity="0.15">
+      <line x1="120" y1="22" x2="120" y2="60"/>
+      <line x1="255" y1="22" x2="255" y2="60"/>
+      <line x1="415" y1="22" x2="415" y2="60"/>
+      <line x1="575" y1="22" x2="575" y2="60"/>
+    </g>
 
-    <!-- Threat detection markers (red) -->
-    <circle cx="300" cy="-28" r="3" fill="#f85149" opacity="0.9"/>
-    <circle cx="300" cy="-28" r="6.5" fill="none" stroke="#f85149" stroke-width="0.8" opacity="0.4"/>
+    <!-- File flow dots (clean files — green, moving left to right) -->
+    <g filter="url(#soft)">
+      <circle cx="28" cy="45" r="2.5" fill="#4ade80" opacity="0.7"/>
+      <circle cx="52" cy="45" r="2.5" fill="#4ade80" opacity="0.6"/>
+      <circle cx="76" cy="45" r="2.5" fill="#4ade80" opacity="0.5"/>
+      <circle cx="100" cy="45" r="2.5" fill="#4ade80" opacity="0.4"/>
 
-    <circle cx="450" cy="-40" r="3" fill="#f85149" opacity="0.9"/>
-    <circle cx="450" cy="-40" r="6.5" fill="none" stroke="#f85149" stroke-width="0.8" opacity="0.4"/>
+      <circle cx="160" cy="45" r="2.5" fill="#4ade80" opacity="0.7"/>
+      <circle cx="184" cy="45" r="2.5" fill="#4ade80" opacity="0.6"/>
+      <circle cx="208" cy="45" r="2.5" fill="#4ade80" opacity="0.5"/>
+      <circle cx="232" cy="45" r="2.5" fill="#4ade80" opacity="0.4"/>
 
-    <circle cx="480" cy="-55" r="3" fill="#f85149" opacity="0.9"/>
-    <circle cx="480" cy="-55" r="6.5" fill="none" stroke="#f85149" stroke-width="0.8" opacity="0.4"/>
+      <circle cx="310" cy="45" r="2.5" fill="#4ade80" opacity="0.6"/>
+      <circle cx="340" cy="45" r="2.5" fill="#4ade80" opacity="0.5"/>
+      <circle cx="370" cy="45" r="2.5" fill="#4ade80" opacity="0.4"/>
+      <circle cx="396" cy="45" r="2.5" fill="#4ade80" opacity="0.3"/>
 
-    <!-- Quarantine threshold -->
-    <line x1="0" y1="-65" x2="750" y2="-65" stroke="#f85149" stroke-width="1.2" stroke-dasharray="6,4" opacity="0.5"/>
-    <text x="756" y="-61" fill="#f85149" font-family="ui-monospace,monospace" font-size="9" font-weight="600" opacity="0.7">HITS</text>
+      <circle cx="478" cy="45" r="2.5" fill="#4ade80" opacity="0.5"/>
+      <circle cx="510" cy="45" r="2.5" fill="#4ade80" opacity="0.4"/>
+      <circle cx="542" cy="45" r="2.5" fill="#4ade80" opacity="0.3"/>
+
+      <circle cx="632" cy="45" r="2.5" fill="#4ade80" opacity="0.4"/>
+      <circle cx="662" cy="45" r="2.5" fill="#4ade80" opacity="0.3"/>
+      <circle cx="692" cy="45" r="2.5" fill="#4ade80" opacity="0.2"/>
+    </g>
+
+    <!-- Threat detections (red dots with glow — pulled out of pipeline) -->
+    <!-- MD5 hit -->
+    <circle cx="76" cy="45" r="3" fill="#f85149" opacity="0.9"/>
+    <circle cx="76" cy="45" r="7" fill="none" stroke="#f85149" stroke-width="0.6" opacity="0.35"/>
+    <line x1="76" y1="60" x2="76" y2="72" stroke="#f85149" stroke-width="0.8" opacity="0.3" stroke-dasharray="2,2"/>
+    <text x="62" y="82" fill="#f85149" font-family="ui-monospace,monospace" font-size="7.5" opacity="0.4">quarantine</text>
+
+    <!-- HEX hit -->
+    <circle cx="370" cy="45" r="3" fill="#f85149" opacity="0.9"/>
+    <circle cx="370" cy="45" r="7" fill="none" stroke="#f85149" stroke-width="0.6" opacity="0.35"/>
+    <line x1="370" y1="60" x2="370" y2="72" stroke="#f85149" stroke-width="0.8" opacity="0.3" stroke-dasharray="2,2"/>
+    <text x="360" y="82" fill="#f85149" font-family="ui-monospace,monospace" font-size="7.5" opacity="0.4">clean</text>
+
+    <!-- YARA hit -->
+    <circle cx="510" cy="45" r="3" fill="#f85149" opacity="0.9"/>
+    <circle cx="510" cy="45" r="7" fill="none" stroke="#f85149" stroke-width="0.6" opacity="0.35"/>
+    <line x1="510" y1="60" x2="510" y2="72" stroke="#f85149" stroke-width="0.8" opacity="0.3" stroke-dasharray="2,2"/>
+    <text x="496" y="82" fill="#f85149" font-family="ui-monospace,monospace" font-size="7.5" opacity="0.4">quarantine</text>
+
+    <!-- Stage counters (bottom right) -->
+    <g font-family="ui-monospace,monospace" font-size="8" opacity="0.3">
+      <text x="700" y="82" fill="#4ade80">1,247 clean</text>
+      <text x="700" y="93" fill="#f85149">3 hits</text>
+    </g>
   </g>
 </svg>
