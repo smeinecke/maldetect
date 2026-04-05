@@ -222,7 +222,7 @@ restore() {
 		if ! _validate_restore_path "$file_path"; then
 			return 1
 		fi
-		chown "${file_owner}:${file_group}" "$quardir/$file" >> /dev/null 2>&1
+		chown "${file_owner}:${file_group}" "$quardir/$file" >> /dev/null 2>&1 # redirect: chown may fail on invalid owner/group from corrupt .info
 		chmod "$file_mode" "$quardir/$file" >> /dev/null 2>&1 # redirect: chmod may fail on invalid mode from corrupt .info
 		command mv -f "$quardir/$file" "$file_path"
 		if [ "$os_freebsd" == "1" ]; then
@@ -238,7 +238,7 @@ restore() {
 		if ! _validate_restore_path "$file_path"; then
 			return 1
 		fi
-		chown "${file_owner}:${file_group}" "$file" >> /dev/null 2>&1
+		chown "${file_owner}:${file_group}" "$file" >> /dev/null 2>&1 # redirect: chown may fail on invalid owner/group from corrupt .info
 		chmod "$file_mode" "$file" >> /dev/null 2>&1 # redirect: chmod may fail on invalid mode from corrupt .info
 		command mv -f "$file" "$file_path"
 		if [ "$os_freebsd" == "1" ]; then
