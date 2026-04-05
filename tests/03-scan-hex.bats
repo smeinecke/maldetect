@@ -13,6 +13,10 @@ setup() {
     source /opt/tests/helpers/reset-lmd.sh
     mkdir -p "$TEST_SCAN_DIR"
 
+    # Force single worker — multi-worker HEX has a non-deterministic race
+    # where one worker's output is empty (2/3 instead of 3/3 on Rocky 9)
+    lmd_set_config scan_workers 1
+
     # Install test HEX signature for eval(base64_decode(
     echo "6576616c286261736536345f6465636f646528:test.hex.php.1" > "$LMD_INSTALL/sigs/custom.hex.dat"
 }

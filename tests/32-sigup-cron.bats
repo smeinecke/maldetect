@@ -23,8 +23,17 @@ _source_lmd_stack() {
     source "$LMD_INSTALL/internals/lmd.lib.sh"
 }
 
-# --- Test 1: --cron-sigup handler exists and exits cleanly ---
+# --- Test 1: --cron-sigup handler invokes sigup ---
 @test "--cron-sigup exits 0 when signatures are current" {
+    # Redirect CDN to a local version file so the test is network-independent.
+    # Write the current local sig version so sigup() sees "already current".
+    local _local_ver
+    _local_ver=$(cat "$LMD_INSTALL/sigs/maldet.sigs.ver" 2>/dev/null || echo "0")
+    local _ver_file="$LMD_INSTALL/tmp/.test-sigver"
+    echo "$_local_ver" > "$_ver_file"
+    cp "$LMD_INSTALL/internals/internals.conf" "$LMD_INSTALL/internals/internals.conf.bak"
+    sed -i "s|^sig_version_url=.*|sig_version_url=\"file://$_ver_file\"|" \
+        "$LMD_INSTALL/internals/internals.conf"
     run maldet --cron-sigup
     assert_success
     # Verify sigup() was actually invoked (not skipped by flock)

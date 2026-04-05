@@ -13,6 +13,9 @@ setup() {
     source /opt/tests/helpers/reset-lmd.sh
     mkdir -p "$TEST_SCAN_DIR"
 
+    # Force MD5 mode — eicar.com is only in MD5 sigs; SHA-NI auto-selects sha256
+    lmd_set_config scan_hashtype md5
+
     # Install test HEX signature for eval(base64_decode(
     echo "6576616c286261736536345f6465636f646528:test.hex.php.1" > "$LMD_INSTALL/sigs/custom.hex.dat"
 }

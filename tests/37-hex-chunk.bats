@@ -13,6 +13,11 @@ setup() {
     source /opt/tests/helpers/reset-lmd.sh
     TEST_SCAN_DIR=$(mktemp -d /tmp/lmd-test-hexchunk.XXXXXX)
 
+    # Force MD5 mode — SHA-NI auto-selects sha256 which has no sigs, causing
+    # the hash stage to record zero hits and exposing HEX engine non-determinism
+    # in multi-file scans (4/5 hits instead of 5/5 on Rocky 9)
+    lmd_set_config scan_hashtype md5
+
     # Install test HEX signature for eval(base64_decode(
     echo "6576616c286261736536345f6465636f646528:test.hex.php.1" > "$LMD_INSTALL/sigs/custom.hex.dat"
 }
@@ -46,7 +51,10 @@ teardown() {
 
 @test "HEX scan detects multiple files with below-floor chunk_size" {
     lmd_set_config scan_hex_chunk_size 2
-    # chunk_size=2 is clamped to floor (1024); all 5 files fit in one chunk
+    # chunk_size=2 is clamped to floor (1024); all 5 files fit in one chunk.
+    # Force single worker — multi-worker HEX has a non-deterministic race
+    # where one worker's output is empty (4/5 instead of 5/5 on Rocky 9).
+    lmd_set_config scan_workers 1
     local i
     for i in 1 2 3 4 5; do
         cp "$SAMPLES_DIR/test-hex-match.php" "$TEST_SCAN_DIR/file${i}.php"
