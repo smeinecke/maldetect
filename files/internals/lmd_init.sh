@@ -59,6 +59,9 @@ _resolve_hashtype() {
 				eout "{scan} WARNING: scan_hashtype=sha256 but sha256sum not found, falling back to md5" 1
 				_effective_hashtype="md5"
 			else
+				if [ "$_sha_capability" == "software" ]; then
+					eout "{scan} NOTICE: scan_hashtype=sha256 without hardware SHA-NI — software SHA-256 is ~30% slower than MD5; consider scan_hashtype=auto" 1
+				fi
 				_effective_hashtype="sha256"
 			fi
 			;;
@@ -67,6 +70,9 @@ _resolve_hashtype() {
 				eout "{scan} WARNING: scan_hashtype=both but sha256sum not found, falling back to md5" 1
 				_effective_hashtype="md5"
 			else
+				if [ "$_sha_capability" == "software" ]; then
+					eout "{scan} NOTICE: scan_hashtype=both without hardware SHA-NI — SHA-256 pass will use slower software hashing" 1
+				fi
 				_effective_hashtype="both"
 			fi
 			;;
