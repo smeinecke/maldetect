@@ -81,6 +81,7 @@ v2.0.1 | Mar 25 2026:
   -- Changes --
 
 [Change] Vendored lib sync: tlog_lib 2.0.5, alert_lib 1.0.6, elog_lib 1.0.5,
+[Fix] pkg_lib 1.0.7 → 1.0.8: POSIX herestring compat, ln -sfn symlink safety
 [Change] tests/infra: batsman 1.4.0 → 1.4.1 — parallel-jobs smoke test fix
         pkg_lib 1.0.7
 [Change] Alert templates: consolidate summary into headers; drop "TOTAL" prefix from
