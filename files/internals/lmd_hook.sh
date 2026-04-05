@@ -320,7 +320,7 @@ _scan_hook_build_json() {
 # ---------------------------------------------------------------------------
 # _scan_hook_exec_sync(hook_path, timeout, scan_type, json_stdin)
 #   Execute the hook synchronously: wait for completion before returning.
-#   Applies timeout via the system `timeout` command (SIGTERM + SIGKILL grace).
+#   Applies timeout via the system `timeout` command (SIGTERM).
 #   Captures first 200 bytes of stderr for diagnostic logging on failure.
 #   Returns the hook's exit code (124 = timeout).
 #
@@ -386,7 +386,7 @@ _scan_hook_exec_sync() {
 		# json format: pipe JSON to hook stdin
 		if [ -n "$_timeout_cmd" ] && [ "$_timeout" -gt 0 ]; then
 			printf '%s\n' "$_json_stdin" \
-				| "$_timeout_cmd" --signal=TERM -k 5 "$_timeout" \
+				| "$_timeout_cmd" "$_timeout" \
 					"$_hook_path" "${_hook_args[@]}" \
 					2>"${_stderr_tmp:-/dev/null}" # stderr captured for failure diagnostics
 			_hook_rc=$?
@@ -399,7 +399,7 @@ _scan_hook_exec_sync() {
 	else
 		# args/file format: no stdin
 		if [ -n "$_timeout_cmd" ] && [ "$_timeout" -gt 0 ]; then
-			"$_timeout_cmd" --signal=TERM -k 5 "$_timeout" \
+			"$_timeout_cmd" "$_timeout" \
 				"$_hook_path" "${_hook_args[@]}" \
 				</dev/null \
 				2>"${_stderr_tmp:-/dev/null}" # stderr captured for failure diagnostics
@@ -556,7 +556,7 @@ _scan_hook_exec_async() {
 		if [ -n "$_json_stdin" ]; then
 			if [ -n "$_timeout_cmd" ] && [ "$_timeout" -gt 0 ]; then
 				printf '%s\n' "$_json_stdin" \
-					| "$_timeout_cmd" --signal=TERM -k 5 "$_timeout" \
+					| "$_timeout_cmd" "$_timeout" \
 						"$_hook_path" "${_hook_args[@]}"
 			else
 				printf '%s\n' "$_json_stdin" \
@@ -564,7 +564,7 @@ _scan_hook_exec_async() {
 			fi
 		else
 			if [ -n "$_timeout_cmd" ] && [ "$_timeout" -gt 0 ]; then
-				"$_timeout_cmd" --signal=TERM -k 5 "$_timeout" \
+				"$_timeout_cmd" "$_timeout" \
 					"$_hook_path" "${_hook_args[@]}" \
 					</dev/null
 			else

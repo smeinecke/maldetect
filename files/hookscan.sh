@@ -537,7 +537,7 @@ if [ -n "$_list_mode" ]; then
 
 	_timeout_cmd=$(command -v timeout 2>/dev/null)  # safe: fallback to no-timeout path below
 	if [ -n "$_timeout_cmd" ]; then
-		_scan_output=$("$_timeout_cmd" --kill-after=5 "$hookscan_timeout" \
+		_scan_output=$("$_timeout_cmd" "$hookscan_timeout" \
 			"$inspath/maldet" --hook-scan \
 			--config-option "quarantine_hits=$quarantine_hits,quarantine_clean=$quarantine_clean,scan_clamscan=$scan_clamscan,scan_yara=$scan_yara,scan_tmpdir_paths=$scan_tmpdir_paths" \
 			-f "$_validated_list" 2>/dev/null) || _scan_rc=$?  # safe: stderr from maldet is logged internally
@@ -623,7 +623,7 @@ cd "$tmpdir" || exit 1
 
 _timeout_cmd=$(command -v timeout 2>/dev/null)  # safe: fallback to no-timeout path below
 if [ -n "$_timeout_cmd" ]; then
-	_scan_output=$("$_timeout_cmd" --kill-after=5 "$hookscan_timeout" \
+	_scan_output=$("$_timeout_cmd" "$hookscan_timeout" \
 		"$inspath/maldet" --hook-scan \
 		--config-option "quarantine_hits=$quarantine_hits,quarantine_clean=$quarantine_clean,scan_clamscan=$scan_clamscan,scan_yara=$scan_yara,scan_tmpdir_paths=$scan_tmpdir_paths" \
 		-a "$file" 2>/dev/null) || _scan_rc=$?  # safe: stderr from maldet is logged internally
@@ -642,7 +642,6 @@ fi
 #   0   = scan completed clean
 #   2   = scan completed, malware found
 #   124 = timeout expired
-#   137 = killed after kill-after delay
 #   *   = other error
 
 case "$_scan_rc" in
