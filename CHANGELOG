@@ -222,6 +222,9 @@ v2.0.1 | Mar 25 2026:
       when .info file is corrupt or has fewer than 9 fields
 [Fix] Docs: document scan_hashtype=both in man page, README, and conf.maldet
 [Fix] Packaging: tar fallback excludes pkg/ directory (was pkg/build only)
+[Change] Tests: batsman v1.4.0; per-test 180s timeout prevents hung scans;
+         GHA file-groups (3) for 24-way parallel matrix; BATS --jobs 4 intra-container
+         parallelism; JUnit XML reports
 [Fix] restore() and restore_hitlist(): return exit 1 on all error paths
 [Fix] YARA rules no longer counted as active when no engine available (YARA(no engine))
 

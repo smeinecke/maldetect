@@ -6,6 +6,11 @@ BATSMAN_OS_ALL    := $(BATSMAN_OS_MODERN) $(BATSMAN_OS_LEGACY) $(BATSMAN_OS_DEEP
 BATSMAN_RUN_TESTS := ./run-tests.sh
 BATSMAN_PROJECT   := lmd
 
+# Per-test timeout (seconds): prevents hung scans from blocking the entire suite.
+# 180s accommodates heavy scan tests; genuine hangs run 45+ minutes.
+# Override at invocation: make test BATSMAN_TEST_TIMEOUT=60
+export BATSMAN_TEST_TIMEOUT ?= 180
+
 include infra/include/Makefile.tests
 
 # UAT override: --init reaps orphaned background processes (monitor mode tests),
