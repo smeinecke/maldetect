@@ -68,10 +68,11 @@ Override the quarantine directory for this run.
 May appear anywhere in the command line.
 .SS Reporting
 .TP
-\fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR|\fBlist\fR|\fBlatest\fR|\fBhooks\fR]
+\fB\-e\fR, \fB\-\-report\fR [\fISCANID\fR|\fBlist\fR|\fBlatest\fR|\fBhooks\fR|\fBactive\fR]
 View a scan report.
 Use \fBlatest\fR for the most recent scan, \fBlist\fR for all reports,
-\fBhooks\fR for hook scan activity (see HOOK SCANNING).
+\fBhooks\fR for hook scan activity (see HOOK SCANNING),
+\fBactive\fR for running scans (equivalent to \fB\-L\fR).
 Combine with \fB\-\-format\fR and \fB\-\-mailto\fR for output control.
 .TP
 \fB\-\-all\fR
@@ -79,8 +80,12 @@ Show full scan history when used with \fB\-e list\fR.
 Without \fB\-\-all\fR, \fB\-e list\fR shows only recent sessions.
 May appear anywhere in the command line.
 .TP
-\fB\-\-format\fR \fBtext\fR|\fBjson\fR|\fBhtml\fR
-Set report output format for \fB\-e\fR/\fB\-\-report\fR (default: text).
+\fB\-\-verbose\fR
+Show additional detail with \fB\-L\fR (workers, signature version, progress).
+May appear anywhere in the command line.
+.TP
+\fB\-\-format\fR \fBtext\fR|\fBjson\fR|\fBhtml\fR|\fBtsv\fR
+Set report output format for \fB\-e\fR/\fB\-\-report\fR and \fB\-L\fR (default: text).
 May appear anywhere in the command line.
 .TP
 \fB\-\-mailto\fR \fIADDRESS\fR
@@ -287,6 +292,40 @@ Managed independently of
 See
 .B monitor_paths_extra
 in the CONFIGURATION section.
+.TP
+.I $sessdir/scan.meta.$scanid
+Scan lifecycle metadata. Contains process info, state, engine type,
+scan options, and timestamps. Updated throughout the scan lifecycle
+as state transitions occur.
+.TP
+.I $sessdir/session.index
+Append\-only session index for O(1) scan listing. Each line records
+the scan ID, start time, path, and completion status. Used by
+\fB\-\-report list\fR and \fB\-L\fR for fast enumeration without
+scanning the session directory.
+.TP
+.I $sessdir/scan.checkpoint.$scanid
+Stage checkpoint file for \fB\-\-continue\fR. Written by \fB\-\-stop\fR
+with the \fB#LMD_CHECKPOINT:v1\fR format. Contains the last completed
+stage, accumulated hits, config options, and signature version at the
+time of stop.
+.TP
+.I $tmpdir/.abort.$scanid
+Abort sentinel. Created by \fB\-\-kill\fR or \fB\-\-stop\fR. Workers
+check for this file at stage boundaries and during scan loops for
+cooperative shutdown.
+.TP
+.I $tmpdir/.pause.$scanid
+Pause sentinel with epoch timestamp and optional duration. Created by
+\fB\-\-pause\fR. Workers enter a sleep loop while this file exists.
+Removed by \fB\-\-unpause\fR or when the duration expires.
+.TP
+.I $sessdir/session.archive.YYMM.tsv.gz
+Monthly session archive created by \fB\-\-maintenance\fR. Consolidates
+all session TSV files from the given month (YYMM) into a single
+gzip\-compressed archive. The \fB\-\-report\fR command transparently
+resolves sessions from archives when the original session file has
+been archived.
 .SH CONFIGURATION
 Configuration is loaded from
 .I conf.maldet
@@ -703,6 +742,29 @@ sets the minimum malware hit count to trigger the hook.
 Set to 0 to fire on every scan including clean ones.
 Default: 1.
 .PP
+.B Scan Lifecycle:
+.BR scan_progress_log_interval ,
+.BR scan_meta_cleanup_age ,
+.BR maint_compress_age ,
+.BR maint_archive_age .
+.PP
+.B scan_meta_cleanup_age
+sets the number of hours to retain completed/killed/stale scan.meta files
+before cleanup.
+Meta files for active/paused/stopped scans are never cleaned.
+Set 0 to disable automatic cleanup. Default: 48.
+.PP
+.B maint_compress_age
+sets the number of days before completed session files are compressed (gzipped).
+Sessions younger than this age are never compressed.
+Set 0 to disable automatic compression. Default: 30.
+.PP
+.B maint_archive_age
+sets the number of days before compressed session files are bundled into
+monthly archives.
+Sessions younger than this age are never archived.
+Set 0 to disable automatic archival. Default: 90.
+.PP
 See
 .I conf.maldet
 for the full list with descriptions.
@@ -907,60 +969,6 @@ Filter by time: \fBNh\fR (hours), \fBNd\fR (days), \fBNm\fR (minutes).
 \fBmaldet \-\-report hooks \-\-mode\fR \fIMODE\fR
 Filter by hook mode: \fBmodsec\fR, \fBftp\fR, \fBproftpd\fR, \fBexim\fR,
 or \fBgeneric\fR.
-.SH EXAMPLES
-.TP
-Scan all files under user web roots:
-.B maldet \-a /home/?/public_html
-.TP
-Scan recent files with auto\-quarantine and YARA:
-.B maldet \-co quarantine_hits=1,scan_yara=1 \-r /home/?/public_html 2
-.TP
-View the most recent scan report:
-.B maldet \-e
-.TP
-List all scan reports:
-.B maldet \-e list
-.TP
-Output a scan report as JSON:
-.B maldet \-\-json\-report SCANID
-.TP
-List all reports as JSON:
-.B maldet \-\-json\-report list
-.TP
-Quarantine all hits from a scan:
-.B maldet \-q SCANID
-.TP
-Start real\-time inotify monitoring (foreground):
-.B maldet \-m users
-.TP
-Start real\-time inotify monitoring (background daemon):
-.B maldet \-b \-m users
-.TP
-Scan a file via the generic hook API:
-.B hookscan.sh generic /path/to/file
-.TP
-Batch scan files from a list:
-.B hookscan.sh generic \-\-list /tmp/filelist.txt
-.TP
-View hook scan activity (last 24 hours):
-.B maldet \-\-report hooks
-.TP
-View hook scan activity filtered by mode:
-.B maldet \-\-report hooks \-\-mode modsec
-.TP
-Fire an on\-demand digest alert:
-.B maldet \-\-digest
-.TP
-Test email alerting with a synthetic scan report:
-.B maldet \-\-test\-alert scan email
-.TP
-Test Slack digest delivery:
-.B maldet \-\-test\-alert digest slack
-.SH SEE ALSO
-.BR clamdscan (1),
-.BR clamscan (1),
-.BR yara (1),
-.BR inotifywait (1)
 .SH SCAN MANAGEMENT
 Scan lifecycle commands allow controlling running scans without terminating
 the maldet process. Scans transition through a state machine:
@@ -1064,64 +1072,60 @@ The checkpoint file uses a simple key=value format with a
 \fBsig_version\fR, \fBworkers\fR, \fBtotal_files\fR, \fBhits_so_far\fR,
 and \fBoptions\fR (original \fB\-co\fR values). The session hits file is
 preserved across stop/continue so that accumulated detections are retained.
-.SH CONFIGURATION
-The configuration of LMD is handled through \fI$inspath/conf.maldet\fR
-and all options are well commented for ease of configuration. System\-level
-overrides can be placed in \fI/etc/sysconfig/maldet\fR or
-\fI/etc/default/maldet\fR. Runtime overrides via \fB\-co\fR take
-highest precedence.
-.PP
-The following configuration options relate to scan lifecycle management:
+.SH EXAMPLES
 .TP
-.B scan_meta_cleanup_age
-Hours to retain completed/killed/stale scan.meta files before cleanup.
-Meta files for active/paused/stopped scans are never cleaned.
-Set 0 to disable automatic cleanup. Default: 48.
+Scan all files under user web roots:
+.B maldet \-a /home/?/public_html
 .TP
-.B maint_compress_age
-Days before completed session files are compressed (gzipped).
-Sessions younger than this age are never compressed.
-Set 0 to disable automatic compression. Default: 30.
+Scan recent files with auto\-quarantine and YARA:
+.B maldet \-co quarantine_hits=1,scan_yara=1 \-r /home/?/public_html 2
 .TP
-.B maint_archive_age
-Days before compressed session files are bundled into monthly archives.
-Sessions younger than this age are never archived.
-Set 0 to disable automatic archival. Default: 90.
-.SH FILES
+View the most recent scan report:
+.B maldet \-e
 .TP
-.I $sessdir/scan.meta.$scanid
-Scan lifecycle metadata. Contains process info, state, engine type,
-scan options, and timestamps. Updated throughout the scan lifecycle
-as state transitions occur.
+List all scan reports:
+.B maldet \-e list
 .TP
-.I $sessdir/session.index
-Append\-only session index for O(1) scan listing. Each line records
-the scan ID, start time, path, and completion status. Used by
-\fB\-\-report list\fR and \fB\-L\fR for fast enumeration without
-scanning the session directory.
+Output a scan report as JSON:
+.B maldet \-\-json\-report SCANID
 .TP
-.I $sessdir/scan.checkpoint.$scanid
-Stage checkpoint file for \fB\-\-continue\fR. Written by \fB\-\-stop\fR
-with the \fB#LMD_CHECKPOINT:v1\fR format. Contains the last completed
-stage, accumulated hits, config options, and signature version at the
-time of stop.
+List all reports as JSON:
+.B maldet \-\-json\-report list
 .TP
-.I $tmpdir/.abort.$scanid
-Abort sentinel. Created by \fB\-\-kill\fR or \fB\-\-stop\fR. Workers
-check for this file at stage boundaries and during scan loops for
-cooperative shutdown.
+Quarantine all hits from a scan:
+.B maldet \-q SCANID
 .TP
-.I $tmpdir/.pause.$scanid
-Pause sentinel with epoch timestamp and optional duration. Created by
-\fB\-\-pause\fR. Workers enter a sleep loop while this file exists.
-Removed by \fB\-\-unpause\fR or when the duration expires.
+Start real\-time inotify monitoring (foreground):
+.B maldet \-m users
 .TP
-.I $sessdir/session.archive.YYMM.tsv.gz
-Monthly session archive created by \fB\-\-maintenance\fR. Consolidates
-all session TSV files from the given month (YYMM) into a single
-gzip\-compressed archive. The \fB\-\-report\fR command transparently
-resolves sessions from archives when the original session file has
-been archived.
+Start real\-time inotify monitoring (background daemon):
+.B maldet \-b \-m users
+.TP
+Scan a file via the generic hook API:
+.B hookscan.sh generic /path/to/file
+.TP
+Batch scan files from a list:
+.B hookscan.sh generic \-\-list /tmp/filelist.txt
+.TP
+View hook scan activity (last 24 hours):
+.B maldet \-\-report hooks
+.TP
+View hook scan activity filtered by mode:
+.B maldet \-\-report hooks \-\-mode modsec
+.TP
+Fire an on\-demand digest alert:
+.B maldet \-\-digest
+.TP
+Test email alerting with a synthetic scan report:
+.B maldet \-\-test\-alert scan email
+.TP
+Test Slack digest delivery:
+.B maldet \-\-test\-alert digest slack
+.SH SEE ALSO
+.BR clamdscan (1),
+.BR clamscan (1),
+.BR yara (1),
+.BR inotifywait (1)
 .SH BUGS
 Report bugs at \fIhttps://github.com/rfxn/linux\-malware\-detect/issues\fR.
 .SH AUTHORS

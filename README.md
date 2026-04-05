@@ -280,6 +280,10 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 | `scan_tmpdir_paths` | World-writable temp paths included in -a/-r scans | `/tmp /var/tmp /dev/shm /var/fcgi_ipc` |
 | `string_length_scan` | Enable statistical string-length analysis | `0` |
 | `string_length` | Minimum suspicious string length | `150000` |
+| `scan_progress_log_interval` | Seconds between progress log checkpoints during background scans (0=disabled) | `60` |
+| `scan_meta_cleanup_age` | Hours to retain completed/killed scan meta files (0=disabled) | `48` |
+| `maint_compress_age` | Days before completed session files are gzipped (0=disabled) | `30` |
+| `maint_archive_age` | Days before compressed sessions are bundled into monthly archives (0=disabled) | `90` |
 
 ### 3.4 YARA Scanning
 
@@ -320,7 +324,7 @@ maldet -co scan_yara=1 -a /home/?/public_html
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `default_monitor_mode` | Startup mode for monitor (`users` or path to file) | `users` |
+| `default_monitor_mode` | Startup mode for monitor (`users` or path to file); empty = disabled | `""` |
 | `inotify_base_watches` | Base number of file watches per user path | `16384` |
 | `inotify_minuid` | Minimum UID for user home monitoring | `500` |
 | `inotify_docroot` | Subdirectories to monitor in user homes | `public_html,public_ftp` |
@@ -437,8 +441,9 @@ QUARANTINE & RESTORE:
   -qd PATH                      override quarantine directory for this run
 
 REPORTING:
-  -e, --report [SCANID|list|latest|hooks]  view scan report
-  --format text|json|html       set report output format (default: text)
+  -e, --report [SCANID|list|latest|hooks|active]  view scan report
+  --all                         show full history with -e list (default: recent)
+  --format text|json|html|tsv   set report output format (default: text)
   --mailto ADDRESS              email report to address
   --json-report [SCANID|list]   shorthand: --report --format json
   --alert-daily                 generate inotify monitor digest alert
