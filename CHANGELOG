@@ -80,6 +80,8 @@ v2.0.1 | Mar 25 2026:
 
   -- Changes --
 
+[Change] Vendored lib sync: tlog_lib 2.0.5, alert_lib 1.0.6, elog_lib 1.0.5,
+        pkg_lib 1.0.7
 [Change] Alert templates: consolidate summary into headers; drop "TOTAL" prefix from
          labels (HITS/CLEANED/QUARANTINED); add quarantine metrics; aligned column spacing
 [Change] Hook scans write to rolling hook.hits.log instead of creating session files;
