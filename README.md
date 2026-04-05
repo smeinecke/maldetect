@@ -259,7 +259,7 @@ maldet -co quarantine_hits=1,email_addr=you@domain.com -a /home
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `scan_hashtype` | Hash algorithm for stage 1: `auto`, `sha256`, `md5` | `auto` |
+| `scan_hashtype` | Hash algorithm for stage 1: `auto`, `sha256`, `md5`, `both` | `auto` |
 | `scan_max_depth` | Maximum directory depth for find | `15` |
 | `scan_min_filesize` | Minimum file size to scan | `24` bytes |
 | `scan_max_filesize` | Maximum file size to scan | `2048k` |

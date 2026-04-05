@@ -46,7 +46,7 @@ $(BUILDDIR)/$(TARBALL):
 	        --exclude='.claude' --exclude='.github' \
 	        --exclude='CLAUDE.md' --exclude='PLAN*.md' \
 	        --exclude='AUDIT.md' --exclude='MEMORY.md' \
-	        --exclude='pkg/build' \
+	        --exclude='pkg' \
 	        --exclude='work-output' --exclude='docs' --exclude='.rdf' --exclude='reference' \
 	        --exclude='HANDOFF.md' --exclude='FEATURE-*.md' --exclude='GEMINI-*.md' --exclude='docker' \
 	        . ; \

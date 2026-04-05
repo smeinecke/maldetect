@@ -218,6 +218,10 @@ v2.0.1 | Mar 25 2026:
 [Fix] Miscellaneous portability: mktemp replaces $RANDOM/$$; command -v replaces
       which; grep -E replaces egrep; POSIX ':' chown separator; hardcoded binary
       paths replaced with command -v discovered variables
+[Fix] Quarantine restore: quote $file_mode in chmod to prevent misinterpretation
+      when .info file is corrupt or has fewer than 9 fields
+[Fix] Docs: document scan_hashtype=both in man page, README, and conf.maldet
+[Fix] Packaging: tar fallback excludes pkg/ directory (was pkg/build only)
 [Fix] restore() and restore_hitlist(): return exit 1 on all error paths
 [Fix] YARA rules no longer counted as active when no engine available (YARA(no engine))
 

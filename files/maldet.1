@@ -435,7 +435,8 @@ Default: 6.
 selects the hash algorithm for file\-hash signature matching (stage 1).
 Values: \fBauto\fR (use SHA\-256 if CPU has hardware acceleration, else MD5),
 \fBsha256\fR (always SHA\-256),
-\fBmd5\fR (always MD5; preserves performance on older CPUs without SHA\-NI).
+\fBmd5\fR (always MD5; preserves performance on older CPUs without SHA\-NI),
+\fBboth\fR (run both MD5 and SHA\-256 stages for maximum coverage).
 Default: auto.
 .PP
 .B scan_clamscan

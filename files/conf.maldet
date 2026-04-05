@@ -190,6 +190,7 @@ sig_import_csig_url=""
 #   auto    - use SHA-256 if CPU has hardware acceleration, else MD5 (recommended)
 #   sha256  - always use SHA-256 (requires sha256sum binary)
 #   md5     - always use MD5 (preserves performance on older CPUs without SHA-NI)
+#   both    - run both MD5 and SHA-256 stages (maximum coverage, ~2x stage 1 time)
 # [ auto = default ]
 scan_hashtype="auto"
 
