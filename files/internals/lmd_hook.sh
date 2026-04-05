@@ -213,6 +213,7 @@ _scan_hook_build_env() {
 	# $hrspath is the human-readable scan path global set in scan()
 	export LMD_PATH="${hrspath:-}"
 	export LMD_EXIT_CODE="$_exit_code"
+	export LMD_SCAN_START="${scan_start_hr:--}"
 	export LMD_ELAPSED="$_elapsed"
 	export LMD_ENGINE="$_engine"
 	export LMD_SESSION_FILE="$_session_file"
@@ -307,6 +308,7 @@ _scan_hook_build_json() {
 	printf '  "files": %s,\n' "$_files"
 	printf '  "cleaned": %s,\n' "${tot_cl:-0}"
 	printf '  "quarantined": %s,\n' "0"
+	printf '  "scan_start": %s,\n' "${scan_start:-0}"
 	printf '  "elapsed": %s,\n' "$_elapsed"
 	printf '  "exit_code": %s,\n' "$_exit_code"
 	printf '  "engine": "%s",\n' "$_escaped_engine"
@@ -460,6 +462,7 @@ _scan_hook_exec_async() {
 	local _snap_elapsed
 	local _snap_engine
 	local _snap_session=""
+	local _snap_scan_start="${scan_start_hr:--}"
 	local _snap_version="${lmd_version:-}"
 	local _snap_fmt="${post_scan_hook_format:-args}"
 
@@ -537,6 +540,7 @@ _scan_hook_exec_async() {
 		export LMD_QUARANTINED="0"
 		export LMD_PATH="$_snap_path"
 		export LMD_EXIT_CODE="$_snap_exit_code"
+		export LMD_SCAN_START="$_snap_scan_start"
 		export LMD_ELAPSED="$_snap_elapsed"
 		export LMD_ENGINE="$_snap_engine"
 		export LMD_SESSION_FILE="$_snap_session"

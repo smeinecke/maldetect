@@ -221,6 +221,11 @@ HEOF
     grep -q '"version"' "$HOOK_STDIN"
     grep -q '"scan_type"' "$HOOK_STDIN"
     grep -q '"hits"' "$HOOK_STDIN"
+    grep -q '"scan_start"' "$HOOK_STDIN"
+    # scan_start must be a non-zero epoch integer (CLI scan always has a start time)
+    local epoch
+    epoch=$(grep '"scan_start"' "$HOOK_STDIN" | grep -oE '[0-9]+')
+    [ "$epoch" -gt 0 ]
 }
 
 @test "F-04: hook receives LMD_* environment variables" {
@@ -239,6 +244,12 @@ HEOF
     grep -q '^LMD_EXIT_CODE=' "$HOOK_MARKER"
     grep -q '^LMD_SCANID=' "$HOOK_MARKER"
     grep -q '^LMD_ENGINE=' "$HOOK_MARKER"
+    grep -q '^LMD_SCAN_START=' "$HOOK_MARKER"
+    # LMD_SCAN_START must be a human-readable date, not the "-" sentinel
+    local start_val
+    start_val=$(grep '^LMD_SCAN_START=' "$HOOK_MARKER" | cut -d= -f2-)
+    [ "$start_val" != "-" ]
+    [ -n "$start_val" ]
 }
 
 # ---------------------------------------------------------------------------
