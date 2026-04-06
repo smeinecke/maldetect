@@ -14,7 +14,6 @@ jobs:
       os-matrix: '["debian12","centos6","centos7","rocky8","rocky9","rocky10","ubuntu2004","ubuntu2404"]'
       timeout: 25
       file-groups: 3
-      parallel-jobs: 4
       reports: true
       docker-run-flags: '-e BATS_TEST_TIMEOUT=180'
 
@@ -49,7 +48,6 @@ jobs:
             -v "${{ runner.temp }}/reports:/reports" \
             lmd-test-yara-x \
             bats --formatter tap \
-            --jobs 4 \
             --report-formatter junit --output /reports \
             /opt/tests/
       - name: Upload yara-x test reports
