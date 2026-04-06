@@ -25,6 +25,9 @@ RUN set -e && \
     cd build/deb-build && \
     tar xzf "../maldet-${VERSION}.tar.gz" && \
     cp -a /src/maldet/pkg/deb/debian "maldet-${VERSION}/debian" && \
+    mkdir -p "maldet-${VERSION}/pkg/scripts" && \
+    cp /src/maldet/pkg/symlink-manifest "maldet-${VERSION}/pkg/" && \
+    cp /src/maldet/pkg/scripts/pkg-postinst.sh "maldet-${VERSION}/pkg/scripts/" && \
     cd "maldet-${VERSION}" && \
     dpkg-buildpackage -us -uc -b
 

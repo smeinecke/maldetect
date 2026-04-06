@@ -22,19 +22,24 @@ case "$1" in
             /etc/maldet/ignore_file_ext /etc/maldet/ignore_sigs \
             /etc/maldet/ignore_inotify /etc/maldet/monitor_paths \
             /etc/maldet/monitor_paths.extra 2>/dev/null || true
-        # Run importconf only on initial install (empty $2), not pkg-to-pkg upgrade.
-        # This is the install.sh-to-package migration path — .bk.last is created by preinst.
+        # importconf: config merge from tarball backup (first install only)
         if [ -z "$2" ] && [ -d "${LEGACY_PATH}.bk.last" ]; then
             if [ -x /usr/lib/maldet/importconf ]; then
                 INSTALL_PATH="$LEGACY_PATH" /usr/lib/maldet/importconf || true
             fi
         fi
-        for _f in custom.md5.dat custom.sha256.dat custom.hex.dat custom.csig.dat custom.yara; do
-            [ -f "/var/lib/maldet/sigs/$_f" ] || touch "/var/lib/maldet/sigs/$_f"
-        done
-        [ -d "/var/lib/maldet/sigs/custom.yara.d" ] || mkdir -p "/var/lib/maldet/sigs/custom.yara.d"
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload 2>/dev/null || true
+        fi
+        # Post-install actions: sig migration, sigup, ClamAV linking
+        if [ -x /usr/lib/maldet/internals/pkg-postinst.sh ]; then
+            if [ -z "$2" ] && [ -d "${LEGACY_PATH}.bk.last" ]; then
+                /usr/lib/maldet/internals/pkg-postinst.sh migrate || true
+            elif [ -z "$2" ]; then
+                /usr/lib/maldet/internals/pkg-postinst.sh fresh || true
+            else
+                /usr/lib/maldet/internals/pkg-postinst.sh upgrade || true
+            fi
         fi
         ;;
 esac

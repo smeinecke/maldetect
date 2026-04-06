@@ -84,6 +84,7 @@ override_dh_auto_install:
 	    install -m 640 "$$tpl" $(CURDIR)/debian/maldet/usr/lib/maldet/internals/alert/; \
 	done
 	install -m 640 pkg/symlink-manifest $(CURDIR)/debian/maldet/usr/lib/maldet/internals/.symlink-manifest
+	install -m 750 pkg/scripts/pkg-postinst.sh $(CURDIR)/debian/maldet/usr/lib/maldet/internals/pkg-postinst.sh
 	install -m 640 files/cron/conf.maldet.cron $(CURDIR)/debian/maldet/usr/lib/maldet/cron/conf.maldet.cron
 	install -m 640 files/cron/custom.cron $(CURDIR)/debian/maldet/usr/lib/maldet/cron/custom.cron
 	install -m 640 files/conf.maldet $(CURDIR)/debian/maldet/etc/maldet/conf.maldet
