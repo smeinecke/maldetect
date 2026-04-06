@@ -55,35 +55,28 @@ v2.0.1 | Mar 25 2026:
 [New] FHS fallback sourcing: maldet boots from /usr/lib/maldet when legacy symlinks broken
 [New] Portable source-tree execution: run maldet directly from git clone or tarball without
       install.sh; auto-detects inspath from script location; LMD_BASEDIR env override
-[New] Scan lifecycle management: --kill SCANID aborts a running scan with full temp cleanup;
-      --pause SCANID [DURATION] / --unpause SCANID freezes and resumes a scan;
-      --stop SCANID checkpoints a running scan for later resume; --continue SCANID resumes
-      a stopped scan from its checkpoint with stage skip and hit restoration;
-      -L / --list-active shows running/paused/stopped scans (text/json/tsv);
-      --maintenance rotates history files, compresses old sessions, archives by month;
-      session index for O(1) report listing; scan.meta files track per-scan state;
-      worker sentinel IPC at micro-chunk boundaries; chunk-granularity HEX checkpoints;
-      ClamAV/YARA PID capture for signal delivery; scan_meta_cleanup_age config
+[New] Scan lifecycle management: --kill, --pause/--unpause, --stop/--continue for running
+      scans; -L/--list-active shows running/paused/stopped scans (text/json/tsv);
+      --maintenance rotates history, compresses sessions, archives by month; session index
+      for O(1) report listing; scan.meta tracks per-scan state; scan_meta_cleanup_age config
 [New] SCANID format validation: ^[0-9]{6}-[0-9]{4}\.[0-9]+$ regex enforced at all 5 CLI
       entry points (--kill, --pause, --unpause, --stop, --continue)
-[New] -e list: --all flag shows full scan history (default: recent 14 entries);
-      QUAR column with quarantine count per scan; pager (${PAGER:-less}) when --all on TTY
+[New] -e list: redesigned columnar output with header row; --all flag shows full scan
+      history (default: recent 14 entries); QUAR column; stopped/checkpointed scans visible
+      between active and history sections (text and JSON); pager when --all on TTY;
+      JSON active array; FreeBSD sort support
 [New] Logrotate config: /etc/logrotate.d/maldet rotates event_log, clamscan_log, and
       audit.log weekly (12 rotations); inotify_log excluded (managed by --maintenance);
       installed only when logrotate is available; RPM/DEB: %config(noreplace)
 [New] post-scan hook: configurable script execution after scan completion;
       supports args/file/json output tiers, sync/async execution, timeout
-      with SIGTERM/SIGKILL, elog audit trail, min_hits threshold, scan type filter
-[New] post-scan hook: scan_start epoch in JSON payload, LMD_SCAN_START env var; issue #477
-[Change] cron.daily: run --maintenance after sigup/versionup for automated history
-         rotation and session cleanup; hardcoded log paths replaced with $maldet_log
+      with SIGTERM/SIGKILL, elog audit trail, min_hits threshold, scan type filter;
+      scan_start epoch in JSON payload (LMD_SCAN_START env); issue #477
 
   -- Changes --
 
 [Change] Vendored lib sync: tlog_lib 2.0.5, alert_lib 1.0.6, elog_lib 1.0.5,
-[Fix] pkg_lib 1.0.7 → 1.0.8: POSIX herestring compat, ln -sfn symlink safety
-[Change] tests/infra: batsman 1.4.0 → 1.4.1 — parallel-jobs smoke test fix
-        pkg_lib 1.0.7
+         pkg_lib 1.0.8
 [Change] Alert templates: consolidate summary into headers; drop "TOTAL" prefix from
          labels (HITS/CLEANED/QUARANTINED); add quarantine metrics; aligned column spacing
 [Change] Hook scans write to rolling hook.hits.log instead of creating session files;
@@ -106,11 +99,9 @@ v2.0.1 | Mar 25 2026:
 [Change] -E/--dump-report suppressed from help; case handler retained for backward compat
 [Change] inotify_verbose per-file ClamAV logging deprecated; batch engine log
          messages supersede
-[Change] Vendored libraries updated: tlog_lib v2.0.4, elog_lib v1.0.4, alert_lib
-         v1.0.5, pkg_lib v1.0.6; batsman submodule v1.3.0
 [Change] Scan engine: HEX+CSIG merged into single worker pass; scan stage reorder
          (strlen runs last); bulk awk HEX classifier
-[Change] gensigs: awk compiler replaces bash+sed wildcard/csig loops; dead helpers removed
+[Change] gensigs: awk compiler for faster signature compilation; dead helpers removed
 [Change] _scan_progress(): plain newline-terminated output in non-TTY contexts;
          ANSI escape sequences gated behind TTY check; logarithmic backoff reduces
          progress I/O on non-native engines (ClamAV, YARA); watchdog semantics for
@@ -122,22 +113,20 @@ v2.0.1 | Mar 25 2026:
 [Change] FHS log path: /var/log/maldet/ is now the authoritative log directory for all
          install methods; $inspath/logs is a backward-compatible symlink; install.sh
          migrates existing logs on upgrade (cp -a, preserves timestamps/permissions)
-[Change] -e list redesign: columnar output with header row, 14-entry cap with overflow
-         hint, full PATH column, consistent 1-space indent across active scans and scan
-         history, index-first rendering, active count in heading, empty state exits 0,
-         JSON active array, FreeBSD sort support
 [Change] --maintenance: session compression age raised from 1 hour to 30 days;
          archive age raised from 30 days to 90 days; scan_meta_cleanup_age default
          raised from 24 to 48 hours; new config variables maint_compress_age,
          maint_archive_age (both disableable with 0)
+[Change] cron.daily: run --maintenance after sigup/versionup for automated history
+         rotation and session cleanup; hardcoded log paths replaced with $maldet_log
+[Change] Tests: batsman v1.4.2; per-test 180s timeout prevents hung scans;
+         GHA 24-way parallel matrix; JUnit XML reports
 
   -- Bug Fixes --
 
-[Fix] Background scans (-b): scan process recorded parent shell PID ($$) instead
-      of actual forked PID (BASHPID) in scan.meta; caused -L/--list-active and
-      -e list to show running scans as stale, --kill/--pause/--stop to target
-      wrong process, and workers to exit as orphaned; scan.meta now stores
-      ns_pid (temp file namespace) separately from pid (liveness/signal target)
+[Fix] Background scans (-b): scan process recorded parent shell PID ($$) instead of
+      actual forked PID (BASHPID); --kill/--pause/--stop targeted wrong process; scan.meta
+      now stores ns_pid separately from pid for correct liveness/signal delivery
 [Fix] Scan progress: clear TTY progress line before stage-transition output to
       prevent overwritten/garbled text when scan moves between stages
 [Fix] -L/--list-active: elapsed time showed 0h 00m for running scans; now
@@ -145,16 +134,10 @@ v2.0.1 | Mar 25 2026:
       meta field
 [Fix] Checkpoint resume: eval replaced with printf -v and options gated through
       -co allowlist; rejects PATH, IFS, LD_PRELOAD from tampered checkpoint files
-[New] -e list: stopped/checkpointed scans now visible between active and history
-      sections (text and JSON); shows stage, hits, workers, stopped time, resume hint
 [Fix] CLI error messages (--user, -s, -q, -n, unrecognized option) now write to
       stderr; -co validation failure now exits instead of continuing silently
-[Fix] restore_hitlist: partial restore failures now propagate non-zero exit code
 [Fix] checkout: returns error when file/directory not found (was silent return 0)
 [Fix] smtp-relay: guard html_file before cat on text-format emails (was cat "")
-[Fix] Man page FILES: added pkg_lib.sh; README scan_find_timeout synced with
-      conf.maldet recommendation (14400=4hr)
-
 [Fix] JSON report list hang: index-first hybrid eliminates O(N) per-file glob on servers
       without session.index; legacy plaintext sessions preserved
 [Fix] Package manifests: add lmd_lifecycle.sh to RPM spec, DEB rules, symlink-manifest
@@ -165,18 +148,21 @@ v2.0.1 | Mar 25 2026:
       man page compression on fresh install; backup robustness; no longer kills inotify
       monitoring; Slackware init per rc.NAME convention; preserve hookscan config and
       pub/ state; issue #414
-[Fix] Docs: man page, README, usage -- add missing config vars, CLI aliases,
-      --cron-sigup, scan_yara auto
+[Fix] Docs: missing config vars (scan_hashtype, scan_find_timeout, scan_yara auto),
+      pkg_lib.sh in FILES section, CLI aliases, --cron-sigup
 [Fix] purge() dotfile glob: replace * glob with find -delete to catch dotfiles in
       tmp/quarantine/sess
-[Fix] Quarantine warning in report shows correct scan ID instead of wrong datestamp.PID
+[Fix] Quarantine: correct scan ID in report warning; TOCTOU mv exit code check; inode
+      naming replaces $RANDOM; batch signature name; colon truncation; -q batch summary
+      now prints to stdout; issue #399
 [Fix] Temp file leaks: cleanup .alert_html.* after email dispatch; add clean.$$ and
       suspend.users.$$ to _scan_cleanup() rm list
-[Fix] -q silent success: batch quarantine/hit summary now prints to stdout
 [Fix] Restore orphan: remove .info metadata after successful quarantine restore
 [Fix] Scan: extract hitname from session TSV for hook output
 [Fix] ClamAV: sig deployment permissions 644, empty sig cleanup, linksigs ordering,
-      version-gated .hsb; artifacts cleaned from data dirs when ClamAV disabled
+      version-gated .hsb; artifacts cleaned from data dirs when ClamAV disabled;
+      MD5 merge format corrected for custom user signatures; _count_signatures()
+      counts from on-disk files instead of runtime variables
 [Fix] --report: recognize "latest" as alias for "newest"
 [Fix] -e list: strip timezone offset from TSV session timestamps for consistent alignment
 [Fix] get_remote_file: track temp files (.tmpf_get.*) and clean up at end of remote
@@ -186,26 +172,23 @@ v2.0.1 | Mar 25 2026:
 [Fix] Scan engine: isolate worker temp files using parent PID namespace to prevent
       concurrent scan conflicts
 [Fix] scan(): exit 1 when all provided scan paths do not exist
-[Fix] _hash_batch_worker: handle md5sum/sha256sum backslash-escaped output
-[Fix] scan_strlen: add FreeBSD guard; wc -L (GNU extension) not available on FreeBSD
+[Fix] Hash scanning: handle md5sum/sha256sum backslash-escaped filenames
 [Fix] Monitor mode: 12 defects fixed (graceful shutdown, crash recovery, session
       rotation, event filter, PID guard, ClamAV cache); issue #454, #447, #459
 [Fix] Alerting: Slack migrated from deprecated files.upload API; Telegram /bot prefix;
       token security via curl -K; genalert() state isolation; issue #387, #458, #461, #426
 [Fix] Security: _safe_source_conf() allowlist (79 vars); conf.maldet 0640; dirs 750;
-      remote config RCE prevention; lmdup() semver validation prevents directory traversal;
+      remote config RCE prevention; semver validation prevents directory traversal;
       hookscan.sh validates ModSecurity filenames; --user validates against path traversal;
-      JSON injection via _json_escape(); email header injection prevention
+      JSON injection prevention; email header injection prevention
 [Fix] view_report(): on-demand text rendering from TSV; "newest" and empty scan ID
       resolve to most recent session; issue #336
-[Fix] Quarantine system: TOCTOU mv exit code check; inode naming replaces $RANDOM;
-      batch quarantine signature name; colon truncation; issue #399
 [Fix] sigignore(): moved to runtime copies in gensigs(); signatures no longer
       irrecoverably lost between signature updates
 [Fix] CLI robustness: 19 bare exit statements given explicit codes; -c, -x, -i, -q,
       -n, -s, --web-proxy reject missing/empty arguments; issue #366
 [Fix] FreeBSD: detection via uname -s; id -u (POSIX); restore() touch -t for mtime;
-      portable command cp/mv/rm throughout
+      portable command cp/mv/rm throughout; scan_strlen guard (wc -L is GNU-only)
 [Fix] clamselector(): logs warning on clamd test failure instead of silently switching;
       no longer overwrites user scan_max_filesize; issue #452, #410
 [Fix] cron.daily: flock lock leak to backgrounded scans; lockfile prevents overlapping
@@ -213,8 +196,6 @@ v2.0.1 | Mar 25 2026:
 [Fix] find/ignore: ignore_file_ext, --exclude-regex, --include-regex, ignore_paths
       converted to bash arrays; scan_ignore_user/group handles non-existent entries;
       issue #446, #438, #450, #72, #335, #440
-[Fix] gensigs(): ClamAV MD5 merge format corrected for custom user signatures;
-      _count_signatures() counts from on-disk files instead of runtime variables
 [Fix] Alert rendering: hit type regex handles {MD5}/{CSIG}/{SHA256} prefixes; empty
       quarpath field shift in text reports; empty SUMMARY_* tokens in single-hit messaging
 [Fix] tlog trim cursor unit mismatch: purge() and monitor_cycle() subtracted byte
@@ -226,8 +207,4 @@ v2.0.1 | Mar 25 2026:
 [Fix] YARA rules no longer counted as active when no engine available (YARA(no engine))
 [Fix] Quarantine restore: quote $file_mode in chmod to prevent misinterpretation
       when .info file is corrupt or has fewer than 9 fields
-[Fix] Docs: document scan_hashtype=both in man page, README, and conf.maldet
 [Fix] Packaging: tar fallback excludes pkg/ directory (was pkg/build only)
-[Change] Tests: batsman v1.4.0; per-test 180s timeout prevents hung scans;
-         GHA file-groups (3) for 24-way parallel matrix; BATS --jobs 4 intra-container
-         parallelism; JUnit XML reports
