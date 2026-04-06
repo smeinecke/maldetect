@@ -291,10 +291,15 @@ EOF
 # --format tsv validator
 # ========================================================================
 
-@test "CLI: --format tsv is accepted without error" {
-    run "$LMD_INSTALL/maldet" --format tsv --report list 2>&1
+@test "CLI: --format tsv is accepted for active list" {
+    run "$LMD_INSTALL/maldet" --format tsv --report active 2>&1
     # Should NOT get "ERROR: --format requires text, json, or html"
     refute_output --partial "ERROR: --format requires"
+}
+
+@test "CLI: --format tsv rejected for report list" {
+    run "$LMD_INSTALL/maldet" --format tsv --report list 2>&1
+    assert_output --partial "TSV format is only supported"
 }
 
 @test "CLI: --format invalid is rejected" {

@@ -338,9 +338,9 @@ view_report() {
 	fi
 
 	# --- TSV format restriction ---
-	# TSV is only supported for list commands, not individual report rendering
-	if [ "${_report_format:-}" = "tsv" ] && [ "$rid" != "list" ] && [ "$rid" != "active" ] && [ "$rid" != "hooks" ]; then
-		echo "maldet($$): TSV format is only supported for list commands (--report list, --report active, -L)" >&2
+	# TSV is only supported for active/hooks list commands, not report list or individual reports
+	if [ "${_report_format:-}" = "tsv" ] && [ "$rid" != "active" ] && [ "$rid" != "hooks" ]; then
+		echo "maldet($$): TSV format is only supported for active and hooks list commands (--report active, -L, --report hooks)" >&2
 		return 1
 	fi
 

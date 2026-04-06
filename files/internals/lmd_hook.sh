@@ -81,7 +81,7 @@ _scan_hook_validate() {
 		fi
 
 		# World-writable: last octal digit has bit 2 set (2, 3, 6, 7)
-		_last_digit="${_perms##*[0-9][0-9]}"
+		_last_digit="${_perms: -1}"
 		case "$_last_digit" in
 			2|3|6|7)
 				eout "{hook} ERROR: post_scan_hook '$_hook_path' failed validation: world-writable"
@@ -101,7 +101,7 @@ _scan_hook_validate() {
 		else
 			_parent_perms=$("$stat" -c '%a' "$_parent" 2>/dev/null) || _parent_perms="" # stat may fail if parent was removed; safe to skip check
 		fi
-		local _parent_last="${_parent_perms##*[0-9][0-9]}"
+		local _parent_last="${_parent_perms: -1}"
 		case "$_parent_last" in
 			2|3|6|7)
 				eout "{hook} ERROR: post_scan_hook '$_hook_path' failed validation: parent directory is world-writable"

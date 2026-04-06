@@ -560,3 +560,82 @@ TOHEOF
     run grep '"hook_timeout"' "$AUDIT_LOG"
     assert_success
 }
+
+# ---------------------------------------------------------------------------
+# WW-01..WW-04: _scan_hook_validate world-writable checks (PR #478 Issue A)
+# ---------------------------------------------------------------------------
+
+@test "WW-01: world-writable hook file (chmod 777) rejected" {
+    local scan_dir
+    scan_dir=$(mktemp -d)
+    cp "$SAMPLES_DIR/eicar.com" "$scan_dir/"
+    local ww_hook="$TEST_DIR/ww-hook.sh"
+    cat > "$ww_hook" <<'WWEOF'
+#!/usr/bin/env bash
+echo "should not run"
+WWEOF
+    chmod 777 "$ww_hook"
+    lmd_set_config post_scan_hook "$ww_hook"
+    lmd_set_config post_scan_hook_exec "sync"
+    lmd_set_config post_scan_hook_min_hits "1"
+    run maldet -co scan_hashtype=md5 -a "$scan_dir"
+    rm -rf "$scan_dir"
+    # Hook must NOT have run — marker absent
+    [ ! -f "$HOOK_MARKER" ]
+    # Scan still completes (validation failure is not a scan error)
+    [ "$status" -ne 1 ]
+}
+
+@test "WW-02: world-writable parent directory rejected" {
+    local ww_parent
+    ww_parent=$(mktemp -d)
+    chmod 1777 "$ww_parent"
+    local ww_hook="$ww_parent/hook.sh"
+    cat > "$ww_hook" <<'WWEOF'
+#!/usr/bin/env bash
+echo "should not run"
+WWEOF
+    chmod 755 "$ww_hook"
+    local scan_dir
+    scan_dir=$(mktemp -d)
+    cp "$SAMPLES_DIR/eicar.com" "$scan_dir/"
+    lmd_set_config post_scan_hook "$ww_hook"
+    lmd_set_config post_scan_hook_exec "sync"
+    lmd_set_config post_scan_hook_min_hits "1"
+    run maldet -co scan_hashtype=md5 -a "$scan_dir"
+    rm -rf "$scan_dir" "$ww_parent"
+    [ ! -f "$HOOK_MARKER" ]
+    [ "$status" -ne 1 ]
+}
+
+@test "WW-03: non-world-writable hook (chmod 755) accepted" {
+    local scan_dir
+    scan_dir=$(mktemp -d)
+    cp "$SAMPLES_DIR/eicar.com" "$scan_dir/"
+    # HOOK_SCRIPT is already 755 from setup()
+    lmd_set_config post_scan_hook "$HOOK_SCRIPT"
+    lmd_set_config post_scan_hook_exec "sync"
+    lmd_set_config post_scan_hook_format "args"
+    lmd_set_config post_scan_hook_min_hits "1"
+    run maldet -co scan_hashtype=md5 -a "$scan_dir"
+    rm -rf "$scan_dir"
+    # Hook should have fired — marker present
+    [ -f "$HOOK_MARKER" ]
+}
+
+@test "WW-04: setuid mode (chmod 4755) accepted (not world-writable)" {
+    local scan_dir
+    scan_dir=$(mktemp -d)
+    cp "$SAMPLES_DIR/eicar.com" "$scan_dir/"
+    # Reuse HOOK_SCRIPT from setup() (writes to HOOK_MARKER), but set 4755
+    chmod 4755 "$HOOK_SCRIPT"
+    lmd_set_config post_scan_hook "$HOOK_SCRIPT"
+    lmd_set_config post_scan_hook_exec "sync"
+    lmd_set_config post_scan_hook_format "args"
+    lmd_set_config post_scan_hook_min_hits "1"
+    run maldet -co scan_hashtype=md5 -a "$scan_dir"
+    rm -rf "$scan_dir"
+    # 4755 is not world-writable -- hook should pass validation and fire
+    [ "$status" -ne 1 ]
+    [ -f "$HOOK_MARKER" ]
+}

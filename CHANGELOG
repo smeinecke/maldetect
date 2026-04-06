@@ -124,6 +124,13 @@ v2.0.1 | Mar 25 2026:
 
   -- Bug Fixes --
 
+[Fix] Hook validation: world-writable detection used broken glob extraction that always
+      returned empty string; replaced with bash substring to correctly extract last octal
+      digit; pr#478
+[Fix] Scan lifecycle JSON: workers field emitted unquoted "auto" string producing invalid
+      JSON; now resolves to integer before writing scan.meta; pr#478
+[Fix] Report list: --format tsv silently returned text output; now returns explicit error
+      directing users to --report active for TSV output; pr#478
 [Fix] Background scans (-b): scan process recorded parent shell PID ($$) instead of
       actual forked PID (BASHPID); --kill/--pause/--stop targeted wrong process; scan.meta
       now stores ns_pid separately from pid for correct liveness/signal delivery

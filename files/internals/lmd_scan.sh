@@ -1070,8 +1070,15 @@ scan() {
 		if [ "${string_length_scan:-0}" == "1" ]; then
 			_scan_stages="${_scan_stages},strlen"
 		fi
+		# Resolve worker count to integer for meta (ClamAV/clamdscan = 1 worker)
+		local _meta_wk
+		if [ "$_engine_type" = "native" ]; then
+			_meta_wk=$(_resolve_worker_count "$tot_files")
+		else
+			_meta_wk=1
+		fi
 		_lifecycle_write_meta "$scanid" "$_scan_pid" "$PPID" "$hrspath" \
-			"$tot_files" "${scan_workers:-auto}" "$_engine_type" \
+			"$tot_files" "$_meta_wk" "$_engine_type" \
 			"$_effective_hashtype" "$_scan_stages" \
 			"scan_clamscan=$scan_clamscan,scan_yara=$scan_yara,quarantine_hits=$quarantine_hits"
 	fi
