@@ -29,6 +29,7 @@ License:        GPLv2+
 URL:            https://github.com/rfxn/linux-malware-detect
 Source0:        %{name}-%{version}.tar.gz
 Source1:        symlink-manifest
+Source2:        pkg-postinst.sh
 BuildArch:      noarch
 
 Requires:       bash >= 4.1
@@ -200,6 +201,7 @@ install -m 644 CHANGELOG %{buildroot}/usr/share/doc/maldet/CHANGELOG
 
 # --- Symlink manifest for runtime verification ---
 install -m 640 %{SOURCE1} %{buildroot}/usr/lib/maldet/internals/.symlink-manifest
+install -m 750 %{SOURCE2} %{buildroot}/usr/lib/maldet/internals/pkg-postinst.sh
 
 # --- Symlink farm: /usr/local/maldetect/ ---
 mkdir -p %{buildroot}/usr/local/maldetect/internals
@@ -277,24 +279,28 @@ if [ -f "$LEGACY_PATH/maldet" ] && [ ! -L "$LEGACY_PATH/internals" ] && [ ! -L "
 fi
 
 %post
-# Run importconf only on initial install ($1=1), not pkg-to-pkg upgrade ($1=2).
-# This is the install.sh-to-package migration path — .bk.last is created by %pre.
 LEGACY_PATH="/usr/local/maldetect"
+# importconf: config merge from tarball backup (first install only)
 if [ "$1" -eq 1 ] && [ -d "${LEGACY_PATH}.bk.last" ]; then
     if [ -x /usr/lib/maldet/importconf ]; then
         INSTALL_PATH="$LEGACY_PATH" /usr/lib/maldet/importconf || true
     fi
 fi
 
-# Seed empty custom files if absent (fresh install)
-for _f in custom.md5.dat custom.sha256.dat custom.hex.dat custom.csig.dat custom.yara; do
-    [ -f "/var/lib/maldet/sigs/$_f" ] || touch "/var/lib/maldet/sigs/$_f"
-done
-[ -d "/var/lib/maldet/sigs/custom.yara.d" ] || mkdir -p "/var/lib/maldet/sigs/custom.yara.d"
-
 # systemd daemon-reload
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload 2>/dev/null || true
+fi
+
+# Post-install actions: sig migration, sigup, ClamAV linking
+if [ -x /usr/lib/maldet/internals/pkg-postinst.sh ]; then
+    if [ "$1" -eq 1 ] && [ -d "${LEGACY_PATH}.bk.last" ]; then
+        /usr/lib/maldet/internals/pkg-postinst.sh migrate || true
+    elif [ "$1" -eq 1 ]; then
+        /usr/lib/maldet/internals/pkg-postinst.sh fresh || true
+    else
+        /usr/lib/maldet/internals/pkg-postinst.sh upgrade || true
+    fi
 fi
 
 %preun
@@ -357,6 +363,7 @@ fi
 %attr(750,root,root) /usr/lib/maldet/internals/pkg_lib.sh
 %attr(755,root,root) /usr/lib/maldet/internals/tlog
 %attr(640,root,root) /usr/lib/maldet/internals/.symlink-manifest
+%attr(750,root,root) /usr/lib/maldet/internals/pkg-postinst.sh
 %dir %attr(750,root,root) /usr/lib/maldet/internals/alert
 %attr(640,root,root) /usr/lib/maldet/internals/alert/*.tpl
 %dir %attr(750,root,root) /usr/lib/maldet/internals/alert/custom.d

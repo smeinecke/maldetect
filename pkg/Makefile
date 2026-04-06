@@ -58,6 +58,7 @@ rpm: $(BUILDDIR)/$(TARBALL)
 	mkdir -p $(BUILDDIR)/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS}
 	cp $(BUILDDIR)/$(TARBALL) $(BUILDDIR)/rpmbuild/SOURCES/
 	cp $(CURDIR)/symlink-manifest $(BUILDDIR)/rpmbuild/SOURCES/
+	cp $(CURDIR)/scripts/pkg-postinst.sh $(BUILDDIR)/rpmbuild/SOURCES/
 	cp $(CURDIR)/rpm/$(NAME).spec $(BUILDDIR)/rpmbuild/SPECS/
 	rpmbuild -bb \
 	    --define "_topdir $(BUILDDIR)/rpmbuild" \

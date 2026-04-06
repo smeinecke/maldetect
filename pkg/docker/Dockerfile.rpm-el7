@@ -24,6 +24,7 @@ RUN make source && \
     mkdir -p /root/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS} && \
     cp build/maldet-*.tar.gz /root/rpmbuild/SOURCES/ && \
     cp symlink-manifest /root/rpmbuild/SOURCES/ && \
+    cp scripts/pkg-postinst.sh /root/rpmbuild/SOURCES/ && \
     cp rpm/maldet.spec /root/rpmbuild/SPECS/ && \
     rpmbuild -bb --define "dist .el7" /root/rpmbuild/SPECS/maldet.spec
 
