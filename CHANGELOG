@@ -215,6 +215,9 @@ v2.0.1 | Mar 25 2026:
 [Fix] Quarantine restore: quote $file_mode in chmod to prevent misinterpretation
       when .info file is corrupt or has fewer than 9 fields
 [Fix] Packaging: tar fallback excludes pkg/ directory (was pkg/build only)
+[Fix] RPM/DEB: packages now run signature update on fresh install (was missing);
+      migrate core sig files from tarball installs; link ClamAV sigs and signal
+      clamd reload; shared pkg-postinst.sh for install.sh post-install parity
 
 v1.6.6.1 | Feb 25 2025:
 [Fix] find_recentopts incorrectly escaping find options to the right of ( -mtime .. -ctime ); previously normalized by eval; issue #440, pr#442
