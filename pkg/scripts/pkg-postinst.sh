@@ -132,7 +132,8 @@ case "$mode" in
         _link_clamav_all
         ;;
     upgrade)
-        # Package-to-package: sigs already in place, just re-link ClamAV
+        # Package-to-package: sigs already in place, re-seed custom files and re-link ClamAV
+        _seed_custom_sigs
         _link_clamav_all
         ;;
     *)

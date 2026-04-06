@@ -72,6 +72,9 @@ deb: $(BUILDDIR)/$(TARBALL)
 	cd $(BUILDDIR)/deb-build && \
 	tar xzf $(BUILDDIR)/$(TARBALL) && \
 	cp -a $(CURDIR)/deb/debian $(BUILDDIR)/deb-build/$(NAME)-$(VERSION)/ && \
+	mkdir -p $(BUILDDIR)/deb-build/$(NAME)-$(VERSION)/pkg/scripts && \
+	cp $(CURDIR)/symlink-manifest $(BUILDDIR)/deb-build/$(NAME)-$(VERSION)/pkg/ && \
+	cp $(CURDIR)/scripts/pkg-postinst.sh $(BUILDDIR)/deb-build/$(NAME)-$(VERSION)/pkg/scripts/ && \
 	cd $(NAME)-$(VERSION) && \
 	dpkg-buildpackage -us -uc -b
 	@echo "DEB built in $(BUILDDIR)/deb-build/"
