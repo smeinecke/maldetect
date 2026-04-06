@@ -946,8 +946,7 @@ else
 			;;
 			--json-report)
 				shift
-				_report_format="json"
-				view_report "$1"
+				view_report_json "$1"
 			;;
 			-p|--purge)
 				header
