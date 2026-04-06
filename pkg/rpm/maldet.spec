@@ -28,6 +28,7 @@ Summary:        Linux Malware Detect — malware scanner for Linux
 License:        GPLv2+
 URL:            https://github.com/rfxn/linux-malware-detect
 Source0:        %{name}-%{version}.tar.gz
+Source1:        symlink-manifest
 BuildArch:      noarch
 
 Requires:       bash >= 4.1
@@ -198,7 +199,7 @@ install -m 644 CHANGELOG %{buildroot}/usr/share/doc/maldet/CHANGELOG
 # COPYING.GPL handled by %license directive in %files — not installed here
 
 # --- Symlink manifest for runtime verification ---
-install -m 640 pkg/symlink-manifest %{buildroot}/usr/lib/maldet/internals/.symlink-manifest
+install -m 640 %{SOURCE1} %{buildroot}/usr/lib/maldet/internals/.symlink-manifest
 
 # --- Symlink farm: /usr/local/maldetect/ ---
 mkdir -p %{buildroot}/usr/local/maldetect/internals

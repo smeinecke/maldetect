@@ -18,6 +18,7 @@ WORKDIR /src/maldet/pkg
 RUN make source && \
     mkdir -p /root/rpmbuild/{SOURCES,SPECS,BUILD,RPMS,SRPMS} && \
     cp build/maldet-*.tar.gz /root/rpmbuild/SOURCES/ && \
+    cp symlink-manifest /root/rpmbuild/SOURCES/ && \
     cp rpm/maldet.spec /root/rpmbuild/SPECS/ && \
     rpmbuild -bb --define "dist .el8" /root/rpmbuild/SPECS/maldet.spec && \
     rpmbuild -bb --define "dist .el9" /root/rpmbuild/SPECS/maldet.spec && \
