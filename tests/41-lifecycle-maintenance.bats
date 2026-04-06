@@ -250,12 +250,7 @@ _source_lmd_stack() {
 # --maintenance CLI test
 # ========================================================================
 
-@test "maintenance: --maintenance CLI handler exits 0" {
-    run maldet --maintenance
-    [ "$status" -eq 0 ]
-}
-
-@test "maintenance: --maintenance output includes lifecycle prefix" {
+@test "maintenance: --maintenance CLI handler exits 0 with lifecycle output" {
     run maldet --maintenance
     [ "$status" -eq 0 ]
     assert_output --partial "{lifecycle}"

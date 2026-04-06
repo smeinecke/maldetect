@@ -140,5 +140,6 @@ teardown() {
     empty_dir=$(mktemp -d)
     run maldet -a "$empty_dir"
     [ "$status" -eq 0 ]
+    assert_output --partial "empty file list"
     rm -rf "$empty_dir"
 }

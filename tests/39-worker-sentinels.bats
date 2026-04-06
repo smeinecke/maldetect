@@ -55,6 +55,8 @@ _lmd_source_snippet() {
             '' '' '' '' '' '10240' '$scanid'
     "
     [ "$status" -eq 0 ]
+    # Verify clean content against empty sigs produces no false hits
+    refute_output --partial "{HEX}"
 }
 
 # bats test_tags=lifecycle,worker,hex
@@ -165,6 +167,8 @@ _lmd_source_snippet() {
         _hash_batch_worker '/usr/bin/md5sum' 'md5' '$chunk' '$sigfile' '' '$scanid'
     "
     [ "$status" -eq 0 ]
+    # Verify clean content against empty sigs produces no false hits
+    refute_output --partial "{MD5}"
 }
 
 # bats test_tags=lifecycle,worker,hash

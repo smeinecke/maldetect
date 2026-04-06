@@ -203,6 +203,8 @@ SCRIPT
         "$file_list" "" "" "$yara_results" "$yara_stderr" "$yara_rc_file" "" \
         "test.scanid.789"
     [ "$status" -eq 0 ]
+    # Verify empty file list produces no results
+    [ ! -s "$yara_results" ]
     rm -rf "$test_tmpdir"
 }
 

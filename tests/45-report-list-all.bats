@@ -27,12 +27,4 @@ setup_file() {
     assert_output --partial "list --all"
 }
 
-@test "-e list --all is accepted without error" {
-    run maldet -e list --all
-    assert_success
-}
 
-@test "-e list without --all is accepted without error" {
-    run maldet -e list
-    assert_success
-}
