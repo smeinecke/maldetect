@@ -218,3 +218,6 @@ v2.0.1 | Mar 25 2026:
 [Fix] RPM/DEB: packages now run signature update on fresh install (was missing);
       migrate core sig files from tarball installs; link ClamAV sigs and signal
       clamd reload; shared pkg-postinst.sh for install.sh post-install parity
+[Fix] RPM/DEB %pre: defensive detection for dir-vs-symlink cpio conflict; install
+      no longer fails with "rename failed - Is a directory" when prior install.sh
+      or partial install left real directories at symlink-target paths
