@@ -254,9 +254,26 @@ ln -sf /usr/sbin/maldet %{buildroot}/usr/local/sbin/lmd
 
 %pre
 LEGACY_PATH="/usr/local/maldetect"
-if [ -f "$LEGACY_PATH/maldet" ] && [ ! -L "$LEGACY_PATH/internals" ] && [ ! -L "$LEGACY_PATH/maldet" ]; then
+# Detect any non-package state at $LEGACY_PATH that would conflict with
+# the symlink farm. The package ships these paths as symlinks; if any
+# exist as real (non-symlink) directories, RPM cpio will fail with
+# "rename failed - Is a directory" during extraction. This catches
+# install.sh installations, partial installs, and hybrid states left
+# by earlier package versions or aborted upgrades.
+_lmd_conflict=0
+if [ -f "$LEGACY_PATH/maldet" ] && [ ! -L "$LEGACY_PATH/maldet" ]; then
+    _lmd_conflict=1
+else
+    for _d in sigs quarantine sess tmp pub clean logs cron internals/alert; do
+        if [ -d "$LEGACY_PATH/$_d" ] && [ ! -L "$LEGACY_PATH/$_d" ]; then
+            _lmd_conflict=1
+            break
+        fi
+    done
+fi
+if [ "$_lmd_conflict" -eq 1 ]; then
     _bkdir="${LEGACY_PATH}.bk.$(date +%%Y%%m%%d-%%s)"
-    echo "Backing up existing install.sh installation to $_bkdir"
+    echo "Backing up existing installation to $_bkdir"
     cp -a "$LEGACY_PATH" "$_bkdir"
     rm -f "${LEGACY_PATH}.bk.last"
     ln -s "$_bkdir" "${LEGACY_PATH}.bk.last"
