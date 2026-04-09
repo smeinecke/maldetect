@@ -14,11 +14,13 @@ jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       release-id: ${{ steps.create_release.outputs.id }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.1
       - name: Install needed packages
         run: |
           if [ $(dpkg -l | grep -c dpkg-dev) -ne 1 ]; then sudo apt-get update && sudo apt-get install -y dpkg-dev; fi
@@ -28,7 +30,7 @@ jobs:
           dpkg-parsechangelog | tail -n +9 > debian.changelog
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.4.2
         with:
           name: Release ${{ github.ref_name }}
           body_path: debian.changelog
@@ -39,8 +41,10 @@ jobs:
     name: Build and upload packages
     needs: create-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6.0.1
       with:
         fetch-depth: 0
     - name: Remove github artefacts
@@ -59,6 +63,6 @@ jobs:
         mkdir -p debian/build/release/
         mv ../*.deb debian/build/release/ || true
     - name: Upload Release Assets
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v2.4.2
       with:
         files: debian/build/release/*
