@@ -1,14 +1,8 @@
-From: Jan Wagner <waja@cyconet.org>
-Date: Thu, 12 Mar 2015 22:41:40 +0100
-Subject: 15_maldetect-no-autoupdate
-
----
- files/maldet | 81 +-----------------------------------------------------------
- 1 file changed, 1 insertion(+), 80 deletions(-)
-
+diff --git a/files/internals/functions b/files/internals/functions
+index c193e77..8c77983 100644
 --- a/files/internals/functions
 +++ b/files/internals/functions
-@@ -438,7 +438,7 @@
+@@ -438,7 +438,7 @@ usage maldet [-h|--help] [-a|--scan-all PATH] [-r|--scan-recent PATH DAYS]
        [-f|--file-list PATH] [-i|--include-regex] [-x|--exclude-regex]
        [-b|--background] [-m|--monitor] [-k|--kill-monitor] [-c|--checkout]
        [-q|--quarantine] [-s|--restore] [-n|--clean] [-l|--log] [-e|--report]
@@ -17,20 +11,22 @@ Subject: 15_maldetect-no-autoupdate
  EOF
  }
  
-@@ -453,9 +453,6 @@
+@@ -453,8 +453,6 @@ usage $0 [ OPTION ]
      -u, --update-sigs [--force]
         Update malware detection signatures from rfxn.com
  
 -    -d, --update-ver [--force]
 -       Update the installed version from rfxn.com
--
+ 
      -f, --file-list
         Scan files or paths defined in line spaced file
-        e.g: maldet -f /root/scan_file_list
-@@ -2149,111 +2146,6 @@
- 	fi
- }
- 
+@@ -2173,113 +2171,6 @@ sigignore() {
+ 		else
+ 			eout "{glob} processed $chk signature ignore entries" 1
+ 		fi
+-	fi
+-}
+-
 -
 -lmdup() {
 -	tmpwd="$tmpdir/.lmdup.$RANDOM.$$"
@@ -64,7 +60,7 @@ Subject: 15_maldetect-no-autoupdate
 -			doupdate=1
 -		elif [ "$autoupdate_version_hashed" == "1" ]; then
 -			eout "{update} hashing install files and checking against server..." 1
--			eval $md5sum $inspath/maldet $intfunc | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > $lmd_hash_file
+-			$md5sum $inspath/maldet $intfunc | awk '{print$1}' | tr '\n' ' ' | tr -d ' ' > $lmd_hash_file
 -			upstreamhash="$tmpwd/.lmdup_hashcheck$$"
 -		        get_remote_file "$lmd_hash_url" "update" "1"
 -			upstreamhash="$return_file"
@@ -100,7 +96,7 @@ Subject: 15_maldetect-no-autoupdate
 -
 -		if [ -s "$tmpwd/${lmd_current_tgzfile}.md5" ] && [ -s "$tmpwd/${lmd_current_tgzfile}" ]; then
 -			upstream_md5=`cat $tmpwd/${lmd_current_tgzfile}.md5 | awk '{print$1}'`
--			local_md5=`eval $md5sum $tmpwd/${lmd_current_tgzfile} | awk '{print$1}'`
+-			local_md5=`$md5sum "$tmpwd/${lmd_current_tgzfile}" | awk '{print$1}'`
 -			if [ ! "$upstream_md5" == "$local_md5" ]; then
 -				eout "{update} unable to verify md5sum of ${lmd_current_tgzfile}, update failed!" 1
 -				cd $inspath ; rm -rf $tmpwd
@@ -135,7 +131,6 @@ Subject: 15_maldetect-no-autoupdate
 -	fi
 -	cd $inspath ; rm -rf $tmpwd
 -}
--
+ 
  sigup() {
  	eout "{sigup} performing signature update check..." 1
- 	
