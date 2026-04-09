@@ -1,0 +1,244 @@
+maldetect (1.6.5-3) UNRELEASED; urgency=medium
+
+  * 
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 12 Oct 2023 17:23:36 +0200
+
+maldetect (1.6.5-2) unstable; urgency=medium
+
+  * [2006f13] d/p/0001-10_maldetect-paths.patch: Fix logfile locations
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 12 Oct 2023 15:21:49 +0000
+
+maldetect (1.6.5-1) unstable; urgency=medium
+
+  * [c8b445c] travis-ci: Use xenial image
+  * [1b57987] Adding CI
+  * [8f845ee] d/control: Raise compat level to 12
+  * [7f6d316] d/control: Bump Standards-Version to 4.5.1, no changes needed
+  * [7b159ea] d/source/options: Adding .github to diff ignore
+  * [0983c4d] Adding Dependabot config
+  * [8c34349] Do not remove .git* anymore
+  * [dd946d0] ci: pin action versions
+  * [84dfd28] Updating build pipelines
+  * [14c0cb3] Fixing d/watch
+  * [1e05a05] New upstream version 1.6.5
+  * [d804acf] Adding d/p/0010-20_fix_man_section.patch for fixing man page section
+  * [1d15e8b] Readd Github CI
+  * [912130e] Refresh d/p/0001-10_maldetect-paths.patch
+  * [1acf6e4] Refresh d/p/0002-12_maldetect-cron.daily-documentroots.patch
+  * [4d7ac9b] Refresh d/p/0004-14_maldetect-manpage.patch
+  * [9a65ed0] Refresh d/p/0005-15_maldetect-no-autoupdate.patch
+
+ -- Jan Wagner <waja@cyconet.org>  Tue, 10 Oct 2023 11:44:15 +0000
+
+maldetect (1.6.2-1) unstable; urgency=medium
+
+  * [e0b771f] New upstream version 1.6.2
+  * [5b1ae4b] Refreshing patches against upstream
+  * [7d7c030] travis-ci: Readd .travis-ci.yml
+
+ -- Jan Wagner <waja@cyconet.org>  Wed, 19 Jul 2017 13:14:05 +0200
+
+maldetect (1.6.1-1) unstable; urgency=medium
+
+  * [7f87234] New upstream version 1.6.1~rc1
+  * [b1d2500] Refreshing patches against upstream
+  * [33b7336] d/control: Depend on curl or wget (>= 1.16~)
+  * [77b0f54] New upstream version 1.6.1
+  * [a474575] Refreshing patches against upstream
+
+ -- Jan Wagner <waja@cyconet.org>  Mon, 19 Jun 2017 08:49:35 +0200
+
+maldetect (1.6-1) unstable; urgency=medium
+
+  * [1856a90] Imported Upstream version 1.5.1-pre1
+  * [6b5e20c] Droping patches caught by upstream
+  * [a67c01c] Adding 0004-14_maldetect-manpage.patch fixing paths in manpage
+  * [884ad86] d/maldetect.manpages: Fixing manpage source path
+  * [2f30f90] Refreshing patches against upstream
+  * [d62ace0] Imported Upstream version 1.5.1-pre2
+  * [64bd256] Imported Upstream version 1.5.1-rc3
+  * [5956058] Refreshing patches against upstream
+  * [29281a4] d/watch: Also match pre-releases
+  * [e062989] travis-ci: Fixing upstream version detection
+  * [73d726c] Imported Upstream version 1.5.1-rc4
+  * [1158c87] Refreshing patches against upstream
+  * [8b6cb28] New upstream version 1.6-rc5
+  * [c3aac31] Refreshing patches against latest upstream
+  * [05b0c55] Install compat.conf into usr/lib/maldetect
+  * [ea6270f] New upstream version 1.6-rc6
+  * [e9c532c] Refreshing patches against upstream
+  * [426332b] New upstream version 1.6
+  * [3e1de4e] Refreshing patches against latest upstream
+
+ -- Jan Wagner <waja@cyconet.org>  Sat, 06 May 2017 12:39:53 +0200
+
+maldetect (1.5-1) unstable; urgency=medium
+
+  * [7dd86a6] d/changelog: Fix wording
+  * [bb31e54] travis-ci: Adding required arguments for trusty
+  * [9aae357] travis-ci: automatically install dependencies
+  * [c79a7a5] d/control: Add the perl:Depends macro dependency
+  * [fde31a1] d/control: Bump Standards-Version to 3.9.8, no changes needed
+  * [eede284] d/control: Drop shlibs:Depends depends macro
+
+ -- Jan Wagner <waja@cyconet.org>  Sun, 29 May 2016 17:11:04 +0200
+
+maldetect (1.5-1~beta1) unstable; urgency=medium
+
+  * [ccddfb7] Imported Upstream version 1.5
+  * [57e78e4] Rework patches/0001-10_maldetect-paths.patch for new upstream
+    release
+  * [4fdde68] Rework patches/0002-12_maldetect-cron.daily-documentroots.patch
+    for new upstream release
+  * [290322a] Rework patches/0003-13_maldetect-cron.daily-default.patch for new
+    upstream release
+  * [5fcfd5c] Drop upstream integrated
+    patches/0004-14_maldetect-create-tmp-dir.patch
+  * [e9b455e] Rework patches/0005-15_maldetect-no-autoupdate.patch for new
+    upstream release
+  * [17cd012] Rework patches/0006-20_maldetect-remove-shebang.patch for new
+    upstream release
+  * [7032526] Drop upstream integrated
+    patches/0007-25_maldetect-use-var-instead-dirs.patch
+  * [f9e5974] Updating debian/changelog
+  * [fc1a7b4] Unfuzzing patches/0003-13_maldetect-cron.daily-default.patch
+  * [a8da03f] Update installation paths for new upstream release
+  * [25fc72c] travis-ci: grab actual used upstream version
+  * [852a5cd] Updating definition of standard DocumentRoot to new syntax in
+    default configuration
+  * [789295d] Removing shebang from scan.etpl and functions via
+    patches/0006-20_maldetect-remove-shebang.patch
+  * [baf4300] Updating README.Debian, the script is now called hookscan.sh
+  * [a1f3f97] Make internal perl scripts executable
+  * [9626b4b] Adding 0007-21_drop-ps-path.patch from upstream branch
+  * [4984623] Adding 0008-16_userbasedir-variable.patch to be able to split out
+    variable parts into /var/lib/maldetect/userdirs
+  * [da1a058] Add /var/lib/maldetect/userdirs to dirs to be created by the
+    package
+  * [8d50982] Updating debian/changelog
+  * [f981822] Add missing changes for internal.conf to
+    patches/0001-10_maldetect-paths.patch
+  * [7439b52] Refresh patches/0008-16_userbasedir-variable.patch
+  * [8142761] Adding patches/0009-17_fix_tmpdir.patch
+  * [492d7dc] Adding patches/0010-18_fix_sigdir.patch
+  * [f64c83c] Updating manpage for 1.5
+
+ -- Jan Wagner <waja@cyconet.org>  Tue, 06 Oct 2015 17:27:15 +0200
+
+maldetect (1.4.2+dfsg-13) unstable; urgency=medium
+
+  * [7c040b9] Fixing BASERUN path for tlog in 0001-10_maldetect-paths.patch
+    (Closes #5)
+  * [fbca634] debian/control: reformating with warp-and-sort
+  * [85b0d0d] Reformating with warp-and-sort the rest of debian/
+  * [a8a5d87] Updating debian watch file
+
+ -- Jan Wagner <waja@cyconet.org>  Sun, 20 Sep 2015 19:34:30 +0200
+
+maldetect (1.4.2+dfsg-12) unstable; urgency=medium
+
+  * [ca1d5ee] travis-ci: don't install build-deps manual
+  * [f40f41d] travis-ci: build package with dpkg-buildpackage
+  * [6eba7e4] debian/bin/repack.sh: Force remove the temorary dir
+  * [b05a8f1] Imported Upstream version 1.4.2
+  * [f9248b0] Imported Upstream version 1.4.2
+  * [e21f4cd] Refreshing patches
+  * [4f34098] Imported Upstream version 1.4.2
+  * [94a6c9a] Refreshing patches
+  * [6f71c04] Bump Standards-Version to 3.9.6, no changes needed
+  * [ded6519] Remove absolute path from postinst script
+  * [909b7be] debian/bin/repack.sh: also remove .git from upstream when
+    repacking
+  * [03e1c35] travis-ci: Initial support for uploading releases to github
+  * [6f44f4f] Merging upstream changes of github-release.sh
+  * [b6b774f] Updating copyright and author of debian/bin/github-release.sh
+  * [cc4a0a2] travis-ci: fixing version detection for github-release.sh
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 19 Mar 2015 17:52:44 +0100
+
+maldetect (1.4.2+dfsg-10) unstable; urgency=low
+
+  * [2d4ef8a] Exit with 0 even if update of signature doesn't in postinst
+
+ -- Jan Wagner <waja@cyconet.org>  Tue, 29 Oct 2013 22:10:35 +0100
+
+maldetect (1.4.2+dfsg-9) unstable; urgency=low
+
+  * [0ab55b5] Remove broken patch 30_maldetect-fix-return-code
+
+ -- Jan Wagner <waja@cyconet.org>  Tue, 29 Oct 2013 21:32:16 +0100
+
+maldetect (1.4.2+dfsg-8) unstable; urgency=low
+
+  * [24e7b66] Remove unneeded 'shift' to prevent return with '1'
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 24 Oct 2013 23:09:24 +0200
+
+maldetect (1.4.2+dfsg-7) unstable; urgency=low
+
+  * [8cb810c] Don't ship obsolete sinatures
+  * [0e17453] Ship postinst maintainer script to fetch actual sigatures and
+    definitions
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 24 Oct 2013 18:04:44 +0200
+
+maldetect (1.4.2+dfsg-6) unstable; urgency=low
+
+  * [46d7da7] Fix tmp dir in cron.daily script
+  * [54bce9a] Move DocumentsRoots into variable in cronjob
+  * [6e55b4c] Fix typo in debian/patches/12_maldetect-cron.daily-documentroots
+  * [08372ed] Only set DocumentRoot dirs value in cronjob, if its empty
+  * [2bffff6] Implement /etc/default for DocumentRoots in cronjob
+  * [9037264] Install /etc/default/maldetect
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 24 Oct 2013 16:48:08 +0200
+
+maldetect (1.4.2+dfsg-5) unstable; urgency=low
+
+  * [2d32582] Add Vcs-fields
+  * [b0b894a] Fix path of ignore configs
+  * [6b3db0b] Create tmp dir if not existing
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 24 Oct 2013 14:22:30 +0200
+
+maldetect (1.4.2+dfsg-4) unstable; urgency=low
+
+  * [28658d2] Don't create obsolete tmp dirs
+  * [47b9027] Install modsec shell script into /usr/lib/maldetect/
+  * [aadc4e4] Ignore config now in /etc/maldetect
+  * [d076b12] Mention modsec.sh in README.Debian
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 24 Oct 2013 12:58:46 +0200
+
+maldetect (1.4.2+dfsg-3) unstable; urgency=low
+
+  * [2ad821f] Install manpage
+  * [376ae5a] Extend man page
+  * [5bea798] Move internal.conf to /etc/maldetect/
+  * [53fdfc8] Install tlog binary to /usr/lib/maldetect/
+  * [b4b39e4] Log into /var/log/maldetect.log
+  * [ea8db65] Use correct patch of logfile in output
+  * [2c8a6e0] Install maldetect.conf into /etc/maldetect/
+  * [dc488a2] Use /tmp/maldetect/ as temporary dir
+
+ -- Jan Wagner <waja@cyconet.org>  Thu, 24 Oct 2013 11:42:01 +0200
+
+maldetect (1.4.2+dfsg-2) unstable; urgency=low
+
+  * [dc4a787] Add some more DocumentRoots locations
+  * [7e967b6] Recommand inotify-tools
+  * [3c10279] Adjust patches/25_maldetect-use-var-instead-dirs to use session
+    dir value
+  * [c7e724a] Add packages of used binaries into Depends/Recommends
+  * [aef4be8] Try to get debian/watch running
+  * [a7ec4a9] Fix depends
+
+ -- Jan Wagner <waja@cyconet.org>  Sun, 20 Oct 2013 23:26:57 +0200
+
+maldetect (1.4.2+dfsg-1) unstable; urgency=low
+
+  * Initial release
+
+ -- Jan Wagner <waja@cyconet.org>  Sun, 20 Oct 2013 14:03:27 +0200

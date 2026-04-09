@@ -1,0 +1,9 @@
+maldetect for Debian
+--------------------
+
+Upstream is shipping binary files with files/inotify/*inotify* which we are
+not allowed to redistribute and we need to repack the source tarball.
+
+Therefor you should use the script debian/bin/repack.sh:
+
+ repack.sh <upstream-tarball>

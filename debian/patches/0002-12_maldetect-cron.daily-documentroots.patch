@@ -1,0 +1,30 @@
+From: Jan Wagner <waja@cyconet.org>
+Date: Thu, 12 Mar 2015 22:41:40 +0100
+Subject: 12_maldetect-cron.daily-documentroots
+
+---
+ cron.daily | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+--- a/cron.daily
++++ b/cron.daily
+@@ -37,6 +37,10 @@
+ 	cron_prune_days=21
+ fi
+ 
++if [ ! "${STDDOCROOT}" ]; then
++	STDDOCROOT="/var/www/,/srv/www/"
++fi
++
+ if [ "$find" ]; then
+ 	# prune any quarantine/session/tmp data older than 7 days
+ 	tmpdirs="$tmpdir $varlibpath/sess $varlibpath/quarantine $varlibpath/pub"
+@@ -98,7 +102,7 @@
+                 $inspath/maldet -b -r ${conf_hosting_path:-/var/www/sites}/?/?/subdomains/?/html/ $scan_days >> /dev/null 2>&1
+ 	else
+ 		# cpanel, interworx and other standard home/user/public_html setups
+-	        $inspath/maldet -b -r /home?/?/public_html/,/var/www/,/usr/local/apache/htdocs/ $scan_days >> /dev/null 2>&1
++	        $inspath/maldet -b -r /home?/?/public_html/,/var/www/html/,${STDDOCROOT} $scan_days >> /dev/null 2>&1
+ 	fi
+ fi
+ 

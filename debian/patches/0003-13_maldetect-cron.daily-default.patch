@@ -1,0 +1,21 @@
+From: Jan Wagner <waja@cyconet.org>
+Date: Thu, 12 Mar 2015 22:41:40 +0100
+Subject: 13_maldetect-cron.daily-default
+
+---
+ cron.daily | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/cron.daily
++++ b/cron.daily
+@@ -21,8 +21,8 @@
+ 
+ if [ -f "/etc/sysconfig/maldet" ]; then
+ 	. /etc/sysconfig/maldet
+-elif [ -f "/etc/default/maldet" ]; then
+-	. /etc/default/maldet
++elif [ -f "/etc/default/maldetect" ]; then
++	. /etc/default/maldetect
+ fi
+ 
+ if [ -f "$cron_custom_conf" ]; then
