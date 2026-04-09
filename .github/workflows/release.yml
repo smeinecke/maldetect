@@ -28,12 +28,9 @@ jobs:
           dpkg-parsechangelog | tail -n +9 > debian.changelog
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          name: Release ${{ github.ref_name }}
           body_path: debian.changelog
           draft: false
           prerelease: false
@@ -44,27 +41,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-      env:
-        DEBIAN_FRONTEND: "noninteractive"
+      with:
+        fetch-depth: 0
     - name: Remove github artefacts
       run: |
         rm -rf .github*
     - name: Adjust distibution in changelog file
       run: |
         sed -i '0,/restricted/s//stable/' debian/changelog
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential debhelper devscripts
     - name: Build Debian package
-      uses: dawidd6/action-debian-package@v1.6.0
+      run: |
+        dpkg-buildpackage -us -uc -b
+        mkdir -p debian/build/release/
+        mv ../*.deb debian/build/release/ || true
+    - name: Upload Release Assets
+      uses: softprops/action-gh-release@v2
       with:
-        artifacts_directory: debian/build/release/
-#    - name: Build Debian package
-#      uses: pi-top/action-debian-package@v0.2.0
-#      with:
-#        artifacts_directory: debian/build/release/
-#        target_architectures: "amd64,i386"
-    - name: Upload the artifacts
-      uses: skx/github-action-publish-binaries@release-2.0
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        releaseId: ${{ needs.create-release.outputs.release-id }}
-        args: debian/build/release/*
+        files: debian/build/release/*
