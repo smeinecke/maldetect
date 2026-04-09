@@ -3,10 +3,10 @@ Description=Linux Malware Detect monitoring - maldet
 After=network.target
 
 [Service]
-EnvironmentFile=/usr/local/maldetect/conf.maldet
-ExecStart=/usr/local/maldetect/maldet --monitor $default_monitor_mode
-ExecStop=/usr/local/maldetect/maldet --kill-monitor
+EnvironmentFile=/etc/maldetect/maldetect.conf
+ExecStart=/usr/bin/maldet --monitor $default_monitor_mode
+ExecStop=/usr/bin/maldet --kill-monitor
 Type=forking
-PIDFile=/usr/local/maldetect/tmp/inotifywait.pid
+PIDFile=/tmp/maldetect/inotifywait.pid
 [Install]
 WantedBy=multi-user.target

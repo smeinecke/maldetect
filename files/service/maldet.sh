@@ -15,8 +15,7 @@
 # X-Interactive:     true
 # Short-Description: Start/stop maldet in monitor mode
 ### END INIT INFO
-inspath='/usr/local/maldetect'
-intcnf="$inspath/internals/internals.conf"
+intcnf="/etc/maldetect/internals.conf"
 
 if [ -f "$intcnf" ]; then
 	source $intcnf
@@ -35,8 +34,8 @@ fi
 
 if [ -f "/etc/sysconfig/maldet" ]; then
 	. /etc/sysconfig/maldet
-elif [ -f "/etc/default/maldet" ]; then
-	. /etc/default/maldet
+elif [ -f "/etc/default/maldetect" ]; then
+	. /etc/default/maldetect
 fi
 
 if [ "$default_monitor_mode" ]; then
@@ -55,7 +54,7 @@ if [ -z "$MONITOR_MODE" ]; then
     if [ -f /etc/redhat-release ]; then
         echo "error no default monitor mode defined, set \$MONITOR_MODE in /etc/sysconfig/maldet, or \$default_monitor_mode in $cnf"
     elif [ -f /etc/debian_version ]; then
-        echo "error no default monitor mode defined, set \$MONITOR_MODE in /etc/default/maldet, or \$default_monitor_mode in $cnf"
+        echo "error no default monitor mode defined, set \$MONITOR_MODE in /etc/default/maldetect, or \$default_monitor_mode in /etc/maldetect/maldetect.conf"
     else
         echo "error no default monitor mode defined, set \$MONITOR_MODE in /etc/sysconfig/maldet, or \$default_monitor_mode in $cnf"
     fi
@@ -64,7 +63,7 @@ fi
 
 start() {
         echo -n "Starting $prog: "
-        $inspath/maldet --monitor $MONITOR_MODE
+        /usr/bin/maldet --monitor $MONITOR_MODE
         RETVAL=$? [ $RETVAL -eq 0 ] && touch $LOCKFILE
         echo
         return $RETVAL
@@ -73,11 +72,11 @@ start() {
 stop() {
         echo -n "Shutting down $prog: "
         if [ -f /etc/redhat-release ]; then
-            $inspath/maldet --kill-monitor && success || failure
+            /usr/bin/maldet --kill-monitor && success || failure
         elif [ -f /etc/debian_version ]; then
-            $inspath/maldet --kill-monitor && log_success_msg || log_failure_msg
+            /usr/bin/maldet --kill-monitor && log_success_msg || log_failure_msg
         else
-            $inspath/maldet --kill-monitor && success || failure
+            /usr/bin/maldet --kill-monitor && success || failure
         fi
         RETVAL=$? [ $RETVAL -eq 0 ] && rm -f $LOCKFILE
         echo

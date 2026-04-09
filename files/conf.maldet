@@ -272,14 +272,14 @@ quarantine_on_error="1"
 # spaced file containing local paths to monitor.
 #
 # This option is optional for the init based startup script, maldet.sh. This
-# value is ignored when '/etc/sysconfig/maldet' or '/etc/default/maldet' is
+# value is ignored when '/etc/sysconfig/maldet' or '/etc/default/maldetect' is
 # present with a defined value for $MONITOR_MODE.
 #
 # This option is REQUIRED for the systemd maldet.service script. That script
 # only checks for the value of $default_monitor_mode. The service will fail to
 # start if a value is not provided.
 default_monitor_mode="users"
-# default_monitor_mode="/usr/local/maldetect/monitor_paths"
+# default_monitor_mode="/etc/maldetect/monitor_paths"
 
 # The base number of files that can be watched under a path,
 # this ends up being a relative value per-user in user mode.

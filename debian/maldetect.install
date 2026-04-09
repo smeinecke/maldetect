@@ -3,11 +3,15 @@
 files/internals/*.pl	usr/lib/maldetect
 files/internals/tlog	usr/lib/maldetect/inotify
 files/internals/functions	usr/lib/maldetect
+files/internals/panel_alert.etpl	usr/lib/maldetect
 files/internals/scan.etpl	usr/lib/maldetect
 files/internals/compat.conf	usr/lib/maldetect
 files/internals/internals.conf	etc/maldetect
 files/hookscan.sh	usr/lib/maldetect
+files/cron/custom.cron	etc/maldetect/cron
+files/cron/conf.maldet.cron	etc/maldetect/cron
 files/ignore*	etc/maldetect
+files/monitor_paths	etc/maldetect
 files/VERSION.hash	usr/share/maldetect
 files/maldet	usr/bin
 files/service/maldet.service	usr/share/doc/maldetect/examples
